@@ -16,9 +16,16 @@ if (-not $pythonCmd) {
 }
 
 $pythonExe = $pythonCmd.Path
+
+# Get Python version string robustly
 $pythonVersion = & $pythonExe --version 2>&1
-$versionParts = ($pythonVersion -split " ")[-1].Split(".")
-$majorMinor = "{0}.{1}" -f $versionParts[0], $versionParts[1]
+# Extract version number using regex (matches first X.Y or X.Y.Z)
+$versionMatch = [regex]::Match($pythonVersion, '(\d+)\.(\d+)(?:\.(\d+))?')
+if (-not $versionMatch.Success) {
+    Write-Host "Error: Could not parse Python version from: $pythonVersion" -ForegroundColor Red
+    exit 1
+}
+$majorMinor = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value)"
 
 if ([version]$majorMinor -lt [version]"3.11") {
     Write-Host "Error: Python 3.11+ required. Found: $majorMinor" -ForegroundColor Red
@@ -27,11 +34,24 @@ if ([version]$majorMinor -lt [version]"3.11") {
 Write-Host "✓ Python $majorMinor detected"
 
 # Check if uv is installed, if not install it
+
+# Check if uv is installed, if not install it and update PATH
 $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
 if (-not $uvCmd) {
     Write-Host "Installing uv package manager..."
     irm https://astral.sh/uv/install.ps1 | iex
-    $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+    # Add both .local/bin and .cargo/bin to PATH for compatibility
+    $env:PATH = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+    # Try to get uv again after install
+    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+    if (-not $uvCmd) {
+        Write-Host "Error: uv installation failed or not found in PATH." -ForegroundColor Red
+        exit 1
+    }
+}
+else {
+    # Ensure PATH includes .local/bin and .cargo/bin for future shells
+    $env:PATH = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
 }
 Write-Host "✓ uv package manager available"
 
