@@ -23,10 +23,29 @@ chmod +x install.sh
 source .venv/bin/activate
 ```
 
+Windows (PowerShell):
+
+```powershell
+.\install.ps1
+```
+
 ### Run the Streamlit UI
 
 ```bash
 streamlit run unislot/ui.py
+```
+
+Or use the run script:
+
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+Windows (PowerShell):
+
+```powershell
+.\run.ps1
 ```
 
 Open http://localhost:8501 in your browser.

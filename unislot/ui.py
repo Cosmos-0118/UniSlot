@@ -690,7 +690,16 @@ if app_mode == "Generate Schedule":
                                      unsafe_allow_html=True)
 
         # Load and validate
-        students, courses, rows, validation = load_and_validate(tmp_path)
+        try:
+            students, courses, rows, validation = load_and_validate(tmp_path)
+        except Exception as exc:
+            loading_placeholder.empty()
+            st.error(
+                "Failed to read the uploaded file. Please verify the Excel format."
+            )
+            st.exception(exc)
+            st.stop()
+
         loading_placeholder.empty()
 
         # Section 2: Validation Results
@@ -880,7 +889,15 @@ if app_mode == "Generate Schedule":
                                 countdown=countdown_str)
                             time.sleep(0.5)  # Update every 0.5 seconds
 
-                        result = future.result()
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            progress_placeholder.empty()
+                            st.error(
+                                "Scheduler failed while processing the upload."
+                            )
+                            st.exception(exc)
+                            st.stop()
 
                     # Step 6: Report generation
                     show_loading(5, 6, "Generating Reports",
@@ -1119,8 +1136,16 @@ else:
             schedule_tmp_path = Path(tmp.name)
 
         # Parse schedule (now includes student data)
-        presorted, schedule_validation = parse_presorted_schedule(
-            schedule_tmp_path)
+        try:
+            presorted, schedule_validation = parse_presorted_schedule(
+                schedule_tmp_path)
+        except Exception as exc:
+            loading_placeholder.empty()
+            st.error(
+                "Failed to parse the schedule file. Please verify the Excel format."
+            )
+            st.exception(exc)
+            st.stop()
 
         # Check if we have embedded student data
         has_embedded_students = (presorted is not None
