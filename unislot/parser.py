@@ -698,6 +698,9 @@ class PresortedSchedule:
     course_day_map: dict[str, str]  # course -> day
     course_slot_map: dict[str, int]  # course -> slot
     students: dict[str, PresortedStudent] | None = None  # reg_no -> student
+    course_day_options: dict[str, list[str]] | None = None  # course -> days
+    course_day_pairs: list[tuple[str, str]] | None = None
+    original_df: pd.DataFrame | None = None
 
 
 # Day normalization map
@@ -734,10 +737,14 @@ def normalize_day(day_str: str) -> list[str]:
     parts = re.split(r'[,\s]+', day_str)
 
     days = []
+    seen = set()
     for part in parts:
         part = part.strip()
         if part in DAY_NORMALIZE:
-            days.append(DAY_NORMALIZE[part])
+            day = DAY_NORMALIZE[part]
+            if day not in seen:
+                days.append(day)
+                seen.add(day)
 
     return days
 
@@ -885,7 +892,9 @@ def parse_presorted_schedule(
 
         # Parse all course-day mappings AND student enrollments
         entries: list[PresortedEntry] = []
-        course_day_map: dict[str, set[str]] = {}  # course -> set of days
+        course_day_counts: dict[str, dict[str, int]] = defaultdict(dict)
+        course_day_order: dict[str, list[str]] = defaultdict(list)
+        course_day_options: dict[str, list[str]] = defaultdict(list)
         day_slot_map: dict[str, dict[int, list[str]]] = {}
         course_slot_map: dict[str, int] = {}
         students: dict[str, PresortedStudent] = {}  # reg_no -> student
@@ -911,49 +920,59 @@ def parse_presorted_schedule(
             # Track courses for this student
             student_courses: list[str] = []
 
+            row_seen_courses: set[str] = set()
             for course_col, day_col in course_day_pairs:
                 try:
                     course_code = clean_course_code(
                         str(row.get(course_col, "")))
                     if not course_code:
                         continue
-
+                    if course_code in row_seen_courses:
+                        continue
+                    row_seen_courses.add(course_code)
                     day_raw = str(row.get(day_col, ""))
                     days = normalize_day(day_raw)
 
                     if not days:
                         continue
 
-                    # Track course -> days mapping
-                    if course_code not in course_day_map:
-                        course_day_map[course_code] = set()
-                    course_day_map[course_code].update(days)
+                    current_day = days[0]
+
+                    # Track course -> current day counts and options
+                    course_day_counts.setdefault(course_code, {})
+                    course_day_counts[course_code][current_day] = (
+                        course_day_counts[course_code].get(current_day, 0) + 1)
+                    if current_day not in course_day_order[course_code]:
+                        course_day_order[course_code].append(current_day)
+
+                    for day in days:
+                        if day not in course_day_options[course_code]:
+                            course_day_options[course_code].append(day)
 
                     # Track course for student enrollment
                     if course_code not in student_courses:
                         student_courses.append(course_code)
 
-                    # Create entry for each day
-                    for day in days:
-                        entry = PresortedEntry(
-                            course_code=course_code,
-                            course_title="",
-                            day=day,
-                            slot=1,  # Default slot
-                            section=None,
-                        )
-                        entries.append(entry)
-                        valid_entries += 1
+                    # Create entry for the primary day only
+                    entry = PresortedEntry(
+                        course_code=course_code,
+                        course_title="",
+                        day=current_day,
+                        slot=1,  # Default slot
+                        section=None,
+                    )
+                    entries.append(entry)
+                    valid_entries += 1
 
-                        # Build day_slot_map
-                        if day not in day_slot_map:
-                            day_slot_map[day] = {}
-                        if 1 not in day_slot_map[day]:
-                            day_slot_map[day][1] = []
-                        if course_code not in day_slot_map[day][1]:
-                            day_slot_map[day][1].append(course_code)
+                    # Build day_slot_map
+                    if current_day not in day_slot_map:
+                        day_slot_map[current_day] = {}
+                    if 1 not in day_slot_map[current_day]:
+                        day_slot_map[current_day][1] = []
+                    if course_code not in day_slot_map[current_day][1]:
+                        day_slot_map[current_day][1].append(course_code)
 
-                        course_slot_map[course_code] = 1
+                    course_slot_map[course_code] = 1
 
                 except Exception as e:
                     warnings.append(
@@ -990,11 +1009,19 @@ def parse_presorted_schedule(
                 valid_rows=0,
             )
 
-        # Convert course_day_map to use first day for each course
-        final_course_day_map = {
-            code: sorted(list(days))[0] if days else "Monday"
-            for code, days in course_day_map.items()
-        }
+        # Convert to a single day per course using most common day
+        final_course_day_map: dict[str, str] = {}
+        for code, counts in course_day_counts.items():
+            if not counts:
+                final_course_day_map[code] = "Monday"
+                continue
+            order = course_day_order.get(code, [])
+            best_day = max(
+                counts.items(),
+                key=lambda x: (x[1], -order.index(x[0])
+                               if x[0] in order else 0),
+            )[0]
+            final_course_day_map[code] = best_day
 
         # Deduplicate entries
         seen = set()
@@ -1011,6 +1038,9 @@ def parse_presorted_schedule(
             course_day_map=final_course_day_map,
             course_slot_map=course_slot_map,
             students=students if students else None,
+            course_day_options=dict(course_day_options),
+            course_day_pairs=course_day_pairs,
+            original_df=df,
         )
 
         return schedule, ValidationResult(

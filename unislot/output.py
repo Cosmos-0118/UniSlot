@@ -13,6 +13,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from unislot.models import ClashReport, ClashStatus, Schedule, Day
+from unislot.parser import clean_course_code, normalize_day
 
 # ============== Style Definitions ==============
 
@@ -1614,67 +1615,45 @@ def export_fixed_schedule_xlsx(
 
     styles = _get_styles()
 
-    # Build a map of course -> new_day for quick lookup
     fix_map: dict[str, str] = {}
     for fix in applied_fixes:
         fix_map[fix["course_code"]] = fix["new_day"]
+
+    original_df = getattr(presorted_schedule, 'original_df', None)
+    course_day_pairs = getattr(presorted_schedule, 'course_day_pairs', None)
+
+    if original_df is None or not course_day_pairs:
+        raise ValueError("Missing original schedule structure for export")
+
+    fixed_df = original_df.copy()
+    changed_cells: set[tuple[int, str]] = set()
+
+    for idx, row in fixed_df.iterrows():
+        for course_col, day_col in course_day_pairs:
+            course_code = clean_course_code(str(row.get(course_col, "")))
+            if not course_code:
+                continue
+            new_day = fix_map.get(course_code)
+            if not new_day:
+                continue
+            original_day_raw = str(row.get(day_col, ""))
+            original_days = normalize_day(original_day_raw)
+            original_day = original_days[0] if original_days else ""
+            if original_day != new_day:
+                changed_cells.add((idx, day_col))
+            fixed_df.at[idx, day_col] = new_day
 
     wb = Workbook()
     ws = wb.active
     assert ws is not None
     ws.title = "Fixed Schedule"
 
-    # Header row
-    row = 1
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-    title_cell = ws.cell(row=row, column=1, value="FIXED COURSE SCHEDULE")
-    title_cell.font = Font(bold=True, size=16, color=COLORS["white"])
-    title_cell.fill = PatternFill(start_color=COLORS["primary"],
-                                  end_color=COLORS["primary"],
-                                  fill_type="solid")
-    title_cell.alignment = Alignment(horizontal='center', vertical='center')
-    ws.row_dimensions[row].height = 35
-
-    # Subtitle showing fixes count
-    row += 1
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-    subtitle_cell = ws.cell(
-        row=row,
-        column=1,
-        value=
-        f"Generated with {len(applied_fixes)} course reassignments highlighted in green"
-    )
-    subtitle_cell.font = Font(size=11,
-                              italic=True,
-                              color=COLORS["text_secondary"])
-    subtitle_cell.alignment = Alignment(horizontal='center', vertical='center')
-    ws.row_dimensions[row].height = 25
-
-    row += 2
-
-    # Column headers
-    headers = [
-        "#", "Register No", "Student Name", "Program", "Course Code",
-        "Course Title", "Day"
-    ]
+    headers = list(fixed_df.columns)
     for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=row, column=col_idx, value=header)
+        cell = ws.cell(row=1, column=col_idx, value=header)
         _apply_style(cell, styles["header"])
-    ws.row_dimensions[row].height = 28
+    ws.row_dimensions[1].height = 24
 
-    row += 1
-    data_start_row = row
-
-    # Get student data and course-day mapping
-    students = presorted_schedule.students
-    original_course_day_map = presorted_schedule.course_day_map.copy()
-
-    # Apply the fixes to get the new course-day mapping
-    fixed_course_day_map = original_course_day_map.copy()
-    for course_code, new_day in fix_map.items():
-        fixed_course_day_map[course_code] = new_day
-
-    # Green highlight style
     green_fill = PatternFill(start_color=COLORS["success_bg"],
                              end_color=COLORS["success_bg"],
                              fill_type="solid")
@@ -1683,83 +1662,52 @@ def export_fixed_schedule_xlsx(
                           top=Side(style='thin', color=COLORS["border"]),
                           bottom=Side(style='thin', color=COLORS["border"]))
 
-    idx = 0
-    if students:
-        # Sort students by register number for consistent output
-        sorted_students = sorted(students.values(),
-                                 key=lambda s: s.register_number)
+    col_index_map = {name: i + 1 for i, name in enumerate(headers)}
+    for row_idx, row in enumerate(dataframe_to_rows(fixed_df,
+                                                    index=False,
+                                                    header=False),
+                                  start=2):
+        row_fill = PatternFill(
+            start_color=COLORS["row_alt"],
+            end_color=COLORS["row_alt"],
+            fill_type="solid") if row_idx % 2 == 0 else PatternFill(
+                start_color=COLORS["white"],
+                end_color=COLORS["white"],
+                fill_type="solid")
 
-        for student in sorted_students:
-            for course_code in student.enrolled_courses:
-                idx += 1
+        for col_idx, value in enumerate(row, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            _apply_style(cell, styles["cell"])
+            cell.fill = row_fill
 
-                # Check if this course was changed
-                is_changed = course_code in fix_map
-                day = fixed_course_day_map.get(course_code, "Unknown")
+        ws.row_dimensions[row_idx].height = 20
 
-                # Get course title from entries if available
-                course_title = ""
-                for entry in presorted_schedule.entries:
-                    if entry.course_code == course_code:
-                        course_title = entry.course_title
-                        break
+        df_row_idx = row_idx - 2
+        for df_col in (col for col in headers
+                       if (df_row_idx, col) in changed_cells):
+            col_idx = col_index_map[df_col]
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.fill = green_fill
+            cell.border = green_border
+            cell.font = Font(bold=True, size=10, color=COLORS["secondary"])
 
-                row_data = [
-                    idx,
-                    student.register_number,
-                    student.name,
-                    student.program,
-                    course_code,
-                    course_title,
-                    day,
-                ]
-
-                # Alternating row colors (unless changed)
-                if idx % 2 == 0:
-                    row_fill = PatternFill(start_color=COLORS["row_alt"],
-                                           end_color=COLORS["row_alt"],
-                                           fill_type="solid")
-                else:
-                    row_fill = PatternFill(start_color=COLORS["white"],
-                                           end_color=COLORS["white"],
-                                           fill_type="solid")
-
-                for col_idx, value in enumerate(row_data, start=1):
-                    cell = ws.cell(row=row, column=col_idx, value=value)
-                    _apply_style(
-                        cell, styles["cell_center"]
-                        if col_idx in [1, 7] else styles["cell"])
-
-                    if is_changed:
-                        cell.fill = green_fill
-                        if col_idx == 1:  # First column gets green left border
-                            cell.border = green_border
-                        if col_idx == 7:  # Day column - make it bold
-                            cell.font = Font(bold=True,
-                                             size=10,
-                                             color=COLORS["secondary"])
-                    else:
-                        cell.fill = row_fill
-
-                ws.row_dimensions[row].height = 20
-                row += 1
-
-    # Column widths
-    widths = [6, 15, 25, 28, 15, 35, 12]
-    for col_idx, width in enumerate(widths, start=1):
+    for col_idx, header in enumerate(headers, start=1):
+        width = max(12, min(40, len(str(header)) + 2))
+        if "Course Title" in str(header):
+            width = 45
+        if "Student Name" in str(header):
+            width = 28
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    # Freeze header row
-    ws.freeze_panes = f"A{data_start_row}"
+    ws.freeze_panes = "A2"
 
-    # Add a summary sheet
     ws_summary = wb.create_sheet(title="Changes Summary")
 
     row = 1
     ws_summary.merge_cells(start_row=row,
                            start_column=1,
                            end_row=row,
-                           end_column=4)
+                           end_column=5)
     cell = ws_summary.cell(row=row, column=1, value="APPLIED CHANGES")
     cell.font = Font(bold=True, size=14, color=COLORS["white"])
     cell.fill = PatternFill(start_color=COLORS["primary"],
@@ -1770,8 +1718,9 @@ def export_fixed_schedule_xlsx(
 
     row += 2
 
-    # Headers
-    summary_headers = ["#", "Course Code", "Original Day", "New Day"]
+    summary_headers = [
+        "#", "Course Code", "Original Day", "New Day", "Students Affected"
+    ]
     for col_idx, header in enumerate(summary_headers, start=1):
         cell = ws_summary.cell(row=row, column=col_idx, value=header)
         _apply_style(cell, styles["header"])
@@ -1779,13 +1728,14 @@ def export_fixed_schedule_xlsx(
 
     row += 1
 
-    # List applied fixes
     for idx, fix in enumerate(applied_fixes, start=1):
-        course_code = fix["course_code"]
-        original_day = original_course_day_map.get(course_code, "Unknown")
-        new_day = fix["new_day"]
-
-        row_data = [idx, course_code, original_day, new_day]
+        row_data = [
+            idx,
+            fix.get("course_code", ""),
+            fix.get("original_day", ""),
+            fix.get("new_day", ""),
+            fix.get("students_affected", ""),
+        ]
 
         for col_idx, value in enumerate(row_data, start=1):
             cell = ws_summary.cell(row=row, column=col_idx, value=value)
@@ -1793,7 +1743,6 @@ def export_fixed_schedule_xlsx(
                 cell,
                 styles["cell_center"] if col_idx == 1 else styles["cell"])
 
-            # Highlight the new day in green
             if col_idx == 4:
                 cell.fill = green_fill
                 cell.font = Font(bold=True, size=10, color=COLORS["secondary"])
@@ -1801,8 +1750,7 @@ def export_fixed_schedule_xlsx(
         ws_summary.row_dimensions[row].height = 22
         row += 1
 
-    # Summary widths
-    for col_idx, width in enumerate([6, 15, 15, 15], start=1):
+    for col_idx, width in enumerate([6, 18, 18, 18, 20], start=1):
         ws_summary.column_dimensions[get_column_letter(col_idx)].width = width
 
     wb.save(output_path)

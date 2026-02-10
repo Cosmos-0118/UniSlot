@@ -73,22 +73,23 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for modern, clean design
+# Custom CSS for clean, minimal design
 st.markdown("""
 <style>
-    /* Import Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    /* Import fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
     /* Global styling */
     .stApp {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        background: #0f172a;
+        color: #e2e8f0;
     }
     
     /* Hide streamlit elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    header {visibility: visible;}
     
     /* Main container */
     .main .block-container {
@@ -96,128 +97,93 @@ st.markdown("""
         max-width: 1200px;
     }
     
-    /* ===== HEADER WITH GLOW ===== */
+    /* ===== HEADER ===== */
     .main-header {
-        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #1e3a8a 100%);
-        padding: 2.5rem 2.5rem 2rem 2.5rem;
-        border-radius: 20px;
+        background: #1e293b;
+        padding: 2rem 2rem 1.75rem 2rem;
+        border-radius: 12px;
         margin-bottom: 2rem;
-        box-shadow: 
-            0 0 60px rgba(59, 130, 246, 0.3),
-            0 0 100px rgba(59, 130, 246, 0.1),
-            0 25px 50px rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 50%);
-        animation: pulse 4s ease-in-out infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { transform: scale(1); opacity: 0.5; }
-        50% { transform: scale(1.1); opacity: 0.3; }
+        border: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     .header-content {
-        position: relative;
-        z-index: 1;
         display: flex;
         align-items: center;
-        gap: 1.25rem;
-    }
-    
-    .logo-glow {
-        filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.5));
+        gap: 1rem;
     }
     
     .main-header h1 {
         color: white;
-        font-size: 2.75rem;
-        font-weight: 800;
+        font-size: 2.25rem;
+        font-weight: 700;
         margin: 0;
-        letter-spacing: -0.03em;
-        text-shadow: 0 0 40px rgba(255, 255, 255, 0.3);
+        letter-spacing: -0.02em;
     }
     
     .main-header p {
-        color: rgba(255, 255, 255, 0.85);
-        font-size: 1.1rem;
+        color: #94a3b8;
+        font-size: 0.95rem;
         font-weight: 400;
-        margin: 0.25rem 0 0 0;
-        letter-spacing: 0.02em;
+        margin: 0.5rem 0 0 0;
     }
     
     /* ===== SECTION HEADERS ===== */
     .section-header {
         display: flex;
         align-items: center;
-        gap: 0.875rem;
-        margin: 2.5rem 0 1.25rem 0;
-        padding-bottom: 0.875rem;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        gap: 0.75rem;
+        margin: 2rem 0 1rem 0;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     .section-header h2 {
         color: #f1f5f9;
-        font-size: 1.375rem;
+        font-size: 1.25rem;
         font-weight: 600;
         margin: 0;
-        letter-spacing: -0.01em;
     }
     
     .section-number {
-        background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+        background: #3b82f6;
         color: white;
-        width: 34px;
-        height: 34px;
-        border-radius: 10px;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-weight: 700;
-        font-size: 0.95rem;
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        font-weight: 600;
+        font-size: 0.875rem;
     }
     
     /* ===== METRIC CARDS ===== */
     .metric-container {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 1.25rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        transition: all 0.2s ease;
     }
     
     .metric-container:hover {
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-        transform: translateY(-3px);
-        border-color: rgba(59, 130, 246, 0.3);
+        border-color: rgba(255, 255, 255, 0.15);
+        transform: translateY(-2px);
     }
     
     .metric-label {
         color: #94a3b8;
-        font-size: 0.75rem;
-        font-weight: 600;
+        font-size: 0.813rem;
+        font-weight: 500;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-bottom: 0.625rem;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
     }
     
     .metric-value {
         color: #f1f5f9;
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
-        letter-spacing: -0.02em;
     }
     
     .metric-value.success { color: #10b981; }
@@ -229,106 +195,85 @@ st.markdown("""
         display: inline-flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.625rem 1.125rem;
-        border-radius: 12px;
-        font-weight: 600;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-weight: 500;
         font-size: 0.875rem;
     }
     
     .status-badge.success {
-        background: rgba(16, 185, 129, 0.15);
+        background: rgba(16, 185, 129, 0.1);
         color: #10b981;
-        border: 1px solid rgba(16, 185, 129, 0.3);
+        border: 1px solid rgba(16, 185, 129, 0.2);
     }
     
     .status-badge.danger {
-        background: rgba(239, 68, 68, 0.15);
+        background: rgba(239, 68, 68, 0.1);
         color: #ef4444;
-        border: 1px solid rgba(239, 68, 68, 0.3);
+        border: 1px solid rgba(239, 68, 68, 0.2);
     }
     
     /* ===== UPLOAD AREA ===== */
     .upload-area {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.6) 100%);
-        border: 2px dashed rgba(100, 116, 139, 0.5);
-        border-radius: 20px;
-        padding: 3rem 2rem;
+        background: #1e293b;
+        border: 2px dashed rgba(100, 116, 139, 0.3);
+        border-radius: 12px;
+        padding: 2.5rem 2rem;
         text-align: center;
-        transition: all 0.3s ease;
+        transition: all 0.2s ease;
     }
     
     .upload-area:hover {
         border-color: #3b82f6;
-        background: linear-gradient(135deg, rgba(30, 58, 138, 0.2) 0%, rgba(59, 130, 246, 0.1) 100%);
-        box-shadow: 0 0 30px rgba(59, 130, 246, 0.1);
+        background: rgba(59, 130, 246, 0.05);
     }
     
     .upload-icon {
-        opacity: 0.7;
+        opacity: 0.6;
         margin-bottom: 1rem;
     }
     
     /* ===== INFO CARDS ===== */
     .info-card {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 1.25rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         margin-bottom: 1rem;
     }
     
     .info-card.success {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%);
+        background: rgba(16, 185, 129, 0.08);
         border-color: rgba(16, 185, 129, 0.2);
     }
     
     .info-card.warning {
-        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.05) 100%);
+        background: rgba(245, 158, 11, 0.08);
         border-color: rgba(245, 158, 11, 0.2);
     }
     
     .info-card.highlight {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.1) 100%);
-        border: 2px solid rgba(16, 185, 129, 0.4);
-        box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
+        background: rgba(59, 130, 246, 0.08);
+        border: 1px solid rgba(59, 130, 246, 0.2);
     }
     
     /* ===== LOADING OVERLAY ===== */
     .loading-overlay {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
-        border-radius: 20px;
-        padding: 3rem;
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 2.5rem;
         text-align: center;
-        border: 1px solid rgba(59, 130, 246, 0.2);
-        box-shadow: 0 0 60px rgba(59, 130, 246, 0.15);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .loading-overlay::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.1), transparent);
-        animation: shimmer 2s infinite;
-    }
-    
-    @keyframes shimmer {
-        100% { left: 100%; }
+        border: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     .loading-spinner {
-        width: 56px;
-        height: 56px;
+        width: 48px;
+        height: 48px;
         border: 3px solid rgba(59, 130, 246, 0.2);
         border-top-color: #3b82f6;
         border-radius: 50%;
         animation: spin 1s linear infinite;
-        margin: 0 auto 1.5rem auto;
+        margin: 0 auto 1.25rem auto;
     }
     
     @keyframes spin {
@@ -337,7 +282,7 @@ st.markdown("""
     
     .loading-text {
         color: #f1f5f9;
-        font-size: 1.125rem;
+        font-size: 1rem;
         font-weight: 500;
         margin-bottom: 0.5rem;
     }
@@ -351,20 +296,19 @@ st.markdown("""
         display: flex;
         justify-content: center;
         gap: 0.5rem;
-        margin-top: 1.5rem;
+        margin-top: 1.25rem;
     }
     
     .progress-step {
-        width: 8px;
-        height: 8px;
+        width: 7px;
+        height: 7px;
         border-radius: 50%;
-        background: rgba(59, 130, 246, 0.3);
+        background: rgba(148, 163, 184, 0.3);
         transition: all 0.3s ease;
     }
     
     .progress-step.active {
         background: #3b82f6;
-        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
     }
     
     .progress-step.completed {
@@ -373,20 +317,19 @@ st.markdown("""
     
     /* ===== BUTTONS ===== */
     .stButton > button {
-        background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+        background: #3b82f6;
         color: white;
         border: none;
-        border-radius: 12px;
-        padding: 0.875rem 2rem;
-        font-weight: 600;
-        font-size: 1rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.35);
+        border-radius: 8px;
+        padding: 0.75rem 1.5rem;
+        font-weight: 500;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
     }
     
     .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(59, 130, 246, 0.5);
+        background: #2563eb;
+        transform: translateY(-1px);
     }
     
     .stButton > button:active {
@@ -395,42 +338,93 @@ st.markdown("""
     
     /* Download buttons */
     .stDownloadButton > button {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        background: #10b981;
         color: white;
         border: none;
-        border-radius: 12px;
-        padding: 0.875rem 1.75rem;
-        font-weight: 600;
-        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
+        border-radius: 8px;
+        padding: 0.75rem 1.5rem;
+        font-weight: 500;
     }
     
     .stDownloadButton > button:hover {
-        box-shadow: 0 8px 30px rgba(16, 185, 129, 0.45);
+        background: #059669;
     }
     
     /* Fix button styling */
     .fix-btn {
-        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
-        box-shadow: 0 4px 20px rgba(245, 158, 11, 0.3) !important;
+        background: #10b981 !important;
     }
     
     /* ===== SIDEBAR ===== */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-        border-right: 1px solid rgba(255, 255, 255, 0.05);
+        background: #1e293b;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #f1f5f9;
+        color: #e2e8f0;
     }
     
     [data-testid="stSidebar"] .stRadio > label {
-        color: #94a3b8 !important;
+        color: #cbd5e1 !important;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    [data-testid="stSidebar"] .stMarkdown {
+        font-size: 0.875rem;
+    }
+
+    [data-testid="stSidebar"] .stMarkdown p {
+        font-size: 0.875rem;
+        line-height: 1.6;
+    }
+
+    /* Sidebar title */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3 {
+        color: #f1f5f9;
+        font-weight: 600;
+    }
+
+    /* Sidebar sliders */
+    [data-testid="stSidebar"] [data-testid="stSlider"] {
+        padding: 0.5rem 0;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSlider"] label {
+        color: #e2e8f0 !important;
+        font-size: 0.875rem !important;
+        font-weight: 500 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSlider"] [role="slider"] {
+        background: #3b82f6;
+        border: none;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+        background: #3b82f6;
+        height: 4px;
+        border-radius: 2px;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSlider"] [data-baseweb="slider"] > div {
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(148, 163, 184, 0.2);
+    }
+
+    /* Sidebar section dividers */
+    [data-testid="stSidebar"] hr {
+        margin: 1.5rem 0;
+        border-color: rgba(255, 255, 255, 0.08);
     }
     
     /* ===== EXPANDERS ===== */
     .streamlit-expanderHeader {
-        font-weight: 600;
+        font-weight: 500;
         font-size: 0.95rem;
         color: #f1f5f9;
         background: transparent;
@@ -442,29 +436,29 @@ st.markdown("""
     }
     
     [data-testid="stFileUploader"] > div {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(51, 65, 85, 0.4) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
+        background: #1e293b;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
     }
     
     /* ===== SUGGESTION CARDS ===== */
     .suggestion-card {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border-radius: 14px;
-        padding: 1.25rem 1.5rem;
-        margin-bottom: 0.875rem;
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         transition: all 0.2s ease;
     }
     
     .suggestion-card:hover {
         border-color: rgba(59, 130, 246, 0.3);
-        transform: translateX(4px);
+        transform: translateX(3px);
     }
     
     .suggestion-card.applied {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.1) 100%);
-        border-color: rgba(16, 185, 129, 0.3);
+        background: rgba(16, 185, 129, 0.08);
+        border-color: rgba(16, 185, 129, 0.2);
     }
     
     /* Text colors */
@@ -474,50 +468,52 @@ st.markdown("""
     .text-danger { color: #ef4444; }
     .text-primary { color: #3b82f6; }
     
-    /* Hide default streamlit elements */
+    /* Progress bar */
     .stProgress > div {
         background: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
+        border-radius: 4px;
     }
     
     .stProgress > div > div {
-        background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
-        border-radius: 10px;
+        background: #3b82f6;
+        border-radius: 4px;
     }
     
     /* Divider */
     hr {
-        margin: 2.5rem 0;
+        margin: 2rem 0;
         border: none;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     /* Results Summary Card */
     .results-summary {
-        background: linear-gradient(135deg, rgba(30, 58, 138, 0.3) 0%, rgba(59, 130, 246, 0.15) 100%);
+        background: rgba(59, 130, 246, 0.08);
         border: 1px solid rgba(59, 130, 246, 0.2);
-        border-radius: 16px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
+        border-radius: 10px;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
     }
     
     /* Tabs styling */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: rgba(30, 41, 59, 0.5);
-        border-radius: 12px;
-        padding: 4px;
+        gap: 0.5rem;
+        background: transparent;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
+        border-radius: 6px 6px 0 0;
         color: #94a3b8;
-        padding: 0.75rem 1.5rem;
+        padding: 0.625rem 1.25rem;
+        background: transparent;
+        border-bottom: 2px solid transparent;
     }
     
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
-        color: white;
+        background: transparent;
+        color: #3b82f6;
+        border-bottom-color: #3b82f6;
     }
 </style>
 """,
@@ -525,10 +521,9 @@ st.markdown("""
 
 # ============== HEADER ==============
 
-st.markdown(f"""
+st.markdown("""
 <div class="main-header">
     <div class="header-content">
-        <div class="logo-glow">{ICONS["logo"]}</div>
         <div>
             <h1>UniSlot</h1>
             <p>Smart Course Scheduling with Clash Optimization</p>
@@ -544,20 +539,20 @@ st.markdown(f"""
 parallel_cap = 11
 time_limit = 180
 use_greedy = False
-max_suggestions = 10
+fix_time_limit = 120
 
 with st.sidebar:
     st.markdown(f"""
-    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem;">
-        <span style="color: #94a3b8;">{ICONS["settings"]}</span>
-        <span style="color: #f1f5f9; font-size: 1.25rem; font-weight: 600;">Settings</span>
+    <div style="margin-bottom: 1.5rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 600; color: #f1f5f9; margin: 0 0 0.25rem 0;">Settings</h3>
+        <p style="font-size: 0.813rem; color: #94a3b8; margin: 0;">Configure scheduling options</p>
     </div>
     """,
                 unsafe_allow_html=True)
 
     # Mode selector
     st.markdown(
-        "<p style='color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem;'>MODE</p>",
+        "<p style='font-size: 0.813rem; font-weight: 500; color: #94a3b8; margin: 0 0 0.5rem 0; text-transform: uppercase; letter-spacing: 0.05em;'>Mode</p>",
         unsafe_allow_html=True)
     app_mode = st.radio(
         "Select operation mode", ["Generate Schedule", "Analyze Existing"],
@@ -568,7 +563,7 @@ with st.sidebar:
 
     if app_mode == "Generate Schedule":
         st.markdown(
-            "<p style='color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem;'>SCHEDULING OPTIONS</p>",
+            "<p style='font-size: 0.813rem; font-weight: 500; color: #94a3b8; margin: 0 0 0.75rem 0; text-transform: uppercase; letter-spacing: 0.05em;'>Scheduling Options</p>",
             unsafe_allow_html=True)
 
         time_limit = st.slider(
@@ -584,26 +579,26 @@ with st.sidebar:
                                  help="Faster but may produce more clashes")
     else:
         st.markdown(
-            "<p style='color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem;'>ANALYSIS OPTIONS</p>",
+            "<p style='font-size: 0.813rem; font-weight: 500; color: #94a3b8; margin: 0 0 0.75rem 0; text-transform: uppercase; letter-spacing: 0.05em;'>Analysis Options</p>",
             unsafe_allow_html=True)
-        max_suggestions = st.slider(
-            "Max suggestions to show",
-            min_value=3,
-            max_value=15,
-            value=10,
-            help="Number of course move suggestions to display")
+        fix_time_limit = st.slider(
+            "Fix time limit (seconds)",
+            min_value=30,
+            max_value=300,
+            value=120,
+            help="Maximum time the optimizer will spend fixing the schedule")
 
     st.markdown("---")
 
     st.markdown(
-        "<p style='color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem;'>ABOUT</p>",
+        "<p style='font-size: 0.813rem; font-weight: 500; color: #94a3b8; margin: 0 0 0.75rem 0; text-transform: uppercase; letter-spacing: 0.05em;'>About</p>",
         unsafe_allow_html=True)
     if app_mode == "Generate Schedule":
         st.markdown("""
-        <p style='color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;'>
+        <p style='color: #cbd5e1; font-size: 0.875rem; line-height: 1.6;'>
         UniSlot uses advanced optimization to schedule evening courses while <strong>minimizing student conflicts</strong>.
         </p>
-        <p style='color: #64748b; font-size: 0.85rem; line-height: 1.5; margin-top: 0.75rem;'>
+        <p style='color: #94a3b8; font-size: 0.813rem; line-height: 1.5; margin-top: 0.75rem;'>
         1. Upload your enrollment data<br>
         2. Configure scheduling options<br>
         3. Run the optimizer<br>
@@ -613,14 +608,14 @@ with st.sidebar:
                     unsafe_allow_html=True)
     else:
         st.markdown("""
-        <p style='color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;'>
+        <p style='color: #cbd5e1; font-size: 0.875rem; line-height: 1.6;'>
         <strong>Analyze Existing Schedules</strong> helps you find and fix clashes in pre-assigned schedules.
         </p>
-        <p style='color: #64748b; font-size: 0.85rem; line-height: 1.5; margin-top: 0.75rem;'>
+        <p style='color: #94a3b8; font-size: 0.813rem; line-height: 1.5; margin-top: 0.75rem;'>
         1. Upload your existing schedule<br>
         2. Upload enrollment data<br>
         3. Find all student clashes<br>
-        4. Get suggestions for optimal swaps
+        4. Fix schedule with optimizer
         </p>
         """,
                     unsafe_allow_html=True)
@@ -1270,212 +1265,179 @@ else:
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # Display suggestions with Fix buttons
-                if analysis.suggestions:
-                    st.markdown(f"""
-                    <div class="section-header">
-                        <div class="section-number">3</div>
-                        <h2>Optimization Suggestions</h2>
+                st.markdown(f"""
+                <div class="section-header">
+                    <div class="section-number">3</div>
+                    <h2>Fix Schedule</h2>
+                </div>
+                """,
+                            unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class="info-card">
+                    <p style="color: #cbd5e1; margin: 0;">
+                        Run UniSlot to fix clashes with <strong style="color: #10b981;">minimum changes</strong>.
+                        The optimizer prioritizes fewer clashes, then fewer moved courses.
+                    </p>
+                </div>
+                """,
+                            unsafe_allow_html=True)
+
+                file_key = f"analysis_{schedule_file.name}_{schedule_file.size}"
+                if "fixed_result" not in st.session_state or st.session_state[
+                        "fixed_result"].get("file_key") != file_key:
+                    st.session_state["fixed_result"] = {
+                        "file_key": file_key,
+                        "fixed_course_day_map": None,
+                        "fixed_analysis": None,
+                        "applied_fixes": [],
+                    }
+
+                if st.button("Fix Schedule",
+                             key="fix_schedule",
+                             use_container_width=True):
+                    fix_loading = st.empty()
+                    fix_loading.markdown("""
+                    <div class="loading-overlay">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text">Fixing Schedule</div>
+                        <div class="loading-subtext">Optimizing for minimum clashes...</div>
                     </div>
                     """,
-                                unsafe_allow_html=True)
+                                         unsafe_allow_html=True)
 
-                    st.markdown(f"""
-                    <div class="info-card">
-                        <p style="color: #cbd5e1; margin: 0;">
-                            These course moves would reduce clashes. Click <strong style="color: #f59e0b;">Fix</strong> to apply the change, 
-                            or <strong style="color: #10b981;">Export</strong> to download the current analysis.
-                        </p>
-                    </div>
-                    """,
-                                unsafe_allow_html=True)
+                    fixed_course_day_map, fixed_analysis = optimize_presorted_schedule(
+                        students if students else {},
+                        presorted,
+                        time_limit_seconds=fix_time_limit)
 
-                    # Track applied fixes in session state
-                    if "applied_fixes" not in st.session_state:
-                        st.session_state.applied_fixes = set()
+                    fix_loading.empty()
 
-                    for i, suggestion in enumerate(
-                            analysis.suggestions[:max_suggestions], 1):
-                        is_applied = i in st.session_state.applied_fixes
-                        card_class = "suggestion-card applied" if is_applied else "suggestion-card"
+                    applied_fixes_list = []
+                    original_map = presorted.course_day_map
+                    for course_code, new_day in sorted(
+                            fixed_course_day_map.items()):
+                        original_day = original_map.get(course_code)
+                        if original_day and new_day != original_day:
+                            applied_fixes_list.append({
+                                "course_code": course_code,
+                                "original_day": original_day,
+                                "new_day": new_day,
+                            })
 
-                        col_main, col_btn = st.columns([4, 1])
+                    st.session_state["fixed_result"] = {
+                        "file_key": file_key,
+                        "fixed_course_day_map": fixed_course_day_map,
+                        "fixed_analysis": fixed_analysis,
+                        "applied_fixes": applied_fixes_list,
+                    }
 
-                        with col_main:
-                            if is_applied:
-                                st.markdown(f"""
-                                <div class="{card_class}">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <div>
-                                            <strong style="font-size: 1.05rem; color: #10b981;">{i}. {suggestion.course_to_move}</strong>
-                                            <span style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.75rem; margin-left: 0.75rem;">APPLIED</span>
-                                            <br>
-                                            <span style="color: #6ee7b7; font-size: 0.9rem;">
-                                                <s style="color: #64748b;">{suggestion.current_day}</s> → <strong>{suggestion.suggested_day}</strong>
-                                            </span>
-                                        </div>
-                                        <div class="status-badge success">
-                                            -{suggestion.students_affected} clashes
-                                        </div>
-                                    </div>
-                                    <p style="color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 0 0;">{suggestion.reason}</p>
-                                </div>
-                                """,
-                                            unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"""
-                                <div class="{card_class}">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <div>
-                                            <strong style="font-size: 1.05rem; color: #f1f5f9;">{i}. Move {suggestion.course_to_move}</strong>
-                                            <br>
-                                            <span style="color: #94a3b8; font-size: 0.9rem;">
-                                                From <strong style="color: #f1f5f9;">{suggestion.current_day}</strong> → To <strong style="color: #3b82f6;">{suggestion.suggested_day}</strong>
-                                            </span>
-                                        </div>
-                                        <div class="status-badge {'success' if suggestion.students_affected >= 5 else 'primary'}">
-                                            -{suggestion.students_affected} clashes
-                                        </div>
-                                    </div>
-                                    <p style="color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 0 0;">{suggestion.reason}</p>
-                                </div>
-                                """,
-                                            unsafe_allow_html=True)
+                fixed_result = st.session_state.get("fixed_result")
+                fixed_analysis = fixed_result.get("fixed_analysis")
+                applied_fixes_list = fixed_result.get("applied_fixes", [])
 
-                        with col_btn:
-                            if not is_applied:
-                                if st.button(f"Fix",
-                                             key=f"fix_{i}",
-                                             use_container_width=True):
-                                    st.session_state.applied_fixes.add(i)
-                                    st.rerun()
-                            else:
-                                st.markdown(f"""
-                                <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #10b981;">
-                                    {ICONS["check"]}
-                                </div>
-                                """,
-                                            unsafe_allow_html=True)
-
-                    # Export section
+                if fixed_analysis:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown(f"""
-                    <div class="results-summary">
-                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
-                            <span style="color: #3b82f6;">{ICONS["download"]}</span>
-                            <span style="color: #f1f5f9; font-size: 1.1rem; font-weight: 600;">Export Options</span>
+                    <div class="info-card highlight">
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <span style="color: #10b981;">{ICONS["check"]}</span>
+                            <div>
+                                <strong style="font-size: 1.1rem; color: #10b981;">Fix Completed</strong>
+                                <p style="color: #6ee7b7; margin: 0.25rem 0 0 0; font-size: 0.9rem;">Applied {len(applied_fixes_list)} course changes.</p>
+                            </div>
                         </div>
-                        <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1rem;">
-                            Download the clash analysis or the fixed schedule with applied changes highlighted in green.
-                        </p>
                     </div>
                     """,
                                 unsafe_allow_html=True)
 
-                    # Generate clash report for export
-                    from unislot.models import ClashReport as CR, StudentClashReport, ClashStatus
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="results-summary">
+                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
+                        <span style="color: #3b82f6;">{ICONS["download"]}</span>
+                        <span style="color: #f1f5f9; font-size: 1.1rem; font-weight: 600;">Export Options</span>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1rem;">
+                        Download the clash analysis or the fixed schedule with changes highlighted in green.
+                    </p>
+                </div>
+                """,
+                            unsafe_allow_html=True)
 
-                    # Create a basic clash report from analysis
-                    clash_reports = []
-                    for clash in analysis.clash_details:
-                        from unislot.models import Day
-                        report = StudentClashReport(
-                            register_number=clash["student_id"],
-                            student_name=clash["student_name"],
-                            program=clash["program"],
-                            enrolled_courses=[
-                                clash["course_a"], clash["course_b"]
-                            ],
-                            status=ClashStatus.RED,
-                            clashing_courses=[(clash["course_a"],
-                                               clash["course_b"])],
-                            clashing_day=Day(clash["day"]),
-                        )
-                        clash_reports.append(report)
+                from unislot.models import ClashReport as CR, StudentClashReport, ClashStatus
 
-                    # Export directory
-                    output_dir = Path("/tmp/unislot_analysis")
-                    output_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Create a clash report object
-                    full_report = CR(
-                        reports=clash_reports,
-                        total_students=student_count,
-                        students_with_clashes=analysis.students_affected,
-                        clash_free_students=student_count -
-                        analysis.students_affected,
-                        clash_percentage=(analysis.students_affected /
-                                          student_count *
-                                          100) if student_count > 0 else 0,
+                report_source = fixed_analysis if fixed_analysis else analysis
+                clash_reports = []
+                for clash in report_source.clash_details:
+                    from unislot.models import Day
+                    report = StudentClashReport(
+                        register_number=clash["student_id"],
+                        student_name=clash["student_name"],
+                        program=clash["program"],
+                        enrolled_courses=[
+                            clash["course_a"], clash["course_b"]
+                        ],
+                        status=ClashStatus.RED,
+                        clashing_courses=[(clash["course_a"],
+                                           clash["course_b"])],
+                        clashing_day=Day(clash["day"]),
                     )
+                    clash_reports.append(report)
 
-                    clash_path = export_clash_report_xlsx(
-                        full_report, output_dir / "clash_analysis.xlsx")
+                output_dir = Path("/tmp/unislot_analysis")
+                output_dir.mkdir(parents=True, exist_ok=True)
 
-                    # Build applied fixes list from session state
-                    applied_fixes_list = []
-                    if st.session_state.applied_fixes:
-                        for i in st.session_state.applied_fixes:
-                            if i <= len(analysis.suggestions):
-                                suggestion = analysis.suggestions[
-                                    i - 1]  # 1-indexed
-                                applied_fixes_list.append({
-                                    "course_code":
-                                    suggestion.course_to_move,
-                                    "new_day":
-                                    suggestion.suggested_day,
-                                })
+                full_report = CR(
+                    reports=clash_reports,
+                    total_students=student_count,
+                    students_with_clashes=report_source.students_affected,
+                    clash_free_students=student_count -
+                    report_source.students_affected,
+                    clash_percentage=(report_source.students_affected /
+                                      student_count *
+                                      100) if student_count > 0 else 0,
+                )
 
-                    # Export fixed schedule if there are applied fixes
-                    fixed_path = None
-                    if applied_fixes_list and presorted is not None:
-                        fixed_path = export_fixed_schedule_xlsx(
-                            presorted, applied_fixes_list,
-                            output_dir / "fixed_schedule.xlsx")
+                clash_path = export_clash_report_xlsx(
+                    full_report, output_dir / "clash_analysis.xlsx")
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        with open(clash_path, "rb") as f:
+                fixed_path = None
+                if presorted is not None:
+                    fixed_path = export_fixed_schedule_xlsx(
+                        presorted, applied_fixes_list,
+                        output_dir / "fixed_schedule.xlsx")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    with open(clash_path, "rb") as f:
+                        st.download_button(
+                            "Download Clash Analysis",
+                            f.read(),
+                            file_name="clash_analysis.xlsx",
+                            mime=
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key="download_clash_analysis")
+
+                with col2:
+                    if fixed_path:
+                        with open(fixed_path, "rb") as f:
                             st.download_button(
-                                "Download Clash Analysis",
+                                f"Download Fixed Schedule ({len(applied_fixes_list)} changes)",
                                 f.read(),
-                                file_name="clash_analysis.xlsx",
+                                file_name="fixed_schedule.xlsx",
                                 mime=
                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True,
-                                key="download_clash_analysis")
-
-                    with col2:
-                        if fixed_path and applied_fixes_list:
-                            with open(fixed_path, "rb") as f:
-                                st.download_button(
-                                    f"Download Fixed Schedule ({len(applied_fixes_list)} changes)",
-                                    f.read(),
-                                    file_name="fixed_schedule.xlsx",
-                                    mime=
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    use_container_width=True,
-                                    key="download_fixed_schedule")
-                        else:
-                            st.markdown("""
-                            <div style="background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 1rem; text-align: center; border: 1px dashed #475569;">
-                                <p style="color: #64748b; margin: 0; font-size: 0.9rem;">Apply fixes above to enable export</p>
-                            </div>
-                            """,
-                                        unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div class="info-card success" style="text-align: center; padding: 2.5rem;">
-                        <div style="color: #10b981; margin-bottom: 0.5rem;">{ICONS["check"]}</div>
-                        <p style="font-size: 1.25rem; font-weight: 600; color: #10b981; margin: 0.5rem 0 0 0;">
-                            Schedule is Already Optimal
-                        </p>
-                        <p style="color: #6ee7b7; margin: 0.25rem 0 0 0;">
-                            No improvements suggested. All students have minimal conflicts.
-                        </p>
-                    </div>
-                    """,
-                                unsafe_allow_html=True)
+                                key="download_fixed_schedule")
+                    else:
+                        st.markdown("""
+                        <div style="background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 1rem; text-align: center; border: 1px dashed #475569;">
+                            <p style="color: #64748b; margin: 0; font-size: 0.9rem;">Run Fix Schedule to enable export</p>
+                        </div>
+                        """,
+                                    unsafe_allow_html=True)
 
     elif schedule_file is None:
         st.markdown(f"""

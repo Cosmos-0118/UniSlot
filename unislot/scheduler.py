@@ -66,6 +66,16 @@ def _calculate_parallel_cap(num_sections: int) -> int:
     return base_cap + buffer
 
 
+def _compute_clash_weight(conflict_graph: ConflictGraph,
+                          assignments: dict[str, int]) -> int:
+    """Compute total clash weight for a set of slot assignments."""
+    total_clash = 0
+    for edge in conflict_graph.edges:
+        if assignments.get(edge.section_a) == assignments.get(edge.section_b):
+            total_clash += edge.weight
+    return total_clash
+
+
 # Program name abbreviations for cleaner output
 # Note: Keys should be descriptive enough to avoid false matches
 PROGRAM_ABBREVIATIONS: dict[str, str] = {
@@ -504,8 +514,9 @@ def solve_cpsat(
         for i, sid in enumerate(section_ids):
             result.slot_assignments[sid] = solver.Value(slot_vars[i])
 
-        # Calculate actual clash weight
-        result.total_clash_weight = int(solver.ObjectiveValue())
+        # Calculate actual clash weight (clash-only, not balance penalties)
+        result.total_clash_weight = _compute_clash_weight(
+            conflict_graph, result.slot_assignments)
 
     return result
 
@@ -650,14 +661,9 @@ def solve_greedy(
     result.feasible = True
     result.solver_time_seconds = time.time() - start_time
 
-    # Calculate total clash weight
-    total_clash = 0
-    for (sid_a, neighbors) in adj.items():
-        for sid_b, weight in neighbors.items():
-            if sid_a < sid_b:  # Count each edge once
-                if assignments.get(sid_a) == assignments.get(sid_b):
-                    total_clash += weight
-    result.total_clash_weight = total_clash
+    # Calculate total clash weight (clash-only)
+    result.total_clash_weight = _compute_clash_weight(conflict_graph,
+                                                      assignments)
 
     return result
 
@@ -860,9 +866,9 @@ def run_scheduler(
                                                  faculty_constraints,
                                                  parallel_cap)
 
-        # Return the better solution
+        # Return the better solution (primary: minimum clashes)
         if greedy_result.total_clash_weight < result.total_clash_weight:
-            greedy_result.solver_used = "greedy (better than cp-sat)"
+            greedy_result.solver_used = "greedy (fewer clashes than cp-sat)"
             greedy_result.solver_time_seconds = time.time() - total_start_time
             return greedy_result
 
@@ -1211,15 +1217,52 @@ def analyze_presorted_schedule_clashes(
     )
 
 
+def _get_presorted_student_data(
+    students: Optional[dict[str, Student]],
+    presorted_schedule,
+) -> dict[str, Any]:
+    if students:
+        return students
+    if hasattr(presorted_schedule, 'students') and presorted_schedule.students:
+        return {
+            reg:
+            type(
+                'Student', (), {
+                    'enrolled_courses': s.enrolled_courses,
+                    'name': s.name,
+                    'program': s.program,
+                    'register_number': s.register_number,
+                })()
+            for reg, s in presorted_schedule.students.items()
+        }
+    return {}
+
+
+def _build_course_conflicts(
+        student_data: dict[str, Any]) -> dict[tuple[str, str], int]:
+    conflicts: dict[tuple[str, str], int] = defaultdict(int)
+    for student in student_data.values():
+        courses = [c for c in getattr(student, 'enrolled_courses', []) if c]
+        for i in range(len(courses)):
+            for j in range(i + 1, len(courses)):
+                a = courses[i]
+                b = courses[j]
+                if a == b:
+                    continue
+                key = (a, b) if a < b else (b, a)
+                conflicts[key] += 1
+    return conflicts
+
+
 def optimize_presorted_schedule(
     students: dict[str, Student],
     presorted_schedule,
-    max_changes: int = 5,
+    time_limit_seconds: int = 120,
 ) -> tuple[dict[str, str], PresortedAnalysis]:
     """
     Attempt to optimize a pre-sorted schedule with limited changes.
     
-    Makes at most `max_changes` day reassignments to minimize clashes.
+    Minimizes clashes first, then minimizes the number of moved courses.
     
     Returns:
         Tuple of (optimized day assignments, analysis of optimized schedule)
@@ -1228,33 +1271,111 @@ def optimize_presorted_schedule(
 
     course_day_map = dict(presorted_schedule.course_day_map)
 
-    for _ in range(max_changes):
-        # Re-analyze with current assignments
-        mock = PresortedSchedule(
-            entries=presorted_schedule.entries,
-            day_slot_map=presorted_schedule.day_slot_map,
-            course_day_map=course_day_map,
-            course_slot_map=presorted_schedule.course_slot_map,
-        )
+    student_data = _get_presorted_student_data(students, presorted_schedule)
+    if not student_data or not course_day_map:
+        final_analysis = analyze_presorted_schedule_clashes(
+            students, presorted_schedule)
+        return course_day_map, final_analysis
 
-        analysis = analyze_presorted_schedule_clashes(students, mock)
+    conflicts = _build_course_conflicts(student_data)
 
-        if not analysis.suggestions:
-            break
+    day_order = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
 
-        # Apply top suggestion
-        best = analysis.suggestions[0]
-        if best.students_affected > 0:
-            course_day_map[best.course_to_move] = best.suggested_day
-        else:
-            break
+    if getattr(presorted_schedule, 'course_day_options', None):
+        all_days = sorted(
+            {
+                d
+                for days in presorted_schedule.course_day_options.values()
+                for d in days
+            },
+            key=lambda d: day_order.index(d) if d in day_order else 99)
+    else:
+        all_days = sorted(set(course_day_map.values()),
+                          key=lambda d: day_order.index(d)
+                          if d in day_order else 99)
 
-    # Final analysis
+    if not all_days:
+        all_days = day_order[:5]
+
+    day_to_idx = {day: i for i, day in enumerate(all_days)}
+
+    model: Any = cp_model.CpModel()
+    course_vars: dict[str, Any] = {}
+
+    for course in sorted(course_day_map.keys()):
+        allowed_days = None
+        if getattr(presorted_schedule, 'course_day_options', None):
+            allowed_days = presorted_schedule.course_day_options.get(course)
+        allowed_idx = [
+            day_to_idx[d] for d in (allowed_days or all_days)
+            if d in day_to_idx
+        ]
+        if not allowed_idx:
+            allowed_idx = list(day_to_idx.values())
+        domain = cp_model.Domain.FromValues(allowed_idx)
+        course_vars[course] = model.NewIntVarFromDomain(
+            domain, f"course_{course}")
+
+    clash_penalties: list[Any] = []
+    for (course_a, course_b), weight in conflicts.items():
+        if course_a not in course_vars or course_b not in course_vars:
+            continue
+        same_day = model.NewBoolVar(f"clash_{course_a}_{course_b}")
+        model.Add(course_vars[course_a] ==
+                  course_vars[course_b]).OnlyEnforceIf(same_day)
+        model.Add(
+            course_vars[course_a] != course_vars[course_b]).OnlyEnforceIf(
+                same_day.Not())
+        penalty = model.NewIntVar(0, weight, f"penalty_{course_a}_{course_b}")
+        model.Add(penalty == weight).OnlyEnforceIf(same_day)
+        model.Add(penalty == 0).OnlyEnforceIf(same_day.Not())
+        clash_penalties.append(penalty)
+
+    move_bools: list[Any] = []
+    for course, var in course_vars.items():
+        original_day = course_day_map.get(course)
+        if original_day not in day_to_idx:
+            continue
+        moved = model.NewBoolVar(f"moved_{course}")
+        model.Add(var != day_to_idx[original_day]).OnlyEnforceIf(moved)
+        model.Add(var == day_to_idx[original_day]).OnlyEnforceIf(moved.Not())
+        move_bools.append(moved)
+
+    total_clash_penalty = sum(clash_penalties) if clash_penalties else 0
+    total_moves = sum(move_bools) if move_bools else 0
+
+    model.Minimize(1000 * total_clash_penalty + total_moves)
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit_seconds
+    solver.parameters.num_search_workers = 8
+
+    status = solver.Solve(model)
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        for course, var in course_vars.items():
+            idx = solver.Value(var)
+            if 0 <= idx < len(all_days):
+                course_day_map[course] = all_days[idx]
+
     final_mock = PresortedSchedule(
         entries=presorted_schedule.entries,
         day_slot_map=presorted_schedule.day_slot_map,
         course_day_map=course_day_map,
         course_slot_map=presorted_schedule.course_slot_map,
+        students=getattr(presorted_schedule, 'students', None),
+        course_day_options=getattr(presorted_schedule, 'course_day_options',
+                                   None),
+        course_day_pairs=getattr(presorted_schedule, 'course_day_pairs', None),
+        original_df=getattr(presorted_schedule, 'original_df', None),
     )
 
     final_analysis = analyze_presorted_schedule_clashes(students, final_mock)
