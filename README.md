@@ -31,6 +31,12 @@ streamlit run unislot/ui.py
 
 Open http://localhost:8501 in your browser.
 
+### Deploy on Streamlit Community Cloud
+
+- App entrypoint: `streamlit_app.py`
+- Python version: 3.11+
+- Requirements: `requirements.txt`
+
 ### Run the API
 
 ```bash
