@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from unislot.models import ClashReport, ClashStatus, Schedule
-from unislot.output import export_all, export_clash_report_xlsx, export_fixed_schedule_xlsx
+from unislot.output import export_all, export_clash_report_xlsx, export_fixed_schedule_xlsx, export_course_grouping_xlsx
 from unislot.parser import load_and_validate, parse_presorted_schedule
 from unislot.preprocessing import (
     assign_students_to_sections,
@@ -911,12 +911,16 @@ if app_mode == "Generate Schedule":
                     output_dir = Path("/tmp/unislot_output")
                     schedule_path, clash_path = export_all(
                         schedule, clash_report, output_dir)
+                    course_group_path = export_course_grouping_xlsx(
+                        rows, output_dir / "course_emails.xlsx")
 
                     # Read file data for download buttons
                     with open(schedule_path, "rb") as f:
                         schedule_data = f.read()
                     with open(clash_path, "rb") as f:
                         clash_data = f.read()
+                    with open(course_group_path, "rb") as f:
+                        course_group_data = f.read()
 
                     # Store everything in session state with file key
                     st.session_state["schedule_result"] = {
@@ -926,6 +930,7 @@ if app_mode == "Generate Schedule":
                         "result": result,
                         "schedule_data": schedule_data,
                         "clash_data": clash_data,
+                        "course_group_data": course_group_data,
                     }
 
                     time.sleep(0.3)
@@ -942,6 +947,7 @@ if app_mode == "Generate Schedule":
                 result = stored["result"]
                 schedule_data = stored["schedule_data"]
                 clash_data = stored["clash_data"]
+                course_group_data = stored.get("course_group_data")
 
                 # Section: Results
                 st.markdown("""
@@ -1057,6 +1063,17 @@ if app_mode == "Generate Schedule":
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                         key="download_clash")
+
+                with col3:
+                    if course_group_data:
+                        st.download_button(
+                            "Download Course Emails",
+                            course_group_data,
+                            file_name="course_emails.xlsx",
+                            mime=
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key="download_course_emails")
 
 else:
     # ============== ANALYZE EXISTING SCHEDULE MODE ==============
@@ -1358,8 +1375,12 @@ else:
                     }
 
                 fixed_result = st.session_state.get("fixed_result")
-                fixed_analysis = fixed_result.get("fixed_analysis")
-                applied_fixes_list = fixed_result.get("applied_fixes", [])
+                if fixed_result:
+                    fixed_analysis = fixed_result.get("fixed_analysis")
+                    applied_fixes_list = fixed_result.get("applied_fixes", [])
+                else:
+                    fixed_analysis = None
+                    applied_fixes_list = []
 
                 if fixed_analysis:
                     st.markdown("<br>", unsafe_allow_html=True)

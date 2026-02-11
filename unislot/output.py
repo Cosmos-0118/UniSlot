@@ -1,7 +1,7 @@
 """Output generation: Export schedule and clash report to Excel."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict, cast
 from collections import defaultdict
 
 import pandas as pd
@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from unislot.models import ClashReport, ClashStatus, Schedule, Day
+from unislot.models import ClashReport, ClashStatus, Schedule, Day, EnrollmentRow
 from unislot.parser import clean_course_code, normalize_day
 
 # ============== Style Definitions ==============
@@ -300,7 +300,7 @@ def export_schedule_xlsx(
         _apply_style(cell, styles["header"])
 
     # Sort entries by day for better organization
-    day_order = {
+    day_index = {
         "Monday": 0,
         "Tuesday": 1,
         "Wednesday": 2,
@@ -310,7 +310,7 @@ def export_schedule_xlsx(
     }
     sorted_entries = sorted(schedule.entries,
                             key=lambda e:
-                            (day_order.get(e.day.value, 6), e.course_code))
+                            (day_index.get(e.day.value, 6), e.course_code))
 
     # Write data rows with alternating colors and day-based highlighting
     data_start_row = header_row + 1
@@ -871,7 +871,7 @@ def export_schedule_simple_xlsx(schedule: Schedule,
     ws.row_dimensions[row].height = 28
 
     # Sort by day
-    day_order = {
+    day_index = {
         "Monday": 0,
         "Tuesday": 1,
         "Wednesday": 2,
@@ -881,7 +881,7 @@ def export_schedule_simple_xlsx(schedule: Schedule,
     }
     sorted_entries = sorted(schedule.entries,
                             key=lambda e:
-                            (day_order.get(e.day.value, 6), e.course_code))
+                            (day_index.get(e.day.value, 6), e.course_code))
 
     # Data rows
     row = 4
@@ -946,6 +946,186 @@ def export_schedule_simple_xlsx(schedule: Schedule,
 
     ws_summary.column_dimensions["A"].width = 20
     ws_summary.column_dimensions["B"].width = 15
+
+    wb.save(output_path)
+    return output_path
+
+
+def export_course_grouping_xlsx(
+    rows: list[EnrollmentRow],
+    output_path: Path | str,
+) -> Path:
+    """
+    Export course-wise email groups with a separate missing-email sheet.
+
+    Creates organized sheets:
+    - Course Emails: One row per course with emails in a single cell
+    - Missing Emails: One row per student without email
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    styles = _get_styles()
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Course Emails"
+
+    class CourseGroup(TypedDict):
+        title: str
+        students: set[str]
+        emails: list[str]
+        missing: list[EnrollmentRow]
+
+    course_map: dict[str, CourseGroup] = {}
+
+    for row in rows:
+        code = clean_course_code(getattr(row, "course_code", ""))
+        if not code:
+            continue
+        title = getattr(row, "course_title", "") or ""
+        info = course_map.get(code)
+        if info is None:
+            info = cast(CourseGroup, {
+                "title": title,
+                "students": set(),
+                "emails": [],
+                "missing": [],
+            })
+            course_map[code] = info
+        info["students"].add(getattr(row, "register_number", ""))
+        email = getattr(row, "email_id", None)
+        if email:
+            info["emails"].append(str(email).lower())
+        else:
+            info["missing"].append(row)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
+    cell = ws.cell(row=1, column=1, value="COURSE EMAIL GROUPS")
+    _apply_style(cell, styles["title"])
+    ws.row_dimensions[1].height = 30
+
+    headers = [
+        "Course Code",
+        "Course Title",
+        "Student Count",
+        "Email Count",
+        "Emails",
+    ]
+    header_row = 3
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=header)
+        _apply_style(cell, styles["header"])
+    ws.row_dimensions[header_row].height = 28
+
+    row_idx = header_row + 1
+    for code in sorted(course_map.keys()):
+        info = course_map[code]
+        title = info["title"]
+        student_count = len(info["students"])
+
+        emails: list[str] = []
+        seen = set()
+        for email in info["emails"]:
+            if email and email not in seen:
+                emails.append(email)
+                seen.add(email)
+
+        email_text = ", ".join(emails)
+        row_data = [
+            code,
+            title,
+            student_count,
+            len(emails),
+            email_text,
+        ]
+
+        row_fill = PatternFill(
+            start_color=COLORS["row_alt"] if row_idx %
+            2 == 0 else COLORS["white"],
+            end_color=COLORS["row_alt"] if row_idx %
+            2 == 0 else COLORS["white"],
+            fill_type="solid",
+        )
+
+        for col_idx, value in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            _apply_style(
+                cell,
+                styles["cell_center"] if col_idx in [3, 4] else styles["cell"],
+            )
+            if col_idx == 5:
+                cell.alignment = Alignment(horizontal="left",
+                                           vertical="center",
+                                           wrap_text=True)
+            cell.fill = row_fill
+
+        ws.row_dimensions[row_idx].height = 24
+        row_idx += 1
+
+    ws.column_dimensions[get_column_letter(1)].width = 16
+    ws.column_dimensions[get_column_letter(2)].width = 45
+    ws.column_dimensions[get_column_letter(3)].width = 14
+    ws.column_dimensions[get_column_letter(4)].width = 12
+    ws.column_dimensions[get_column_letter(5)].width = 90
+    _freeze_panes(ws, header_row + 1)
+
+    ws_missing = wb.create_sheet("Missing Emails")
+    ws_missing.merge_cells(start_row=1,
+                           start_column=1,
+                           end_row=1,
+                           end_column=5)
+    cell = ws_missing.cell(row=1, column=1, value="STUDENTS WITHOUT EMAIL")
+    _apply_style(cell, styles["title"])
+    ws_missing.row_dimensions[1].height = 30
+
+    missing_headers = [
+        "Course Code",
+        "Course Title",
+        "Register Number",
+        "Student Name",
+        "Program",
+    ]
+    header_row = 3
+    for col_idx, header in enumerate(missing_headers, start=1):
+        cell = ws_missing.cell(row=header_row, column=col_idx, value=header)
+        _apply_style(cell, styles["header"])
+    ws_missing.row_dimensions[header_row].height = 28
+
+    missing_rows = []
+    for code in sorted(course_map.keys()):
+        info = course_map[code]
+        for missing_row in info["missing"]:
+            missing_rows.append((
+                code,
+                info["title"],
+                getattr(missing_row, "register_number", ""),
+                getattr(missing_row, "student_name", ""),
+                getattr(missing_row, "program", ""),
+            ))
+
+    row_idx = header_row + 1
+    for item in missing_rows:
+        row_fill = PatternFill(
+            start_color=COLORS["row_alt"] if row_idx %
+            2 == 0 else COLORS["white"],
+            end_color=COLORS["row_alt"] if row_idx %
+            2 == 0 else COLORS["white"],
+            fill_type="solid",
+        )
+        for col_idx, value in enumerate(item, start=1):
+            cell = ws_missing.cell(row=row_idx, column=col_idx, value=value)
+            _apply_style(cell, styles["cell"])
+            cell.fill = row_fill
+        ws_missing.row_dimensions[row_idx].height = 22
+        row_idx += 1
+
+    ws_missing.column_dimensions[get_column_letter(1)].width = 16
+    ws_missing.column_dimensions[get_column_letter(2)].width = 45
+    ws_missing.column_dimensions[get_column_letter(3)].width = 18
+    ws_missing.column_dimensions[get_column_letter(4)].width = 28
+    ws_missing.column_dimensions[get_column_letter(5)].width = 24
+    _freeze_panes(ws_missing, header_row + 1)
 
     wb.save(output_path)
     return output_path
