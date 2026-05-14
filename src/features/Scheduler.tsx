@@ -4,14 +4,15 @@ import {
   CalendarDays,
   CheckCircle2,
   Download,
+  Eye,
   FileSpreadsheet,
-  Loader2,
   Users,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { cn } from '../lib/cn'
 import type { ScheduleEntry, StudentClashReport, ValidationError } from '../lib/unislot/types'
 import { useUnislotWorker, type PipelineOutput } from '../hooks/useUnislotWorker'
+import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
 
 function downloadArrayBuffer(data: ArrayBuffer, filename: string) {
   const blob = new Blob([data], {
@@ -134,10 +135,13 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
   )
 }
 
+type ViewMode = 'idle' | 'processing' | 'actions' | 'details'
+
 export function Scheduler({ result, onResult }: { result: PipelineOutput | null, onResult: (r: PipelineOutput | null) => void }) {
   const { run, running, progress } = useUnislotWorker()
   const [drag, setDrag] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('idle')
 
   const handleFile = useCallback(
     async (file: File | null) => {
@@ -148,92 +152,202 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
       }
       setFileName(file.name)
       onResult(null)
+      setViewMode('processing')
       try {
         const out = await run(file)
         onResult(out)
+        // If valid, show action buttons; if invalid, go straight to details
+        if (out.validation.is_valid) {
+          setViewMode('actions')
+        } else {
+          setViewMode('details')
+        }
       } catch (e) {
         console.error(e)
+        setViewMode('idle')
         alert(e instanceof Error ? e.message : 'Something went wrong')
       }
     },
     [run, onResult],
   )
 
+  const showUploader = viewMode === 'idle'
+  const showTerminal = viewMode === 'processing'
+  const showActions = viewMode === 'actions' && result?.validation.is_valid
+  const showDetails = viewMode === 'details' && result
+
   return (
-    <div className="mx-auto flex flex-col px-8 py-10 max-w-5xl">
-      <header className="mb-12 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+    <div className={cn(
+      'mx-auto flex flex-col px-8 max-w-5xl w-full',
+      showTerminal ? 'py-6 h-full' : 'py-10',
+      showActions && 'h-full justify-center',
+    )}>
+      <header className={cn(
+        'flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between',
+        showTerminal ? 'mb-4' : 'mb-12',
+      )}>
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-text sm:text-5xl">
+          <h1 className={cn(
+            'font-bold tracking-tight text-text',
+            showTerminal ? 'text-2xl' : 'text-4xl sm:text-5xl',
+          )}>
             Scheduler
           </h1>
-          <p className="mt-3 max-w-xl text-lg leading-relaxed text-text-muted">
-            Drop your enrollment workbook. Parsing, sectioning, conflict detection, and scheduling run
-            entirely in a dedicated browser worker.
-          </p>
+          {!showTerminal && (
+            <p className="mt-3 max-w-xl text-lg leading-relaxed text-text-muted">
+              Drop your enrollment workbook. Parsing, sectioning, conflict detection, and scheduling run
+              entirely in a dedicated browser worker.
+            </p>
+          )}
         </div>
+        {/* Show "New run" button when we're in actions/details mode */}
+        {(viewMode === 'actions' || viewMode === 'details') && (
+          <button
+            type="button"
+            onClick={() => {
+              onResult(null)
+              setViewMode('idle')
+            }}
+            className="inline-flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/50 px-4 py-2.5 text-sm font-medium text-text transition hover:bg-border shrink-0"
+          >
+            <FileSpreadsheet className="size-4" aria-hidden />
+            New run
+          </button>
+        )}
       </header>
 
-      <section className="mb-10">
-        <button
-          type="button"
-          onDragOver={(e) => {
-            e.preventDefault()
-            setDrag(true)
-          }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setDrag(false)
-            const f = e.dataTransfer.files[0]
-            void handleFile(f ?? null)
-          }}
-          onClick={() => {
-            const input = document.createElement('input')
-            input.type = 'file'
-            input.accept = '.xlsx'
-            input.onchange = () => {
-              const f = input.files?.[0]
+      {/* ── Upload zone ──────────────────────────────────── */}
+      {showUploader && (
+        <section className="mb-10">
+          <button
+            type="button"
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDrag(true)
+            }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDrag(false)
+              const f = e.dataTransfer.files[0]
               void handleFile(f ?? null)
-            }
-            input.click()
-          }}
-          className={cn(
-            'group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 transition-all duration-300',
-            drag
-              ? 'border-brand-500 bg-brand-500/5 shadow-[0_0_60px_-12px_rgba(var(--brand-500-rgb),0.3)]'
-              : 'border-border bg-bg-secondary/30 hover:border-brand-500/50 hover:bg-bg-secondary/80',
-            running && 'pointer-events-none opacity-60',
-          )}
-        >
-          {running ? (
-            <Loader2 className="size-12 animate-spin text-brand-500" aria-hidden />
-          ) : (
+            }}
+            onClick={() => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.accept = '.xlsx'
+              input.onchange = () => {
+                const f = input.files?.[0]
+                void handleFile(f ?? null)
+              }
+              input.click()
+            }}
+            className={cn(
+              'group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 transition-all duration-300',
+              drag
+                ? 'border-brand-500 bg-brand-500/5 shadow-[0_0_60px_-12px_rgba(var(--brand-500-rgb),0.3)]'
+                : 'border-border bg-bg-secondary/30 hover:border-brand-500/50 hover:bg-bg-secondary/80',
+            )}
+          >
             <div className="flex size-14 items-center justify-center rounded-2xl bg-brand-500 shadow-lg shadow-brand-500/30">
               <FileSpreadsheet className="size-7 text-white" aria-hidden />
             </div>
-          )}
-          <div className="text-center">
-            <p className="text-lg font-medium text-text">
-              {running ? 'Working in background thread…' : 'Click or drop enrollment .xlsx'}
-            </p>
-            {progress && (
-              <p className="mt-2 text-sm text-brand-500/90">
-                {progress.message}
-              </p>
-            )}
-            {fileName && !running && (
-              <p className="mt-2 text-xs text-text-muted">Last file: {fileName}</p>
-            )}
-          </div>
-          <span className="inline-flex items-center gap-2 rounded-full bg-bg-tertiary px-4 py-2 text-sm font-medium text-text transition group-hover:bg-bg-tertiary/80 border border-border">
-            Choose file
-            <ArrowRight className="size-4 opacity-70" aria-hidden />
-          </span>
-        </button>
-      </section>
+            <div className="text-center">
+              <p className="text-lg font-medium text-text">Click or drop enrollment .xlsx</p>
+              {fileName && (
+                <p className="mt-2 text-xs text-text-muted">Last file: {fileName}</p>
+              )}
+            </div>
+            <span className="inline-flex items-center gap-2 rounded-full bg-bg-tertiary px-4 py-2 text-sm font-medium text-text transition group-hover:bg-bg-tertiary/80 border border-border">
+              Choose file
+              <ArrowRight className="size-4 opacity-70" aria-hidden />
+            </span>
+          </button>
+        </section>
+      )}
 
-      {result && (
+      {/* ── Terminal (processing view) ───────────────────── */}
+      {showTerminal && (
+        <section className="flex-1 flex flex-col min-h-0 mb-4">
+          <ProcessingTerminal
+            stage={progress?.stage ?? null}
+            message={progress?.message ?? null}
+            done={false}
+          />
+          {fileName && (
+            <p className="mt-3 text-center text-xs text-text-muted">
+              Processing <span className="font-mono text-text">{fileName}</span>
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* ── Action buttons (after successful run) ────────── */}
+      {showActions && result && (
+        <section className="mb-10">
+          <div className="results-panel">
+            {/* Success icon */}
+            <div className="results-check">
+              <CheckCircle2 className="size-7" />
+            </div>
+
+            <div className="text-center">
+              <h2 className="text-xl font-bold text-text">Pipeline Complete</h2>
+              <p className="mt-1 text-sm text-text-muted">
+                {result.stats?.studentCount} students · {result.stats?.courseCount} courses · {result.stats?.sectionCount} sections
+              </p>
+            </div>
+
+            {/* Three action buttons */}
+            <div className="results-actions">
+              {result.scheduleXlsx && (
+                <button
+                  type="button"
+                  onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
+                  className="btn-download btn-download-primary"
+                >
+                  <Download className="size-4" aria-hidden />
+                  Download Schedule
+                </button>
+              )}
+              {result.clashXlsx && (
+                <button
+                  type="button"
+                  onClick={() => downloadArrayBuffer(result.clashXlsx!, 'unislot-clash-report.xlsx')}
+                  className="btn-download btn-download-secondary"
+                >
+                  <Download className="size-4" aria-hidden />
+                  Download Clash Report
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('details')}
+              className="btn-view"
+            >
+              <Eye className="size-4" aria-hidden />
+              View Outcome
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ── Details view (full results) ──────────────────── */}
+      {showDetails && result && (
         <section className="space-y-10 pb-20">
+          {/* Back to actions button (only if valid) */}
+          {result.validation.is_valid && (
+            <button
+              type="button"
+              onClick={() => setViewMode('actions')}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/50 px-4 py-2.5 text-sm font-medium text-text transition hover:bg-border"
+            >
+              ← Back to downloads
+            </button>
+          )}
+
           {!result.validation.is_valid && (
             <div className="rounded-3xl border border-red-500/30 bg-red-500/10 p-6">
               <div className="flex items-start gap-3">

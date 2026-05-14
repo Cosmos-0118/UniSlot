@@ -104,8 +104,10 @@ export async function runPipeline(
   const conflictGraph = buildConflictGraph(students, courseSections)
   const facultyConstraints = extractFacultyConstraints(courseSections)
 
-  onProgress('schedule', 'Optimizing timetable in your browser…')
-  const sched = runScheduler(courseSections, conflictGraph, facultyConstraints)
+  onProgress('schedule', 'Optimizing timetable in your browser (ETA: ~2-5 mins)…')
+  const sched = runScheduler(courseSections, conflictGraph, facultyConstraints, (msg) => {
+    onProgress('schedule', msg)
+  })
   let schedule = buildSchedule(courseSections, sched.slot_assignments, {
     solver_used: sched.solver_used,
     solver_time_seconds: sched.solver_time_seconds,

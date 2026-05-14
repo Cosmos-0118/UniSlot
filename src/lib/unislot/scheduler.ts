@@ -12,9 +12,16 @@ import { INDEX_TO_DAY } from './types'
 
 const NUM_SLOTS = 5
 const NUM_SLOTS_WITH_SATURDAY = 6
-const MULTI_START_RUNS = 10
-const SOLUTION_POOL_TOP = 3
 const LOAD_BALANCE_FACTOR = 5
+
+/** Adaptive multi-start count (quality vs worker time). */
+function multiStartRunCount(sectionCount: number): number {
+  return Math.min(80, Math.max(18, Math.ceil(Math.sqrt(sectionCount) * 4)))
+}
+
+function solutionPoolSize(runCount: number): number {
+  return Math.min(16, Math.max(4, Math.floor(runCount / 4)))
+}
 
 function isMathCourse(courseCode: string): boolean {
   return courseCode.toUpperCase().includes('MAB')
@@ -37,6 +44,40 @@ function computeClashWeight(
     }
   }
   return total
+}
+
+function sumConflictGraphWeights(graph: ConflictGraph): number {
+  return graph.edges.reduce((s, e) => s + e.weight, 0)
+}
+
+function buildEnrollmentIndex(sections: Section[]) {
+  const studentToSections = new Map<string, string[]>()
+  const sectionToStudents = new Map<string, string[]>()
+  for (const sec of sections) {
+    sectionToStudents.set(sec.section_id, sec.enrolled_students)
+    for (const st of sec.enrolled_students) {
+      if (!studentToSections.has(st)) studentToSections.set(st, [])
+      studentToSections.get(st)!.push(sec.section_id)
+    }
+  }
+  return { studentToSections, sectionToStudents }
+}
+
+/** Students with ≥2 enrolled sections in the same slot (matches clash-report KPI). */
+function countStudentsWithSlotClashes(
+  studentToSections: Map<string, string[]>,
+  assignments: Record<string, number>,
+): number {
+  let n = 0
+  for (const st of studentToSections.keys()) {
+    const tally = new Array(NUM_SLOTS_WITH_SATURDAY).fill(0)
+    for (const secId of studentToSections.get(st)!) {
+      const sl = assignments[secId]
+      if (sl !== undefined && sl >= 0 && sl < NUM_SLOTS_WITH_SATURDAY) tally[sl]++
+    }
+    if (tally.some((c) => c >= 2)) n++
+  }
+  return n
 }
 
 function maxSlotForSection(sid: string, mathSections: Set<string>): number {
@@ -108,21 +149,27 @@ function hybridSATabuImprove(
   const facultySlots = buildFacultySlotMap(assignments, sectionFaculty)
 
   const maxIter = Math.min(
-    80_000,
+    400_000,
     Math.max(
-      1_500,
-      Math.floor((options?.maxIterFactor ?? 1) * (150 * n + 15 * mEdges + 800)),
+      10_000,
+      Math.floor((options?.maxIterFactor ?? 1) * (500 * n + 50 * mEdges + 3000)),
     ),
   )
   const baseTenure = Math.max(4, Math.min(40, Math.floor(5 + n / 8)))
   const coolPeriod = Math.max(40, Math.floor(25 + n / 3))
   const stagnationReheat = Math.max(250, Math.floor(180 + n * 4))
 
-  let temperature = Math.max(2, computeClashWeight(conflictGraph, assignments) * 0.04)
-  const t0 = temperature
+  const { studentToSections, sectionToStudents } = buildEnrollmentIndex(sections)
+  const LEX_W = sumConflictGraphWeights(conflictGraph) + 1
+
   let totalClash = computeClashWeight(conflictGraph, assignments)
-  let globalBest = totalClash
+  let studentClash = countStudentsWithSlotClashes(studentToSections, assignments)
+  let globalBestEdges = totalClash
+  let globalBestStudents = studentClash
   const globalBestAssign: Record<string, number> = { ...assignments }
+
+  let temperature = Math.max(50, studentClash * LEX_W * 0.06 + totalClash * 0.04)
+  const t0 = temperature
 
   const tabuUntil = new Map<string, number>()
   let iterSinceGlobalBest = 0
@@ -333,6 +380,63 @@ function hybridSATabuImprove(
     }
   }
 
+  function studentClashUnder(slotOf: (secId: string) => number, st: string): boolean {
+    const tally = new Array(NUM_SLOTS_WITH_SATURDAY).fill(0)
+    for (const secId of studentToSections.get(st) ?? []) {
+      const sl = slotOf(secId)
+      if (sl >= 0 && sl < NUM_SLOTS_WITH_SATURDAY) tally[sl]++
+    }
+    return tally.some((c) => c >= 2)
+  }
+
+  function deltaStudentsSingleMove(sid: string, newSlot: number): number {
+    const sts = sectionToStudents.get(sid)
+    if (!sts?.length) return 0
+    let d = 0
+    for (const st of sts) {
+      const before = studentClashUnder((secId) => assignments[secId]!, st)
+      const after = studentClashUnder((secId) => (secId === sid ? newSlot : assignments[secId]!), st)
+      d += (after ? 1 : 0) - (before ? 1 : 0)
+    }
+    return d
+  }
+
+  function deltaStudentsSwap(sid1: string, sid2: string): number {
+    const A = assignments[sid1]!
+    const B = assignments[sid2]!
+    const affected = new Set<string>()
+    for (const st of sectionToStudents.get(sid1) ?? []) affected.add(st)
+    for (const st of sectionToStudents.get(sid2) ?? []) affected.add(st)
+    let d = 0
+    for (const st of affected) {
+      const before = studentClashUnder((secId) => assignments[secId]!, st)
+      const after = studentClashUnder(
+        (secId) => (secId === sid1 ? B : secId === sid2 ? A : assignments[secId]!),
+        st,
+      )
+      d += (after ? 1 : 0) - (before ? 1 : 0)
+    }
+    return d
+  }
+
+  function deltaStudentsKempe(component: string[], c1: number, c2: number): number {
+    const inComp = new Set(component)
+    const affected = new Set<string>()
+    for (const sec of component) {
+      for (const st of sectionToStudents.get(sec) ?? []) affected.add(st)
+    }
+    let d = 0
+    for (const st of affected) {
+      const before = studentClashUnder((secId) => assignments[secId]!, st)
+      const after = studentClashUnder((secId) => {
+        const s = assignments[secId]!
+        return inComp.has(secId) ? (s === c1 ? c2 : c1) : s
+      }, st)
+      d += (after ? 1 : 0) - (before ? 1 : 0)
+    }
+    return d
+  }
+
   function registerTabuMoveTo(sid: string, fromSlot: number, iter: number, tenure: number): void {
     tabuUntil.set(tabuAttrKey(sid, fromSlot), iter + tenure)
   }
@@ -342,13 +446,16 @@ function hybridSATabuImprove(
 
     const tenure = baseTenure + (iter % 5)
     const roll = Math.random()
-    const newCostIf = (delta: number) => totalClash + delta
-    const canAccept = (delta: number, tabuBlocked: boolean): boolean => {
-      const nc = newCostIf(delta)
-      if (nc < globalBest) return true
+    const canAccept = (dS: number, dE: number, tabuBlocked: boolean): boolean => {
+      const newS = studentClash + dS
+      const newE = totalClash + dE
+      if (newS < globalBestStudents || (newS === globalBestStudents && newE < globalBestEdges)) {
+        return true
+      }
       if (tabuBlocked) return false
-      if (delta <= 0) return true
-      return Math.random() < Math.exp(-delta / temperature)
+      const deltaF = dS * LEX_W + dE
+      if (deltaF <= 0) return true
+      return Math.random() < Math.exp(-deltaF / temperature)
     }
 
     if (roll < 0.5) {
@@ -357,25 +464,29 @@ function hybridSATabuImprove(
       const newSlot = Math.floor(Math.random() * maxS)
       if (!feasibleSingleMove(sid, newSlot)) continue
       const oldSlot = assignments[sid]!
-      const delta = clashDeltaSingleMove(sid, oldSlot, newSlot)
+      const dE = clashDeltaSingleMove(sid, oldSlot, newSlot)
+      const dS = deltaStudentsSingleMove(sid, newSlot)
       const tabuBlocked = isTabu(sid, newSlot, iter)
-      if (!canAccept(delta, tabuBlocked)) continue
+      if (!canAccept(dS, dE, tabuBlocked)) continue
       applySingleMove(sid, newSlot)
-      totalClash += delta
+      totalClash += dE
+      studentClash += dS
       registerTabuMoveTo(sid, oldSlot, iter, tenure)
     } else if (roll < 0.82) {
       const sid1 = sectionIds[Math.floor(Math.random() * n)]!
       const sid2 = sectionIds[Math.floor(Math.random() * n)]!
       if (sid1 === sid2) continue
-      const delta = clashDeltaSwap(sid1, sid2)
-      if (delta === null) continue
+      const dE = clashDeltaSwap(sid1, sid2)
+      if (dE === null) continue
       const slot1 = assignments[sid1]!
       const slot2 = assignments[sid2]!
       if (slot1 === slot2) continue
+      const dS = deltaStudentsSwap(sid1, sid2)
       const tabuBlocked = isTabu(sid1, slot2, iter) || isTabu(sid2, slot1, iter)
-      if (!canAccept(delta, tabuBlocked)) continue
+      if (!canAccept(dS, dE, tabuBlocked)) continue
       applySwap(sid1, sid2)
-      totalClash += delta
+      totalClash += dE
+      studentClash += dS
       registerTabuMoveTo(sid1, slot1, iter, tenure)
       registerTabuMoveTo(sid2, slot2, iter, tenure)
     } else {
@@ -386,8 +497,9 @@ function hybridSATabuImprove(
       if (c2 === c1) c2 = (c2 + 1) % maxS
       const comp = buildKempeComponent(startSid, c1, c2)
       if (!comp || comp.length < 2) continue
-      const { delta, ok } = kempeDeltaAndFeasible(comp, c1, c2)
+      const { delta: dE, ok } = kempeDeltaAndFeasible(comp, c1, c2)
       if (!ok) continue
+      const dS = deltaStudentsKempe(comp, c1, c2)
       let tabuBlocked = false
       for (const sid of comp) {
         const to = assignments[sid] === c1 ? c2 : c1
@@ -396,20 +508,25 @@ function hybridSATabuImprove(
           break
         }
       }
-      if (!canAccept(delta, tabuBlocked)) continue
+      if (!canAccept(dS, dE, tabuBlocked)) continue
       for (const sid of comp) {
         const from = assignments[sid]!
         registerTabuMoveTo(sid, from, iter, tenure)
       }
       applyKempe(comp, c1, c2)
-      totalClash += delta
+      totalClash += dE
+      studentClash += dS
     }
 
-    if (totalClash < globalBest) {
-      globalBest = totalClash
+    if (
+      studentClash < globalBestStudents ||
+      (studentClash === globalBestStudents && totalClash < globalBestEdges)
+    ) {
+      globalBestStudents = studentClash
+      globalBestEdges = totalClash
       for (const sid of sectionIds) globalBestAssign[sid] = assignments[sid]!
       iterSinceGlobalBest = 0
-      if (globalBest === 0) break
+      if (globalBestStudents === 0 && globalBestEdges === 0) break
     } else {
       iterSinceGlobalBest++
       if (iterSinceGlobalBest >= stagnationReheat) {
@@ -523,7 +640,7 @@ function solveGreedy(
     const degree = adj.get(sid)?.size ?? 0
     const enrollment = section.enrolled_students.length
     let score = cw * 100 + degree * 10 + enrollment
-    if (randomize) score += (Math.random() - 0.5) * 100
+    if (randomize) score += (Math.random() - 0.5) * (cw * 50 + 200)
     return score
   }
 
@@ -541,30 +658,32 @@ function solveGreedy(
     const totalAssigned = slotLoads.slice(0, maxSlot).reduce((a, b) => a + b, 0)
     const targetLoad = maxSlot ? totalAssigned / maxSlot : 0
 
-    const slotCosts: { cost: number; slot: number }[] = []
+    const FACULTY_VIOL = 1_000_000_000
+    const CAP_VIOL = 10_000_000
+
+    let bestSlot = 0
+    let bestScore = Number.POSITIVE_INFINITY
     for (let slot = 0; slot < maxSlot; slot++) {
-      if (faculty && facultySlots.get(faculty)?.has(slot)) {
-        slotCosts.push({ cost: Number.POSITIVE_INFINITY, slot })
-      } else if (slotLoads[slot]! >= parallelCap) {
-        slotCosts.push({ cost: Number.POSITIVE_INFINITY, slot })
-      } else {
-        let conflictCost = 0
-        for (const [otherSid, assignedSlot] of Object.entries(assignments)) {
-          if (assignedSlot === slot) {
-            const w = adj.get(sid)?.get(otherSid)
-            if (w) conflictCost += w
-          }
-        }
-        const loadPenalty = Math.max(0, slotLoads[slot]! - targetLoad) * LOAD_BALANCE_FACTOR
-        slotCosts.push({ cost: conflictCost + loadPenalty, slot })
+      let violation = 0
+      if (faculty && facultySlots.get(faculty)?.has(slot)) violation += FACULTY_VIOL
+      if (slotLoads[slot]! >= parallelCap) {
+        violation += CAP_VIOL * (slotLoads[slot]! - parallelCap + 1)
       }
-    }
-    slotCosts.sort((a, b) => a.cost - b.cost || a.slot - b.slot)
-    let bestSlot = slotCosts[0]!.slot
-    if (slotCosts[0]!.cost === Number.POSITIVE_INFINITY) {
-      bestSlot = [...Array(maxSlot).keys()].reduce((best, s) =>
-        slotLoads[s]! < slotLoads[best]! ? s : best,
-      0)
+
+      let conflictCost = 0
+      for (const [otherSid, assignedSlot] of Object.entries(assignments)) {
+        if (assignedSlot === slot) {
+          const w = adj.get(sid)?.get(otherSid)
+          if (w) conflictCost += w
+        }
+      }
+      const loadPenalty = Math.max(0, slotLoads[slot]! - targetLoad) * LOAD_BALANCE_FACTOR
+      let score = violation + conflictCost + loadPenalty
+      if (randomize) score += Math.random() * (conflictCost > 0 ? conflictCost * 0.5 + 2 : 2)
+      if (score < bestScore) {
+        bestScore = score
+        bestSlot = slot
+      }
     }
 
     assignments[sid] = bestSlot
@@ -599,21 +718,44 @@ function solveGreedyMultiStart(
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
   parallelCap: number,
+  onProgress?: (msg: string) => void,
 ): { assignments: Record<string, number>; clashWeight: number } {
-  const runs: { assignments: Record<string, number>; clashWeight: number }[] = []
-  for (let i = 0; i < MULTI_START_RUNS; i++) {
-    const r = solveGreedy(sections, conflictGraph, facultyConstraints, parallelCap, i > 0)
-    runs.push({ assignments: { ...r.assignments }, clashWeight: r.clashWeight })
+  const { studentToSections } = buildEnrollmentIndex(sections)
+  const runCount = multiStartRunCount(sections.length)
+  const poolSize = solutionPoolSize(runCount)
+
+  const runs: { assignments: Record<string, number>; clashWeight: number; students: number }[] = []
+
+  if (onProgress) {
+    onProgress(`Phase 1/2: Exploring ${runCount} different random configurations…`)
   }
-  runs.sort((a, b) => a.clashWeight - b.clashWeight)
-  let best = runs[0] ?? { assignments: {}, clashWeight: 0 }
+
+  const progressStep = Math.max(1, Math.floor(runCount / 8))
+  for (let i = 0; i < runCount; i++) {
+    if (i % progressStep === 0 && i > 0 && onProgress) {
+      onProgress(`Phase 1/2: Generated ${i}/${runCount} initial seeds…`)
+    }
+    const r = solveGreedy(sections, conflictGraph, facultyConstraints, parallelCap, i > 0)
+    const students = countStudentsWithSlotClashes(studentToSections, r.assignments)
+    runs.push({ assignments: { ...r.assignments }, clashWeight: r.clashWeight, students })
+  }
+  runs.sort((a, b) => a.students - b.students || a.clashWeight - b.clashWeight)
+  let best = runs[0] ?? { assignments: {}, clashWeight: 0, students: 0 }
 
   const { adj } = analyzeConflicts(sections, conflictGraph)
   const mathSections = new Set(
     sections.filter((s) => isMathCourse(s.course_code)).map((s) => s.section_id),
   )
 
-  for (let p = 1; p < Math.min(SOLUTION_POOL_TOP, runs.length); p++) {
+  const pool = Math.min(poolSize, runs.length)
+  if (onProgress) {
+    onProgress(`Phase 2/2: Refining top ${pool} candidate schedules (best: ${best.students} students / ${best.clashWeight} weight)…`)
+  }
+
+  for (let p = 1; p < pool; p++) {
+    if (onProgress) {
+      onProgress(`Phase 2/2: Refining candidate ${p}/${pool}…`)
+    }
     const seed = runs[p]
     if (!seed) continue
     const refined = hybridSATabuImprove(
@@ -624,21 +766,26 @@ function solveGreedyMultiStart(
       facultyConstraints,
       parallelCap,
       mathSections,
-      { maxIterFactor: 0.45 },
+      { maxIterFactor: 2.0 },
     )
     const cw = computeClashWeight(conflictGraph, refined)
-    if (cw < best.clashWeight) {
-      best = { assignments: refined, clashWeight: cw }
+    const st = countStudentsWithSlotClashes(studentToSections, refined)
+    if (st < best.students || (st === best.students && cw < best.clashWeight)) {
+      best = { assignments: refined, clashWeight: cw, students: st }
     }
   }
 
-  return best
+  if (onProgress) {
+    onProgress(`Done: ${best.students} students with overlaps, clash weight ${best.clashWeight}.`)
+  }
+  return { assignments: best.assignments, clashWeight: best.clashWeight }
 }
 
 export function runScheduler(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
+  onProgress?: (msg: string) => void,
 ): {
   slot_assignments: Record<string, number>
   solver_used: string
@@ -653,6 +800,7 @@ export function runScheduler(
     conflictGraph,
     facultyConstraints,
     parallelCap,
+    onProgress
   )
   return {
     slot_assignments: assignments,

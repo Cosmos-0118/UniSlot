@@ -30,6 +30,7 @@ const COLUMN_MAPPINGS: Record<string, string> = {
   student: 'student_name',
   'name of student': 'student_name',
   'mobile number': 'mobile_number',
+  'mobile no': 'mobile_number',
   mobile: 'mobile_number',
   phone: 'mobile_number',
   contact: 'mobile_number',
