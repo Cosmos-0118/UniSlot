@@ -4,10 +4,11 @@ import {
   computeClashWeight,
   sumConflictGraphWeights,
 } from './conflictGraph'
-import { TOTAL_WEEKLY_SLOTS } from './timeModel'
+import { SLOTS_PER_DAY, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
 
 const TARGET_PARALLEL_SECTIONS = 11
 const PARALLEL_SOFT_WEIGHT = 100
+const DAY_BALANCE_WEIGHT = 6
 const LOAD_BALANCE_FACTOR = 4
 
 function multiStartRunCount(courseCount: number): number {
@@ -60,6 +61,61 @@ function parallelExcessPenalty(slotLoads: number[]): number {
     if (L > TARGET_PARALLEL_SECTIONS) p += L - TARGET_PARALLEL_SECTIONS
   }
   return p
+}
+
+function dayL1Penalty(dayTotals: number[], idealPerDay: number): number {
+  let s = 0
+  for (const d of dayTotals) s += Math.abs(d - idealPerDay)
+  return s
+}
+
+function buildDayTotals(slotLoads: number[]): number[] {
+  const dayTotals = new Array(WEEKDAY_COUNT).fill(0)
+  for (let s = 0; s < TOTAL_WEEKLY_SLOTS; s++) {
+    const di = Math.floor(s / SLOTS_PER_DAY)
+    dayTotals[di] = (dayTotals[di] ?? 0) + (slotLoads[s] ?? 0)
+  }
+  return dayTotals
+}
+
+function dayL1PenaltyFromSlotLoads(slotLoads: number[], idealPerDay: number): number {
+  return dayL1Penalty(buildDayTotals(slotLoads), idealPerDay)
+}
+
+function deltaDayL1Move(
+  oldSlot: number,
+  newSlot: number,
+  k: number,
+  dayTotals: number[],
+  idealPerDay: number,
+): number {
+  const dOld = Math.floor(oldSlot / SLOTS_PER_DAY)
+  const dNew = Math.floor(newSlot / SLOTS_PER_DAY)
+  if (dOld === dNew) return 0
+  const before =
+    Math.abs(dayTotals[dOld]! - idealPerDay) + Math.abs(dayTotals[dNew]! - idealPerDay)
+  const after =
+    Math.abs(dayTotals[dOld]! - k - idealPerDay) + Math.abs(dayTotals[dNew]! + k - idealPerDay)
+  return after - before
+}
+
+function deltaDayL1Swap(
+  sa: number,
+  sb: number,
+  ka: number,
+  kb: number,
+  dayTotals: number[],
+  idealPerDay: number,
+): number {
+  const da = Math.floor(sa / SLOTS_PER_DAY)
+  const db = Math.floor(sb / SLOTS_PER_DAY)
+  if (da === db) return 0
+  const before =
+    Math.abs(dayTotals[da]! - idealPerDay) + Math.abs(dayTotals[db]! - idealPerDay)
+  const after =
+    Math.abs(dayTotals[da]! - ka + kb - idealPerDay) +
+    Math.abs(dayTotals[db]! - kb + ka - idealPerDay)
+  return after - before
 }
 
 function slotLoadsFromBundleSlots(
@@ -220,12 +276,20 @@ function hybridSATabuImprove(
   let studentClash = countStudentsWithSlotClashes(studentToSections, secSlot, TOTAL_WEEKLY_SLOTS)
   let parallelPenalty = parallelExcessPenalty(slotLoads)
 
+  const idealPerDay = sections.length / WEEKDAY_COUNT
+  const dayTotals = buildDayTotals(slotLoads)
+  let dayPenalty = dayL1Penalty(dayTotals, idealPerDay)
+
   let globalBestStudents = studentClash
   let globalBestEdges = totalClash
   let globalBestParallel = parallelPenalty
+  let globalBestDay = dayPenalty
   const globalBest: Record<string, number> = { ...slotByCourse }
 
-  let temperature = Math.max(40, studentClash * LEX_W * 0.05 + totalClash * 0.03 + parallelPenalty * 8)
+  let temperature = Math.max(
+    40,
+    studentClash * LEX_W * 0.05 + totalClash * 0.03 + parallelPenalty * 8 + dayPenalty * DAY_BALANCE_WEIGHT * 0.05,
+  )
   const t0 = temperature
 
   const tabuUntil = new Map<string, number>()
@@ -274,6 +338,12 @@ function hybridSATabuImprove(
     slotLoads[oldSlot] = (slotLoads[oldSlot] ?? 0) - k
     slotLoads[newSlot] = (slotLoads[newSlot] ?? 0) + k
     slotByCourse[course] = newSlot
+    const dOld = Math.floor(oldSlot / SLOTS_PER_DAY)
+    const dNew = Math.floor(newSlot / SLOTS_PER_DAY)
+    if (dOld !== dNew) {
+      dayTotals[dOld] = (dayTotals[dOld] ?? 0) - k
+      dayTotals[dNew] = (dayTotals[dNew] ?? 0) + k
+    }
     for (const sec of sections) {
       if (sec.course_code === course) secSlot[sec.section_id] = newSlot
     }
@@ -324,6 +394,12 @@ function hybridSATabuImprove(
     slotLoads[sb] = (slotLoads[sb] ?? 0) - kb + ka
     slotByCourse[ca] = sb
     slotByCourse[cb] = sa
+    const da = Math.floor(sa / SLOTS_PER_DAY)
+    const db = Math.floor(sb / SLOTS_PER_DAY)
+    if (da !== db) {
+      dayTotals[da] = dayTotals[da]! - ka + kb
+      dayTotals[db] = dayTotals[db]! - kb + ka
+    }
     for (const sec of sections) {
       if (sec.course_code === ca || sec.course_code === cb) {
         secSlot[sec.section_id] = slotByCourse[sec.course_code] ?? 0
@@ -413,19 +489,31 @@ function hybridSATabuImprove(
     const tenure = baseTenure + (iter % 5)
     const roll = Math.random()
 
-    const canAccept = (dS: number, dE: number, dP: number, tabuBlocked: boolean): boolean => {
+    const canAccept = (
+      dS: number,
+      dE: number,
+      dP: number,
+      dDay: number,
+      tabuBlocked: boolean,
+    ): boolean => {
       const newS = studentClash + dS
       const newE = totalClash + dE
       const newP = parallelPenalty + dP
+      const newDay = dayPenalty + dDay
       if (
         newS < globalBestStudents ||
         (newS === globalBestStudents && newE < globalBestEdges) ||
-        (newS === globalBestStudents && newE === globalBestEdges && newP < globalBestParallel)
+        (newS === globalBestStudents && newE === globalBestEdges && newP < globalBestParallel) ||
+        (newS === globalBestStudents &&
+          newE === globalBestEdges &&
+          newP === globalBestParallel &&
+          newDay < globalBestDay)
       ) {
         return true
       }
       if (tabuBlocked) return false
-      const deltaF = dS * LEX_W + dE + dP * PARALLEL_SOFT_WEIGHT
+      const deltaF =
+        dS * LEX_W + dE + dP * PARALLEL_SOFT_WEIGHT + dDay * DAY_BALANCE_WEIGHT
       if (deltaF <= 0) return true
       return Math.random() < Math.exp(-deltaF / temperature)
     }
@@ -435,15 +523,18 @@ function hybridSATabuImprove(
       const newSlot = Math.floor(Math.random() * TOTAL_WEEKLY_SLOTS)
       if (!feasibleCourseMove(course, newSlot)) continue
       const oldSlot = slotByCourse[course]!
+      const k = sectionCountByCourse.get(course) ?? 1
       const dE = clashDeltaMoveCourse(course, oldSlot, newSlot, courseAdj, slotByCourse)
       const dS = deltaStudentsCourseMove(course, newSlot)
       const dP = deltaParallelMove(course, oldSlot, newSlot)
+      const dDay = deltaDayL1Move(oldSlot, newSlot, k, dayTotals, idealPerDay)
       const tabuBlocked = isTabu(course, newSlot, iter)
-      if (!canAccept(dS, dE, dP, tabuBlocked)) continue
+      if (!canAccept(dS, dE, dP, dDay, tabuBlocked)) continue
       applyCourseMove(course, newSlot)
       totalClash += dE
       studentClash += dS
       parallelPenalty += dP
+      dayPenalty += dDay
       registerTabu(course, oldSlot, iter, tenure)
     } else {
       const ca = courseCodes[Math.floor(Math.random() * n)]!
@@ -456,12 +547,16 @@ function hybridSATabuImprove(
       const dP = deltaParallelSwap(ca, cb)
       const sa = slotByCourse[ca]!
       const sb = slotByCourse[cb]!
+      const ka = sectionCountByCourse.get(ca) ?? 1
+      const kb = sectionCountByCourse.get(cb) ?? 1
+      const dDay = deltaDayL1Swap(sa, sb, ka, kb, dayTotals, idealPerDay)
       const tabuBlocked = isTabu(ca, sb, iter) || isTabu(cb, sa, iter)
-      if (!canAccept(dS, dE, dP, tabuBlocked)) continue
+      if (!canAccept(dS, dE, dP, dDay, tabuBlocked)) continue
       applySwapCourses(ca, cb)
       totalClash += dE
       studentClash += dS
       parallelPenalty += dP
+      dayPenalty += dDay
       registerTabu(ca, sa, iter, tenure)
       registerTabu(cb, sb, iter, tenure)
     }
@@ -471,11 +566,16 @@ function hybridSATabuImprove(
       (studentClash === globalBestStudents && totalClash < globalBestEdges) ||
       (studentClash === globalBestStudents &&
         totalClash === globalBestEdges &&
-        parallelPenalty < globalBestParallel)
+        parallelPenalty < globalBestParallel) ||
+      (studentClash === globalBestStudents &&
+        totalClash === globalBestEdges &&
+        parallelPenalty === globalBestParallel &&
+        dayPenalty < globalBestDay)
     ) {
       globalBestStudents = studentClash
       globalBestEdges = totalClash
       globalBestParallel = parallelPenalty
+      globalBestDay = dayPenalty
       for (const c of courseCodes) globalBest[c] = slotByCourse[c]!
       iterSinceGlobalBest = 0
       if (globalBestStudents === 0 && globalBestEdges === 0) break
@@ -517,6 +617,7 @@ function solveGreedySeed(
   const sorted = [...courseCodes].sort((a, b) => coursePriority(b) - coursePriority(a))
   const slotByCourse: Record<string, number> = {}
   const slotLoads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
+  const idealPerDay = sections.length / WEEKDAY_COUNT
 
   const FACULTY_VIOL = 1_000_000_000
   const CAP_HARD = 100_000_000
@@ -557,7 +658,10 @@ function solveGreedySeed(
       const L = (slotLoads[slot] ?? 0) + k
       const parallelSoft = Math.max(0, L - TARGET_PARALLEL_SECTIONS) * PARALLEL_SOFT_WEIGHT
       const loadPenalty = Math.max(0, (slotLoads[slot] ?? 0) - targetLoad) * LOAD_BALANCE_FACTOR
-      let score = violation + conflictCost + parallelSoft + loadPenalty
+      const trialLoads = [...slotLoads]
+      trialLoads[slot] = (trialLoads[slot] ?? 0) + k
+      const daySoft = dayL1PenaltyFromSlotLoads(trialLoads, idealPerDay) * 3
+      let score = violation + conflictCost + parallelSoft + loadPenalty + daySoft
       if (randomize) score += Math.random() * (conflictCost > 0 ? conflictCost * 0.4 + 3 : 3)
       if (score < bestScore) {
         bestScore = score

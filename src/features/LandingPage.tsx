@@ -18,37 +18,17 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
   }
 
   return (
-    <div className="min-h-screen relative flex flex-col items-center overflow-hidden bg-bg text-text selection:bg-brand-500/30">
-      
-      {/* Animated Background Gradients */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.2, 1],
-            opacity: [0.15, 0.3, 0.15] 
-          }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-brand-500 blur-[120px]" 
-        />
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.1, 1],
-            opacity: [0.1, 0.2, 0.1] 
-          }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-          className="absolute top-[40%] -right-[10%] w-[60%] h-[60%] rounded-full bg-brand-600 blur-[120px]" 
-        />
-      </div>
+    <div className="app-shell relative flex min-h-screen flex-col items-center overflow-hidden text-text">
 
       <nav className="w-full max-w-7xl mx-auto px-6 py-6 flex justify-between items-center z-10">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6 }}
-          className="flex items-center gap-2 text-brand-500 font-bold text-2xl tracking-wide"
+          className="flex items-center gap-2 text-2xl font-bold tracking-wide"
         >
-          <Sparkles className="size-6" />
-          <span>UniSlot</span>
+          <Sparkles className="size-6 text-brand-400" />
+          <span className="text-brand-400">UniSlot</span>
         </motion.div>
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -59,7 +39,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.98 }}
             onClick={onEnterApp}
-            className="px-5 py-2.5 bg-brand-500 text-white rounded-xl font-semibold hover:bg-brand-600 transition-colors shadow-lg shadow-brand-500/20"
+            className="theme-btn-primary theme-focusable rounded-xl px-5 py-2.5 text-sm font-semibold"
           >
             Get Started
           </motion.button>
@@ -67,24 +47,24 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
       </nav>
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-6 flex flex-col items-center justify-center pt-20 pb-32 z-10">
-        <motion.div 
+        <motion.div
           variants={containerVariants}
           initial="hidden"
           animate="visible"
           className="flex flex-col items-center text-center max-w-4xl"
         >
-          <motion.div variants={itemVariants} className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-500 text-sm font-medium mb-8 shadow-lg shadow-brand-500/20">
+          <motion.div variants={itemVariants} className="theme-chip-brand mb-8 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium shadow-lg shadow-brand-500/20">
             <Rocket className="size-4" />
             <span>The next generation of timetable scheduling</span>
           </motion.div>
-          
+
           <motion.h1 variants={itemVariants} className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tight text-text mb-8 leading-[1.1]">
             Schedule with <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-brand-500 to-brand-600">
+            <span className="text-brand-400">
               Absolute Confidence.
             </span>
           </motion.h1>
-          
+
           <motion.p variants={itemVariants} className="text-xl md:text-2xl text-text-muted max-w-2xl mb-12 leading-relaxed">
             Process massive enrollment files, detect clashes instantly, and generate optimal conflict-free schedules securely inside your browser.
           </motion.p>
@@ -94,7 +74,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={onEnterApp}
-              className="px-8 py-4 bg-brand-500 text-white rounded-2xl font-semibold flex items-center justify-center gap-2 hover:bg-brand-600 transition-colors shadow-lg shadow-brand-500/25 text-lg w-full sm:w-auto"
+              className="theme-btn-primary theme-focusable flex w-full items-center justify-center gap-2 rounded-2xl px-8 py-4 text-lg font-semibold sm:w-auto"
             >
               Get Started <ArrowRight className="size-5" />
             </motion.button>
@@ -102,7 +82,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
         </motion.div>
 
         {/* Features Grid */}
-        <motion.div 
+        <motion.div
           variants={containerVariants}
           initial="hidden"
           whileInView="visible"
@@ -113,16 +93,19 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
             icon={Zap}
             title="Lightning Fast Execution"
             description="Powered by a dedicated Web Worker, UniSlot processes thousands of entries in milliseconds without freezing your UI."
+            accent="var(--accent-info)"
           />
           <FeatureCard
             icon={Shield}
             title="100% Private & Secure"
             description="Your sensitive student data never leaves your machine. All computation happens entirely locally in your browser."
+            accent="var(--accent-success)"
           />
           <FeatureCard
             icon={CalendarDays}
             title="Smart Clash Detection"
             description="Advanced greedy multi-start algorithms with local search ensure optimal scheduling with zero undetected clashes."
+            accent="var(--accent-warning)"
           />
         </motion.div>
       </main>
@@ -130,14 +113,16 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
   );
 }
 
-function FeatureCard({ 
-  icon: Icon, 
-  title, 
-  description 
-}: { 
-  icon: LucideIcon, 
-  title: string, 
-  description: string 
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+  accent,
+}: {
+  icon: LucideIcon,
+  title: string,
+  description: string,
+  accent: string,
 }) {
   return (
     <motion.div
@@ -146,10 +131,13 @@ function FeatureCard({
         visible: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 50 } },
       } satisfies Variants}
       whileHover={{ y: -5 }}
-      className="p-8 rounded-3xl bg-bg-secondary/40 border border-border backdrop-blur-md hover:bg-bg-secondary/80 transition-colors group"
+      className="theme-card theme-card-hover group rounded-3xl p-8"
     >
-      <div className="w-14 h-14 rounded-2xl bg-brand-500/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-brand-500/20 transition-all duration-500">
-        <Icon className="size-7 text-brand-500" />
+      <div
+        className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-500 group-hover:scale-110"
+        style={{ background: `color-mix(in srgb, ${accent} 18%, transparent)` }}
+      >
+        <Icon className="size-7" style={{ color: accent }} />
       </div>
       <h3 className="text-xl font-semibold text-text mb-3">{title}</h3>
       <p className="text-text-muted leading-relaxed">{description}</p>

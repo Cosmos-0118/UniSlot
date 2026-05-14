@@ -38,11 +38,11 @@ Interpretation:
 
 Audited components:
 
-- `src/lib/unislot/parser.ts`
-- `src/lib/unislot/preprocessing.ts`
-- `src/lib/unislot/scheduler.ts`
-- `src/lib/unislot/pipeline.ts`
-- `src/lib/unislot/types.ts`
+- `src/modules/scheduling/parser.ts`
+- `src/modules/scheduling/preprocessing.ts`
+- `src/modules/scheduling/scheduler.ts`
+- `src/modules/scheduling/pipeline.ts`
+- `src/modules/scheduling/types.ts`
 - `src/features/LandingPage.tsx`
 
 Validation performed:
@@ -58,8 +58,8 @@ Both checks passed.
 
 Evidence:
 
-- Infeasible slots (faculty clash or slot over-cap) are marked Infinity: `src/lib/unislot/scheduler.ts:546`, `src/lib/unislot/scheduler.ts:548`.
-- If all slots are Infinity, code still assigns a slot by minimum load: `src/lib/unislot/scheduler.ts:566`.
+- Infeasible slots (faculty clash or slot over-cap) are marked Infinity: `src/modules/scheduling/scheduler.ts:546`, `src/modules/scheduling/scheduler.ts:548`.
+- If all slots are Infinity, code still assigns a slot by minimum load: `src/modules/scheduling/scheduler.ts:566`.
 
 Impact:
 
@@ -74,8 +74,8 @@ Why this matters:
 
 Evidence:
 
-- Solver objective: sum of conflicting edge weights `computeClashWeight`: `src/lib/unislot/scheduler.ts:29`.
-- Final headline metric in clash report: number of students with clashes: `src/lib/unislot/scheduler.ts:803`.
+- Solver objective: sum of conflicting edge weights `computeClashWeight`: `src/modules/scheduling/scheduler.ts:29`.
+- Final headline metric in clash report: number of students with clashes: `src/modules/scheduling/scheduler.ts:803`.
 
 Impact:
 
@@ -90,9 +90,9 @@ Why this matters:
 
 Evidence:
 
-- Fixed multi-start count = 250: `src/lib/unislot/scheduler.ts:15`.
-- Top-pool refinement count = 25: `src/lib/unislot/scheduler.ts:16`.
-- SA/Tabu loop upper bound can reach 1,000,000 iterations: `src/lib/unislot/scheduler.ts:111`.
+- Fixed multi-start count = 250: `src/modules/scheduling/scheduler.ts:15`.
+- Top-pool refinement count = 25: `src/modules/scheduling/scheduler.ts:16`.
+- SA/Tabu loop upper bound can reach 1,000,000 iterations: `src/modules/scheduling/scheduler.ts:111`.
 
 Impact:
 
@@ -107,8 +107,8 @@ Why this matters:
 
 Evidence:
 
-- Saturday eligibility tied to course code containing `MAB`: `src/lib/unislot/scheduler.ts:19`.
-- Parallel cap computed from number of sections, not explicit resource constraints: `src/lib/unislot/scheduler.ts:23`.
+- Saturday eligibility tied to course code containing `MAB`: `src/modules/scheduling/scheduler.ts:19`.
+- Parallel cap computed from number of sections, not explicit resource constraints: `src/modules/scheduling/scheduler.ts:23`.
 
 Impact:
 
@@ -123,7 +123,7 @@ Why this matters:
 
 Evidence:
 
-- Validity threshold based on error rate < 0.2: `src/lib/unislot/parser.ts:310`.
+- Validity threshold based on error rate < 0.2: `src/modules/scheduling/parser.ts:310`.
 
 Impact:
 
@@ -139,7 +139,7 @@ Why this matters:
 Evidence:
 
 - Input sample uses "Mobile No".
-- Parser aliases include mobile number/mobile/phone/contact, but not "mobile no": `src/lib/unislot/parser.ts:31` to `src/lib/unislot/parser.ts:35`.
+- Parser aliases include mobile number/mobile/phone/contact, but not "mobile no": `src/modules/scheduling/parser.ts:31` to `src/modules/scheduling/parser.ts:35`.
 
 Impact:
 
@@ -153,7 +153,7 @@ Why this matters:
 
 Evidence:
 
-- `clashingDay` gets overwritten in loop, last clash day wins: `src/lib/unislot/scheduler.ts:768`, `src/lib/unislot/scheduler.ts:778`.
+- `clashingDay` gets overwritten in loop, last clash day wins: `src/modules/scheduling/scheduler.ts:768`, `src/modules/scheduling/scheduler.ts:778`.
 
 Impact:
 
@@ -167,7 +167,7 @@ Why this matters:
 
 Evidence:
 
-- Stochastic search relies on `Math.random` with no seed control: `src/lib/unislot/scheduler.ts:526`.
+- Stochastic search relies on `Math.random` with no seed control: `src/modules/scheduling/scheduler.ts:526`.
 - No unit/integration test files found in workspace.
 
 Impact:

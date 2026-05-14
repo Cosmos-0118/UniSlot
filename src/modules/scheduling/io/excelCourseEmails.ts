@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import type { EnrollmentRow } from './types'
+import type { EnrollmentRow } from '../types'
 import { XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {

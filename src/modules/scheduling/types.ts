@@ -107,7 +107,10 @@ export interface StudentClashReport {
   enrolled_courses: string[]
   status: ClashStatus
   clashing_courses: [string, string][]
+  /** First weekday (by global slot order) where a clash occurs; null if Green. */
   clashing_day: DayName | null
+  /** All weekdays on which this student has at least one overlapping slot (Constraints §5.3). */
+  clashing_days: DayName[]
 }
 
 export interface ClashReport {

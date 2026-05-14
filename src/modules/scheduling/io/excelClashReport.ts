@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import type { ClashReport, StudentClashReport } from './types'
+import type { ClashReport, StudentClashReport } from '../types'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -89,12 +89,14 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
     const dayClashes = new Map<string, number>()
     for (const s of red) {
-      if (s.clashing_day) dayClashes.set(s.clashing_day, (dayClashes.get(s.clashing_day) ?? 0) + 1)
+      for (const day of s.clashing_days.length ? s.clashing_days : s.clashing_day ? [s.clashing_day] : []) {
+        dayClashes.set(day, (dayClashes.get(day) ?? 0) + 1)
+      }
     }
     wsSummary.getCell(row, 1).value = 'Clashes by Day:'
     wsSummary.getCell(row, 1).font = { bold: true, size: 11 }
     row++
-    for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const) {
+    for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const) {
       const count = dayClashes.get(day) ?? 0
       if (count > 0) {
         wsSummary.getCell(row, 1).value = `  • ${day}`
@@ -247,7 +249,11 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
       const sortedS = [...students].sort((a, b) => a.student_name.localeCompare(b.student_name))
       sortedS.forEach((student, idx) => {
         const clashText = student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
-        const vals = [idx + 1, student.register_number, student.student_name, clashText, student.clashing_day ?? '']
+        const dayLabel =
+          student.clashing_days.length > 0
+            ? student.clashing_days.join(', ')
+            : (student.clashing_day ?? '')
+        const vals = [idx + 1, student.register_number, student.student_name, clashText, dayLabel]
         vals.forEach((v, i) => {
           const cell = wsP.getRow(rp).getCell(i + 1)
           cell.value = v
@@ -281,11 +287,18 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   if (red.length) {
     const dayGroups = new Map<string, StudentClashReport[]>()
     for (const s of red) {
-      if (!s.clashing_day) continue
-      if (!dayGroups.has(s.clashing_day)) dayGroups.set(s.clashing_day, [])
-      dayGroups.get(s.clashing_day)!.push(s)
+      const days =
+        s.clashing_days.length > 0
+          ? s.clashing_days
+          : s.clashing_day
+            ? [s.clashing_day]
+            : []
+      for (const day of days) {
+        if (!dayGroups.has(day)) dayGroups.set(day, [])
+        dayGroups.get(day)!.push(s)
+      }
     }
-    for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const) {
+    for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const) {
       const students = dayGroups.get(day)
       if (!students?.length) continue
       const dayArgb = DAY_FILL[day] ?? XL.rowAlt

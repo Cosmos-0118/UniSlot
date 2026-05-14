@@ -8,9 +8,9 @@ import {
   FileSpreadsheet,
   Users,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
-import { cn } from '../lib/cn'
-import type { ScheduleEntry, StudentClashReport, ValidationError } from '../lib/unislot/types'
+import { useCallback, useState, type CSSProperties } from 'react'
+import { cn } from '@/shared/utils/cn'
+import type { ScheduleEntry, StudentClashReport, ValidationError } from '@/modules/scheduling/types'
 import { useUnislotWorker, type PipelineOutput } from '../hooks/useUnislotWorker'
 import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
 
@@ -28,18 +28,24 @@ function downloadArrayBuffer(data: ArrayBuffer, filename: string) {
 
 function ValidationList({ items, variant }: { items: ValidationError[]; variant: 'error' | 'warn' }) {
   if (!items.length) return null
+
+  const palette: CSSProperties =
+    variant === 'error'
+      ? {
+        borderColor: 'var(--soft-danger-border)',
+        background: 'var(--soft-danger-bg)',
+        color: 'var(--accent-danger)',
+      }
+      : {
+        borderColor: 'var(--soft-warning-border)',
+        background: 'var(--soft-warning-bg)',
+        color: 'var(--accent-warning)',
+      }
+
   return (
     <ul className="mt-3 max-h-48 space-y-2 overflow-y-auto text-sm">
       {items.slice(0, 80).map((e, i) => (
-        <li
-          key={i}
-          className={cn(
-            'rounded-lg border px-3 py-2',
-            variant === 'error'
-              ? 'border-red-500/30 bg-red-500/10 text-red-100'
-              : 'border-amber-500/25 bg-amber-500/10 text-amber-100',
-          )}
-        >
+        <li key={i} className="rounded-lg border px-3 py-2" style={palette}>
           {e.row_number != null && <span className="font-mono text-xs opacity-80">Row {e.row_number} · </span>}
           <span className="font-medium">{e.field}</span>: {e.message}
         </li>
@@ -53,7 +59,7 @@ function ValidationList({ items, variant }: { items: ValidationError[]; variant:
 
 function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-bg-secondary/50 shadow-xl backdrop-blur">
+    <div className="theme-card overflow-hidden rounded-2xl">
       <div className="max-h-[420px] overflow-auto">
         <table className="w-full min-w-[820px] text-left text-sm">
           <thead className="sticky top-0 z-10 bg-bg/95 backdrop-blur">
@@ -82,7 +88,7 @@ function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
                   {e.slot_index}
                 </td>
                 <td className="px-4 py-3">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-tertiary/50 px-2.5 py-1 text-xs font-medium text-brand-500">
+                  <span className="theme-chip-brand px-2.5 py-1 text-xs font-medium">
                     <CalendarDays className="size-3.5 opacity-70" aria-hidden />
                     {e.day}
                   </span>
@@ -105,7 +111,7 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
   const red = reports.filter((r) => r.status === 'Red').slice(0, 40)
   if (!red.length) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-4 text-emerald-500">
+      <div className="theme-soft-success flex items-center gap-3 rounded-2xl px-4 py-4">
         <CheckCircle2 className="size-6 shrink-0" aria-hidden />
         <div>
           <p className="font-medium">No student clashes detected</p>
@@ -119,7 +125,12 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
       {red.map((r) => (
         <li
           key={r.register_number}
-          className="rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-red-500"
+          className="rounded-xl border px-3 py-2"
+          style={{
+            borderColor: 'var(--soft-danger-border)',
+            background: 'var(--soft-danger-bg)',
+            color: 'var(--accent-danger)',
+          }}
         >
           <span className="font-mono text-xs opacity-90">{r.register_number}</span>
           <span className="mx-2 opacity-60">·</span>
@@ -131,7 +142,13 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
                 {i < r.clashing_courses.length - 1 ? '; ' : ''}
               </span>
             ))}
-            {r.clashing_day && <span className="ml-2 opacity-80">({r.clashing_day})</span>}
+            {(r.clashing_days.length > 0 || r.clashing_day) && (
+              <span className="ml-2 opacity-80">
+                (
+                {r.clashing_days.length > 0 ? r.clashing_days.join(', ') : r.clashing_day}
+                )
+              </span>
+            )}
           </div>
         </li>
       ))}
@@ -182,7 +199,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
 
   return (
     <div className={cn(
-      'mx-auto flex flex-col px-8 max-w-5xl w-full',
+      'mx-auto flex w-full max-w-5xl flex-col px-4 sm:px-8',
       showTerminal ? 'py-6 h-full' : 'py-10',
       showActions && 'h-full justify-center',
     )}>
@@ -212,7 +229,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
               onResult(null)
               setViewMode('idle')
             }}
-            className="inline-flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/50 px-4 py-2.5 text-sm font-medium text-text transition hover:bg-border shrink-0"
+            className="theme-btn-secondary theme-focusable inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
           >
             <FileSpreadsheet className="size-4" aria-hidden />
             New run
@@ -247,13 +264,16 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
               input.click()
             }}
             className={cn(
-              'group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 transition-all duration-300',
-              drag
-                ? 'border-brand-500 bg-brand-500/5 shadow-[0_0_60px_-12px_rgba(var(--brand-500-rgb),0.3)]'
-                : 'border-border bg-bg-secondary/30 hover:border-brand-500/50 hover:bg-bg-secondary/80',
+              'theme-dropzone theme-focusable group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 transition-all duration-300',
+              drag && 'theme-dropzone-active',
             )}
           >
-            <div className="flex size-14 items-center justify-center rounded-2xl bg-brand-500 shadow-lg shadow-brand-500/30">
+            <div
+              className="flex size-14 items-center justify-center rounded-2xl shadow-lg shadow-brand-500/30"
+              style={{
+                background: 'var(--btn-primary-from)',
+              }}
+            >
               <FileSpreadsheet className="size-7 text-white" aria-hidden />
             </div>
             <div className="text-center">
@@ -262,7 +282,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                 <p className="mt-2 text-xs text-text-muted">Last file: {fileName}</p>
               )}
             </div>
-            <span className="inline-flex items-center gap-2 rounded-full bg-bg-tertiary px-4 py-2 text-sm font-medium text-text transition group-hover:bg-bg-tertiary/80 border border-border">
+            <span className="theme-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium">
               Choose file
               <ArrowRight className="size-4 opacity-70" aria-hidden />
             </span>
@@ -305,6 +325,8 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                   Load: peak {result.stats.scheduling.max_parallel_sections_in_slot} parallel sections in one slot ·
                   avg {result.stats.scheduling.average_parallel_sections_per_slot} per slot ·{' '}
                   {result.stats.scheduling.slots_with_zero_courses} unused slots (of {result.stats.scheduling.total_weekly_slots})
+                  {' · '}
+                  weekday balance (L1) {result.stats.scheduling.weekday_balance_l1}
                 </p>
               )}
             </div>
@@ -353,19 +375,19 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
             <button
               type="button"
               onClick={() => setViewMode('actions')}
-              className="inline-flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/50 px-4 py-2.5 text-sm font-medium text-text transition hover:bg-border"
+              className="theme-btn-outline theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
             >
               ← Back to downloads
             </button>
           )}
 
           {!result.validation.is_valid && (
-            <div className="rounded-3xl border border-red-500/30 bg-red-500/10 p-6">
+            <div className="theme-soft-danger rounded-3xl p-6">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="size-6 shrink-0 text-red-500" aria-hidden />
+                <AlertTriangle className="size-6 shrink-0" aria-hidden />
                 <div>
-                  <h2 className="text-lg font-semibold text-red-500">Validation did not pass</h2>
-                  <p className="mt-1 text-sm text-red-500/80">
+                  <h2 className="text-lg font-semibold">Validation did not pass</h2>
+                  <p className="mt-1 text-sm opacity-85">
                     Fix the sheet and try again. Showing up to 80 issues.
                   </p>
                   <ValidationList items={result.validation.errors} variant="error" />
@@ -385,7 +407,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                 ].map(({ label, value, icon: Icon }) => (
                   <div
                     key={label}
-                    className="rounded-2xl border border-border bg-bg-secondary/50 p-5 shadow-sm backdrop-blur"
+                    className="theme-card rounded-2xl p-5"
                   >
                     <Icon className="size-5 text-brand-500" aria-hidden />
                     <p className="mt-3 text-3xl font-semibold tabular-nums text-text">{value}</p>
@@ -394,7 +416,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                 ))}
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl border border-border bg-bg-secondary/30">
+              <div className="theme-card flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5">
                 <div>
                   <h2 className="text-lg font-semibold text-text">Exports</h2>
                   <p className="text-sm text-text-muted mt-1 max-w-md">
@@ -406,7 +428,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                     <button
                       type="button"
                       onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
-                      className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-brand-500/20 transition hover:bg-brand-600"
+                      className="theme-btn-primary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
                     >
                       <Download className="size-4" aria-hidden />
                       Schedule
@@ -416,7 +438,7 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
                     <button
                       type="button"
                       onClick={() => downloadArrayBuffer(result.clashXlsx!, 'unislot-clash-report.xlsx')}
-                      className="inline-flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/50 px-4 py-2.5 text-sm font-medium text-text transition hover:bg-border"
+                      className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
                     >
                       <Download className="size-4" aria-hidden />
                       Clash report

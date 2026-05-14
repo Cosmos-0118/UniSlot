@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import type { Schedule } from './types'
+import type { Schedule } from '../types'
 
 /** Normalize cell values to plain strings for the legacy parser (pandas-like). */
 export function cellValueToString(val: ExcelJS.CellValue | null | undefined): string {

@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { runPipeline } from '../lib/unislot/pipeline'
+import { runPipeline } from './pipeline'
 
 export type WorkerRequest = { type: 'run'; id: number; buffer: ArrayBuffer }
 
@@ -9,18 +9,18 @@ export type WorkerResponse =
   | {
       type: 'result'
       id: number
-      validation: import('../lib/unislot/types').ValidationResult
-      schedule: import('../lib/unislot/types').Schedule | null
-      clashReport: import('../lib/unislot/types').ClashReport | null
+      validation: import('./types').ValidationResult
+      schedule: import('./types').Schedule | null
+      clashReport: import('./types').ClashReport | null
       scheduleXlsx: ArrayBuffer | null
       clashXlsx: ArrayBuffer | null
       courseEmailsXlsx: ArrayBuffer | null
-      courseEmailsData: import('../lib/unislot/types').CourseEmailGroup[] | null
+      courseEmailsData: import('./types').CourseEmailGroup[] | null
       stats: {
         studentCount: number
         courseCount: number
         sectionCount: number
-        scheduling: import('../lib/unislot/engines/metrics').SchedulingStats | null
+        scheduling: import('./engines/metrics').SchedulingStats | null
       } | null
     }
   | { type: 'error'; id: number; message: string }

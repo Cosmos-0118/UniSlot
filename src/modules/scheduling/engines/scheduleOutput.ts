@@ -7,7 +7,7 @@ import type {
   Student,
   StudentClashReport,
 } from '../types'
-import { INDEX_TO_DAY, formatSlotTime, slotIndexToBand } from './timeModel'
+import { INDEX_TO_DAY, WEEKDAY_ORDER, formatSlotTime, slotIndexToBand } from './timeModel'
 
 const PROGRAM_ABBREVIATIONS: [string, string][] = [
   ['computer science and engineering', 'CSE'],
@@ -138,19 +138,34 @@ export function computeClashReport(
     }
 
     const clashingPairs: [string, string][] = []
-    let clashingDay: DayName | null = null
+    const clashingSlots: number[] = []
+    const pairKeys = new Set<string>()
 
-    for (const [slot, sids] of slotSections) {
+    const sortedSlotEntries = [...slotSections.entries()].sort((a, b) => a[0] - b[0])
+    for (const [slot, sids] of sortedSlotEntries) {
       if (sids.length > 1 && slot >= 0) {
-        const courses = sids.map((id) => sectionToCourse.get(id) ?? id)
-        for (let i = 0; i < courses.length; i++) {
-          for (let j = i + 1; j < courses.length; j++) {
-            clashingPairs.push([courses[i]!, courses[j]!])
+        clashingSlots.push(slot)
+        const courseCodes = sids.map((id) => sectionToCourse.get(id) ?? id)
+        for (let i = 0; i < courseCodes.length; i++) {
+          for (let j = i + 1; j < courseCodes.length; j++) {
+            let a = courseCodes[i]!
+            let b = courseCodes[j]!
+            if (a === b) continue
+            if (a > b) [a, b] = [b, a]
+            const key = `${a}\t${b}`
+            if (pairKeys.has(key)) continue
+            pairKeys.add(key)
+            clashingPairs.push([a, b])
           }
         }
-        clashingDay = INDEX_TO_DAY[slot] ?? null
       }
     }
+
+    const dayRank = new Map<DayName, number>(WEEKDAY_ORDER.map((d, i) => [d, i] as [DayName, number]))
+    const clashing_days: DayName[] = [
+      ...new Set(clashingSlots.map((s) => INDEX_TO_DAY[s]!).filter(Boolean)),
+    ].sort((x, y) => (dayRank.get(x) ?? 99) - (dayRank.get(y) ?? 99))
+    const clashing_day: DayName | null = clashing_days[0] ?? null
 
     const status = clashingPairs.length ? 'Red' : 'Green'
     if (status === 'Red') studentsWithClashes++
@@ -162,7 +177,8 @@ export function computeClashReport(
       enrolled_courses: student.enrolled_courses,
       status,
       clashing_courses: clashingPairs,
-      clashing_day: clashingDay,
+      clashing_day,
+      clashing_days: status === 'Red' ? clashing_days : [],
     })
   }
 

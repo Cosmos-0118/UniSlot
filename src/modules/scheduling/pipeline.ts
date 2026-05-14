@@ -9,9 +9,9 @@ import {
 import { buildSchedule, computeClashReport, runScheduler } from './scheduler'
 import { computeSchedulingStats, type SchedulingStats } from './engines/metrics'
 import type { ClashReport, Schedule, ValidationResult } from './types'
-import { clashReportToRichWorkbookBuffer } from './excelClashReport'
-import { courseEmailsToWorkbookBuffer } from './excelCourseEmails'
-import { readFirstSheetAsAoA, scheduleToWorkbookBuffer } from './excelIo'
+import { clashReportToRichWorkbookBuffer } from './io/excelClashReport'
+import { courseEmailsToWorkbookBuffer } from './io/excelCourseEmails'
+import { readFirstSheetAsAoA, scheduleToWorkbookBuffer } from './io/excelIo'
 import type { CourseEmailGroup, EnrollmentRow } from './types'
 
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {

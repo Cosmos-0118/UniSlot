@@ -1,9 +1,13 @@
 import type { Course, Section } from '../types'
 
 /**
- * Rule 7 / Constraints §7.2: each split section must have a distinct faculty label
- * for the hard “no faculty double-booking” rule. Synthetic labels when only one
- * name exists in source data.
+ * Constraints §7.2 (different faculty per split) + §5.2 Rule 3 (no double-booking).
+ *
+ * When the spreadsheet has **no faculty column** (faculty assigned only after the
+ * timetable), we still need a **unique resource id per section** so the solver can
+ * treat “one instructor per slot” correctly. Each section gets a distinct
+ * `Planning:…` label — replace these with real names after export; they are not
+ * predictions of staff identity.
  */
 export function applyDistinctFacultyPerSection(
   courses: Record<string, Course>,
@@ -12,7 +16,8 @@ export function applyDistinctFacultyPerSection(
   for (const [code, sections] of Object.entries(courseSections)) {
     const base = courses[code]?.faculty?.trim() || null
     if (sections.length <= 1) {
-      sections[0]!.faculty = base
+      const sec = sections[0]!
+      sec.faculty = base ?? `Planning:${sec.section_id}`
       continue
     }
     for (let i = 0; i < sections.length; i++) {
@@ -20,7 +25,7 @@ export function applyDistinctFacultyPerSection(
       if (base) {
         s.faculty = `${base} · Sec ${i + 1}`
       } else {
-        s.faculty = `Course ${code} · Sec ${i + 1}`
+        s.faculty = `Planning:${s.section_id}`
       }
     }
   }

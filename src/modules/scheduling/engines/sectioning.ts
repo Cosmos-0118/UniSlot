@@ -9,15 +9,15 @@ export function assignStudentsToSections(
   courseSections: Record<string, Section[]>,
   enrollmentRows: EnrollmentRow[],
 ): Record<string, Section[]> {
-  const courseProgramStudents = new Map<string, Map<string, string[]>>()
+  const courseProgramStudents = new Map<string, Map<string, Set<string>>>()
 
   for (const row of enrollmentRows) {
     if (!courseProgramStudents.has(row.course_code)) {
       courseProgramStudents.set(row.course_code, new Map())
     }
     const m = courseProgramStudents.get(row.course_code)!
-    if (!m.has(row.program)) m.set(row.program, [])
-    m.get(row.program)!.push(row.register_number)
+    if (!m.has(row.program)) m.set(row.program, new Set())
+    m.get(row.program)!.add(row.register_number)
   }
 
   const studentOtherCourses = (reg: string, currentCourse: string): string[] => {
@@ -31,7 +31,8 @@ export function assignStudentsToSections(
     if (!byProgram) continue
 
     if (sections.length === 1) {
-      for (const [program, programStudents] of byProgram) {
+      for (const [program, idSet] of byProgram) {
+        const programStudents = [...idSet].sort()
         sections[0]!.enrolled_students.push(...programStudents)
         if (!sections[0]!.programs.includes(program)) {
           sections[0]!.programs.push(program)
@@ -43,7 +44,8 @@ export function assignStudentsToSections(
     type Cohort = { students: string[]; program: string }
     const cohorts: Cohort[] = []
 
-    for (const [program, programStudents] of byProgram) {
+    for (const [program, idSet] of byProgram) {
+      const programStudents = [...idSet].sort()
       const byFingerprint = new Map<string, string[]>()
       for (const reg of programStudents) {
         const fp = studentOtherCourses(reg, courseCode).join(',')
@@ -83,7 +85,7 @@ export function assignStudentsToSections(
     }
 
     for (const cohort of cohorts) {
-      let remaining = [...cohort.students]
+      const remaining = [...cohort.students]
       while (remaining.length) {
         let bestSi = -1
         let bestScore = Number.POSITIVE_INFINITY
@@ -100,9 +102,25 @@ export function assignStudentsToSections(
           }
         }
         if (bestSi < 0) {
-          const si = sectionLoads.indexOf(Math.min(...sectionLoads))
-          const space = Math.max(1, sections[si]!.capacity - (sectionLoads[si] ?? 0))
-          pushChunk(cohort.program, si, remaining.splice(0, space))
+          let pick = 0
+          let bestSlack = -1
+          for (let i = 0; i < sections.length; i++) {
+            const slack = sections[i]!.capacity - (sectionLoads[i] ?? 0)
+            if (slack > bestSlack) {
+              bestSlack = slack
+              pick = i
+            }
+          }
+          if (bestSlack <= 0) {
+            if (remaining.length > 0) {
+              throw new Error(
+                `Cannot assign all students to sections for course ${courseCode}: capacity exhausted with ${remaining.length} student(s) remaining.`,
+              )
+            }
+            break
+          }
+          const take = Math.min(remaining.length, bestSlack)
+          pushChunk(cohort.program, pick, remaining.splice(0, take))
           continue
         }
         const space = sections[bestSi]!.capacity - (sectionLoads[bestSi] ?? 0)

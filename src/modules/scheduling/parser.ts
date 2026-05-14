@@ -62,7 +62,8 @@ const REQUIRED_FIELDS = [
   'course_title',
 ] as const
 
-const MAX_COURSES_PER_STUDENT = 10
+/** Constraints.md §5.3 Rule 4 — max 5 courses per student */
+const MAX_COURSES_PER_STUDENT = 5
 
 function normalizeColumnName(col: string): string {
   const cleaned = String(col)
@@ -349,9 +350,9 @@ export function validateBusinessRules(rows: EnrollmentRow[]): {
 
   for (const [studentId, courses] of studentCourses) {
     if (courses.size > MAX_COURSES_PER_STUDENT) {
-      result.warnings.push({
+      result.errors.push({
         field: 'max_courses',
-        message: `Student ${studentId} enrolled in ${courses.size} courses (max ${MAX_COURSES_PER_STUDENT})`,
+        message: `Student ${studentId} has ${courses.size} course registrations (maximum ${MAX_COURSES_PER_STUDENT} per Constraints.md §5.3)`,
         value: studentId,
       })
     }
@@ -430,5 +431,27 @@ export function loadAndValidate(rows: EnrollmentRow[], parseValidation: Validati
   }
 
   const { students, courses } = buildCanonicalData(validRows)
+
+  for (const [reg, st] of Object.entries(students)) {
+    if (st.enrolled_courses.length < 1) {
+      combined.errors.push({
+        field: 'enrollment',
+        message: `Student ${reg} has no valid course registrations after deduplication (minimum 1 course per Constraints.md §5.3).`,
+        value: reg,
+      })
+    }
+    for (const cc of st.enrolled_courses) {
+      if (!courses[cc]) {
+        combined.errors.push({
+          field: 'course_code',
+          message: `Student ${reg} references unknown course code ${cc}.`,
+          value: `${reg}:${cc}`,
+        })
+      }
+    }
+  }
+
+  combined.is_valid = combined.errors.length === 0
+
   return { students, courses, enrollmentRows: validRows, validation: combined }
 }

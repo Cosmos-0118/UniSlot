@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { cn } from '../../lib/cn'
+import { cn } from '@/shared/utils/cn'
 
 /* ── stage‑to‑cinematic‑messages map ────────────────────────── */
 const STAGE_LINES: Record<string, string[]> = {
@@ -211,7 +211,7 @@ export function ProcessingTerminal({ stage, message, done }: Props) {
           <span className="dot dot-yellow" />
           <span className="dot dot-green" />
         </div>
-        <span className="terminal-title">unislot — engine</span>
+        <span className="terminal-title">scheduling — engine</span>
         <div className="terminal-status">
           {done ? (
             <span className="status-done">COMPLETE</span>

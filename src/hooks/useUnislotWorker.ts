@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClashReport, Schedule, ValidationResult } from '../lib/unislot/types'
-import type { SchedulingStats } from '../lib/unislot/engines/metrics'
-import type { WorkerRequest, WorkerResponse } from '../workers/unislot.worker'
+import type {
+  ClashReport,
+  CourseEmailGroup,
+  Schedule,
+  ValidationResult,
+} from '@/modules/scheduling/types'
+import type { SchedulingStats } from '@/modules/scheduling/engines/metrics'
+import type { WorkerRequest, WorkerResponse } from '@/modules/scheduling/scheduling.worker'
 
 export interface PipelineOutput {
   validation: ValidationResult
@@ -10,7 +15,7 @@ export interface PipelineOutput {
   scheduleXlsx: ArrayBuffer | null
   clashXlsx: ArrayBuffer | null
   courseEmailsXlsx: ArrayBuffer | null
-  courseEmailsData: import('../lib/unislot/types').CourseEmailGroup[] | null
+  courseEmailsData: CourseEmailGroup[] | null
   stats: {
     studentCount: number
     courseCount: number
@@ -25,7 +30,7 @@ export function useUnislotWorker() {
   const [running, setRunning] = useState(false)
 
   useEffect(() => {
-    workerRef.current = new Worker(new URL('../workers/unislot.worker.ts', import.meta.url), {
+    workerRef.current = new Worker(new URL('../modules/scheduling/scheduling.worker.ts', import.meta.url), {
       type: 'module',
     })
     return () => {
