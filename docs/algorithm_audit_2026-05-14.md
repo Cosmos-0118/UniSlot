@@ -1,255 +1,179 @@
 # UniSlot Algorithm Audit (2026-05-14)
 
-## Follow-up (same day)
+## Post-Improvement Verification (Pass 2)
 
-The following audit items were implemented in code:
-
-- **P0 greedy fallback**: Construction no longer picks a slot only by minimum load when all slots are “infinite” cost. Every slot is scored with explicit **faculty** and **parallel-cap** violation penalties plus clash and load balance, so feasible slots are preferred in a deterministic order.
-- **P1 objective / KPI**: The hybrid SA/Tabu phase now optimizes a **lexicographic** goal: minimize **students with ≥2 sections in the same slot** first, then minimize **total weighted edge clashes** (same as `computeClashWeight`). Aspiration and simulated annealing use a combined score `Δstudents × (sumEdgeWeights + 1) + Δedges`.
-- **Adaptive multi-start**: Replaced fixed 250/25 with `multiStartRunCount(n)` and `solutionPoolSize(runs)` (roughly √n-scaled). Phase 2 compares refinements with the same lex order.
-- **Parser**: Added **`mobile no`** → `mobile_number` column alias (`parser.ts`).
-
-`npm run lint` and `npx tsc -b --noEmit` pass after these changes.
-
----
-
-## Executive Summary
-
-UniSlot uses a solid heuristic foundation (greedy construction + SA/Tabu/Kempe local search on a conflict graph), but it is **not the best possible algorithmic setup** for your stated goals.
-
-Assumption update (from your input sample): scheduling is currently **student-clash driven**, and faculty is mapped later in output flows.
-
-Main reasons:
-
-- Critical hard constraints can be bypassed in fallback paths.
-- Optimization objective is not fully aligned with the headline KPI shown to users.
-- Runtime strategy is fixed and expensive, without adaptive stopping or reproducibility controls.
-
-## Overall Rating
-
-**7.0 / 10**
-
-Interpretation:
-
-- **Strengths**: Good core idea, practical local search operators, conflict-graph model, browser worker isolation.
-- **Weaknesses**: Feasibility enforcement and objective/KPI mismatch still prevent a higher score.
-
-## Scope and Method
-
-Audited components:
+This is a fresh audit of the current code after your recent refactor and solver upgrades.
+Scope audited:
 
 - `src/modules/scheduling/parser.ts`
-- `src/modules/scheduling/preprocessing.ts`
-- `src/modules/scheduling/scheduler.ts`
 - `src/modules/scheduling/pipeline.ts`
+- `src/modules/scheduling/preprocessing.ts`
+- `src/modules/scheduling/engines/localSearchSolver.ts`
+- `src/modules/scheduling/engines/faculty.ts`
+- `src/modules/scheduling/engines/scheduleOutput.ts`
+- `src/modules/scheduling/engines/timeModel.ts`
 - `src/modules/scheduling/types.ts`
 - `src/features/LandingPage.tsx`
 
-Validation performed:
+Validation run during this pass:
 
 - `npm run lint`
 - `npm run build`
 
-Both checks passed.
+Both passed.
 
-## Findings (Ordered by Severity)
+## Updated Rating
 
-## 1) Hard constraints can be violated by greedy fallback (Critical)
+**8.1 / 10**
 
-Evidence:
+Rating rationale:
 
-- Infeasible slots (faculty clash or slot over-cap) are marked Infinity: `src/modules/scheduling/scheduler.ts:546`, `src/modules/scheduling/scheduler.ts:548`.
-- If all slots are Infinity, code still assigns a slot by minimum load: `src/modules/scheduling/scheduler.ts:566`.
+- Large step up from prior version: objective alignment, adaptive search, and conflict reporting are materially better.
+- Remaining gaps are now mostly around end-to-end faculty workflow guarantees and explicit feasibility signaling.
 
-Impact:
+## Confirmed Improvements (Verified)
 
-- Initial assignment can violate faculty or parallel-cap constraints.
-- Later local search optimizes clash weight but does not enforce global feasibility as a hard accept criterion.
+1. Adaptive multi-start replaced old fixed heavy strategy.
+- Evidence: `multiStartRunCount` and `solutionPoolSize` in `src/modules/scheduling/engines/localSearchSolver.ts:14`, `src/modules/scheduling/engines/localSearchSolver.ts:18`.
+- Applied at runtime in `src/modules/scheduling/engines/localSearchSolver.ts:717`, `src/modules/scheduling/engines/localSearchSolver.ts:718`.
 
-Why this matters:
+2. Solver objective now prioritizes students with clashes before edge weight.
+- Evidence: student clash metric in `src/modules/scheduling/engines/localSearchSolver.ts:40`.
+- Lexicographic best-state comparisons in `src/modules/scheduling/engines/localSearchSolver.ts:504` to `src/modules/scheduling/engines/localSearchSolver.ts:507` and `src/modules/scheduling/engines/localSearchSolver.ts:565` to `src/modules/scheduling/engines/localSearchSolver.ts:571`.
 
-- A schedule can look "optimized" while still breaking operational constraints.
+3. Greedy construction no longer uses simple infinite-slot fallback; it now scores all slots with hard-violation penalties.
+- Evidence: `FACULTY_VIOL` and `CAP_HARD` in `src/modules/scheduling/engines/localSearchSolver.ts:622`, `src/modules/scheduling/engines/localSearchSolver.ts:623`.
+- Penalty-based slot scoring in `src/modules/scheduling/engines/localSearchSolver.ts:637` to `src/modules/scheduling/engines/localSearchSolver.ts:665`.
 
-## 2) Objective function is not fully aligned with final KPI (High)
+4. Real input alias improvement is present.
+- Evidence: `mobile no` alias added in `src/modules/scheduling/parser.ts:33`.
 
-Evidence:
+5. Clash report now supports multi-day clashes.
+- Evidence: `clashing_days` generation in `src/modules/scheduling/engines/scheduleOutput.ts:165` to `src/modules/scheduling/engines/scheduleOutput.ts:181`.
+- Excel output consumes `clashing_days` in `src/modules/scheduling/io/excelClashReport.ts:92` and `src/modules/scheduling/io/excelClashReport.ts:253`.
 
-- Solver objective: sum of conflicting edge weights `computeClashWeight`: `src/modules/scheduling/scheduler.ts:29`.
-- Final headline metric in clash report: number of students with clashes: `src/modules/scheduling/scheduler.ts:803`.
+## Remaining Findings (Ordered by Severity)
 
-Impact:
-
-- Minimizing pairwise weighted clashes is related, but not equivalent, to minimizing unique affected students.
-- Optimizer may prefer solutions that reduce pair count while still leaving more students red.
-
-Why this matters:
-
-- User-visible success criteria can diverge from what the solver is actually optimizing.
-
-## 3) Runtime strategy is rigid and potentially expensive (High)
+## 1) Faculty constraint is still not end-to-end with real faculty assignment (High)
 
 Evidence:
 
-- Fixed multi-start count = 250: `src/modules/scheduling/scheduler.ts:15`.
-- Top-pool refinement count = 25: `src/modules/scheduling/scheduler.ts:16`.
-- SA/Tabu loop upper bound can reach 1,000,000 iterations: `src/modules/scheduling/scheduler.ts:111`.
+- Canonical course faculty remains null from input pipeline: `src/modules/scheduling/parser.ts:392`.
+- Pipeline injects synthetic planning labels before solve: `src/modules/scheduling/pipeline.ts:106`.
+- Placeholder generation policy is explicit in `src/modules/scheduling/engines/faculty.ts:6` to `src/modules/scheduling/engines/faculty.ts:10`, and assignments at `src/modules/scheduling/engines/faculty.ts:20`, `src/modules/scheduling/engines/faculty.ts:26` to `src/modules/scheduling/engines/faculty.ts:29`.
+- Scheduler signature still accepts faculty constraints but does not use the parameter (`_facultyConstraints`): `src/modules/scheduling/engines/localSearchSolver.ts:693`.
 
 Impact:
 
-- Over-computation on easy datasets; unpredictable runtime on hard/larger ones.
-- No adaptive budget (time-based stop, convergence stop, or dataset-size policy).
+- Current run is effectively student-first with synthetic faculty resource IDs.
+- If real faculty are decided later and one person is mapped to multiple scheduled sections, collisions can still appear after mapping.
 
-Why this matters:
+Recommendation:
 
-- Performance consistency is critical in browser-worker execution.
+- Add a post-mapping validation and repair pass (minimal move policy), or ingest real faculty before solve when available.
 
-## 4) Domain rules are hard-coded and not configurable (Medium)
+## 2) Final feasibility/optimality status is not emitted (Medium)
 
 Evidence:
 
-- Saturday eligibility tied to course code containing `MAB`: `src/modules/scheduling/scheduler.ts:19`.
-- Parallel cap computed from number of sections, not explicit resource constraints: `src/modules/scheduling/scheduler.ts:23`.
+- `SchedulerResult` type includes `optimal` and `feasible`: `src/modules/scheduling/types.ts:128`, `src/modules/scheduling/types.ts:129`.
+- Actual scheduler return shape omits both fields: `src/modules/scheduling/engines/localSearchSolver.ts:696` to `src/modules/scheduling/engines/localSearchSolver.ts:700` and return object around `src/modules/scheduling/engines/localSearchSolver.ts:791`.
 
 Impact:
 
-- Logic may fail when naming conventions change.
-- Schedules are less transferable across departments/semesters/campuses.
+- Downstream UI/export cannot distinguish "best found" from "provably feasible"/"provably optimal".
 
-Why this matters:
+Recommendation:
 
-- Hard-coded assumptions reduce robustness and future maintainability.
+- Add explicit final feasibility checks and return flags.
 
-## 5) Parser accepts up to 19.9% row-level critical errors and still marks file valid (Medium)
+## 3) Seed-stage hard constraints are still best-effort penalties, not hard fail-fast (Medium)
 
 Evidence:
 
-- Validity threshold based on error rate < 0.2: `src/modules/scheduling/parser.ts:310`.
+- Construction evaluates violations as numeric penalties (`CAP_HARD`, `FACULTY_VIOL`) instead of rejecting assignment states outright: `src/modules/scheduling/engines/localSearchSolver.ts:622` to `src/modules/scheduling/engines/localSearchSolver.ts:665`.
 
 Impact:
 
-- Scheduling can run on materially incomplete or biased data.
-- Failure mode is silent degradation, not explicit stop.
+- On difficult or impossible instances, solver may still produce the least-bad schedule without surfacing infeasibility explicitly.
 
-Why this matters:
+Recommendation:
 
-- In timetabling, bad input quality directly distorts conflict graph quality.
+- Add a strict post-solve feasibility audit and fail/flag when hard constraints remain violated.
 
-## 6) Input alias gap: "Mobile No" is not recognized by current parser aliases (Low)
+## 4) Parser still accepts up to 19.9% row-level critical errors (Medium)
 
 Evidence:
 
-- Input sample uses "Mobile No".
-- Parser aliases include mobile number/mobile/phone/contact, but not "mobile no": `src/modules/scheduling/parser.ts:31` to `src/modules/scheduling/parser.ts:35`.
+- Parse validity threshold remains `errorRate < 0.2`: `src/modules/scheduling/parser.ts:313`.
 
 Impact:
 
-- Mobile values may be dropped when this exact header variant is used.
+- Scheduling can proceed with materially degraded input quality.
 
-Why this matters:
+Recommendation:
 
-- This is optional data, but still a data-quality gap against your real sheet format.
+- Tighten threshold or gate by absolute critical error count.
 
-## 7) Clash report stores only one clash day per student (Low)
+## 5) Determinism and automated regression safety are still weak (Low)
 
 Evidence:
 
-- `clashingDay` gets overwritten in loop, last clash day wins: `src/modules/scheduling/scheduler.ts:768`, `src/modules/scheduling/scheduler.ts:778`.
+- Stochastic flow still uses `Math.random` in solver: `src/modules/scheduling/engines/localSearchSolver.ts:490`, `src/modules/scheduling/engines/localSearchSolver.ts:522`, `src/modules/scheduling/engines/localSearchSolver.ts:613`.
+- No unit/integration test files were found in workspace.
 
 Impact:
 
-- Report under-represents multi-day clash cases for a student.
+- Harder to reproduce run-to-run behavior and benchmark deltas safely.
 
-Why this matters:
+Recommendation:
 
-- Analytics and remediation workflows can be misled.
+- Add seedable RNG path and baseline fixture tests.
 
-## 8) Determinism and test coverage gaps (Low)
+## 6) Minor domain-model mismatch: type allows Saturday, solver model is Mon-Fri only (Low)
 
 Evidence:
 
-- Stochastic search relies on `Math.random` with no seed control: `src/modules/scheduling/scheduler.ts:526`.
-- No unit/integration test files found in workspace.
+- `DayName` includes Saturday: `src/modules/scheduling/types.ts:7`.
+- Time model defines 5 weekdays only: `src/modules/scheduling/engines/timeModel.ts:8` to `src/modules/scheduling/engines/timeModel.ts:14`.
 
 Impact:
 
-- Reproducibility and regression detection are weak.
+- Potential confusion for consumers expecting Saturday from type-level contract.
 
-Why this matters:
+Recommendation:
 
-- Makes benchmarking and safe iteration harder.
+- Align type union with active model or make weekend mode explicit.
 
-## 9) Product copy overstates algorithm guarantees (Low)
+## 7) Product copy still overstates guarantees (Low)
 
 Evidence:
 
-- "optimal conflict-free schedules" claim: `src/features/LandingPage.tsx:89`.
-- "ensure optimal scheduling with zero undetected clashes" claim: `src/features/LandingPage.tsx:125`.
+- "optimal conflict-free schedules" in `src/features/LandingPage.tsx:69`.
+- "zero undetected clashes" in `src/features/LandingPage.tsx:107`.
 
 Impact:
 
-- Sets expectations that current heuristic architecture cannot guarantee in general NP-hard timetabling.
+- Claims exceed what a stochastic NP-hard heuristic can guarantee.
 
-## Is This the Best Possible Algorithm?
+Recommendation:
 
-Short answer: **No**.
+- Rephrase to "high-quality" / "best found" language.
 
-Long answer:
+## Re-Rating Summary
 
-- Timetabling is NP-hard, so "best possible" in absolute terms is unrealistic across all instances.
-- For your current architecture and student-only input constraints, this is a **decent heuristic baseline**, but not best-in-class due to feasibility and objective alignment gaps.
-- A stronger design is a **hybrid hard-constraint model + metaheuristic or CP-SAT backend** with lexicographic objectives.
+Previous rating: **7.0 / 10**
+Current verified rating: **8.1 / 10**
 
-Note on faculty:
+Why score increased:
 
-- If faculty is truly mapped only after schedule generation, the solver cannot prevent faculty timetable collisions by design.
-- That is acceptable only if faculty non-overlap is explicitly out of scope for now.
+- Objective/KPI alignment improved significantly.
+- Runtime scaling strategy is substantially more practical.
+- Conflict reporting quality improved.
+- Parser alias gap (`mobile no`) was fixed.
 
-## Recommended Target Architecture
+Why not higher yet:
 
-1. Enforce hard constraints strictly:
-- No fallback that places infeasible assignments.
-- Track feasibility status explicitly and reject infeasible final outputs.
-
-2. Keep a clear mode boundary:
-- Student-only mode: do not advertise faculty constraint enforcement.
-- Faculty-aware mode (future): ingest faculty mapping before solve and enforce no-overlap.
-
-3. Align objective with business KPI:
-- Primary objective: minimize unique students with >=1 clash.
-- Secondary objective: minimize total pairwise conflict weight.
-- Tertiary objective: improve load balance.
-
-4. Adaptive runtime policy:
-- Time-budgeted multi-start and auto-stop on plateau.
-- Dataset-size-based iteration caps.
-
-5. Reproducibility and validation:
-- Seeded RNG support.
-- Add benchmark fixtures + regression tests (small exact-check instances + medium realistic datasets).
-
-## Priority Action Plan
-
-### P0 (Immediate)
-
-- Remove infeasible-slot fallback behavior; return/flag infeasible if no legal slot exists.
-- Add final feasibility audit after optimization.
-- Add missing input aliases from your real sheet headers (for example "Mobile No").
-
-### P1 (Short Term)
-
-- Convert objective to lexicographic multi-objective scoring matching clash-report KPI.
-- Add adaptive stop conditions and runtime budgets.
-- Add deterministic seeded runs + repeatability mode.
-
-### P2 (Medium Term)
-
-- Build evaluation harness comparing current heuristic vs improved version on fixed datasets.
-- If faculty constraints become in-scope, ingest faculty mapping pre-solver and enforce hard non-overlap.
-- Optionally add CP-SAT path for smaller/medium instances needing stronger optimality guarantees.
-
-## Final Verdict
-
-The current approach is **promising but not production-optimal** yet.
-
-If P0 items are fixed, this can move into the ~7.8/10 range quickly.
-If P1 + reproducibility/testing are done well, it can realistically reach ~8.5/10 for heuristic scheduling quality and trustworthiness.
+- Real faculty assignment still needs a formal second pass for guaranteed final feasibility.
+- No explicit feasibility/optimality status in solver output.
+- Determinism/testing maturity is still low.

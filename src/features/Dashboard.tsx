@@ -1,62 +1,42 @@
-import { useState } from 'react';
-import { Layout } from '../components/layout/Layout';
-import { Scheduler } from './Scheduler';
-import { EmailsView } from './EmailsView';
-import type { PipelineOutput } from '@/hooks/useUnislotWorker'
-import { BarChart3, SlidersHorizontal } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Layout } from '../components/layout/Layout'
+import { useSchedulingSession } from '../contexts/useSchedulingSession'
+import type { LucideIcon } from 'lucide-react'
 
-interface DashboardProps {
-  onLogout: () => void;
-}
+export function DashboardLayout() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { resetSession } = useSchedulingSession()
 
-export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeFeature, setActiveFeature] = useState('scheduler');
-  const [result, setResult] = useState<PipelineOutput | null>(null);
+  const parts = location.pathname.split('/').filter(Boolean)
+  const activeFeature = parts[0] === 'app' && parts[1] ? parts[1] : 'scheduler'
 
-  // We can add a simple wrapper function to catch 'home' or handle logout
-  const handleFeatureChange = (feature: string) => {
+  const setActiveFeature = (feature: string) => {
     if (feature === 'home') {
-      onLogout();
-    } else {
-      setActiveFeature(feature);
+      resetSession()
+      navigate('/')
+      return
     }
-  };
+    navigate(`/app/${feature}`)
+  }
 
   return (
-    <Layout activeFeature={activeFeature} setActiveFeature={handleFeatureChange}>
-      {activeFeature === 'scheduler' && <Scheduler result={result} onResult={setResult} />}
-      {activeFeature === 'emails' && <EmailsView result={result} />}
-      {activeFeature === 'insights' && (
-        <ComingSoonPanel
-          icon={BarChart3}
-          title="Insights in Progress"
-          description="Course-level analytics, slot heatmaps, and scheduling quality trends are being designed for this dashboard."
-          accent="var(--accent-info)"
-        />
-      )}
-      {activeFeature === 'settings' && (
-        <ComingSoonPanel
-          icon={SlidersHorizontal}
-          title="Settings in Progress"
-          description="Theme presets, export preferences, and advanced scheduling controls will be available here soon."
-          accent="var(--accent-warning)"
-        />
-      )}
+    <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature}>
+      <Outlet />
     </Layout>
-  );
+  )
 }
 
-function ComingSoonPanel({
+export function ComingSoonPanel({
   icon: Icon,
   title,
   description,
   accent,
 }: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-  accent: string;
+  icon: LucideIcon
+  title: string
+  description: string
+  accent: string
 }) {
   return (
     <div className="flex h-full items-center justify-center p-4 sm:p-8">
@@ -71,5 +51,5 @@ function ComingSoonPanel({
         <p className="mt-3 text-text-muted">{description}</p>
       </div>
     </div>
-  );
+  )
 }

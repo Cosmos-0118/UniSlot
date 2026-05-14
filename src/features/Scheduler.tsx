@@ -11,7 +11,7 @@ import {
 import { useCallback, useState, type CSSProperties } from 'react'
 import { cn } from '@/shared/utils/cn'
 import type { ScheduleEntry, StudentClashReport, ValidationError } from '@/modules/scheduling/types'
-import { useUnislotWorker, type PipelineOutput } from '../hooks/useUnislotWorker'
+import { useSchedulingSession } from '../contexts/useSchedulingSession'
 import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
 
 function downloadArrayBuffer(data: ArrayBuffer, filename: string) {
@@ -156,13 +156,21 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
   )
 }
 
-type ViewMode = 'idle' | 'processing' | 'actions' | 'details'
-
-export function Scheduler({ result, onResult }: { result: PipelineOutput | null, onResult: (r: PipelineOutput | null) => void }) {
-  const { run, progress } = useUnislotWorker()
+export function Scheduler() {
+  const {
+    result,
+    setResult,
+    fileName,
+    setFileName,
+    viewMode,
+    setViewMode,
+    run,
+    resetTerminalLog,
+    terminalLines,
+    terminalTypingIdx,
+    onTerminalLineTypeDone,
+  } = useSchedulingSession()
   const [drag, setDrag] = useState(false)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('idle')
 
   const handleFile = useCallback(
     async (file: File | null) => {
@@ -171,13 +179,13 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
         alert('Please upload an Excel workbook (.xlsx)')
         return
       }
+      resetTerminalLog()
       setFileName(file.name)
-      onResult(null)
+      setResult(null)
       setViewMode('processing')
       try {
         const out = await run(file)
-        onResult(out)
-        // If valid, show action buttons; if invalid, go straight to details
+        setResult(out)
         if (out.validation.is_valid) {
           setViewMode('actions')
         } else {
@@ -185,11 +193,12 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
         }
       } catch (e) {
         console.error(e)
+        resetTerminalLog()
         setViewMode('idle')
         alert(e instanceof Error ? e.message : 'Something went wrong')
       }
     },
-    [run, onResult],
+    [run, setResult, setFileName, setViewMode, resetTerminalLog],
   )
 
   const showUploader = viewMode === 'idle'
@@ -226,7 +235,8 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
           <button
             type="button"
             onClick={() => {
-              onResult(null)
+              resetTerminalLog()
+              setResult(null)
               setViewMode('idle')
             }}
             className="theme-btn-secondary theme-focusable inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
@@ -294,8 +304,9 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
       {showTerminal && (
         <section className="flex-1 flex flex-col min-h-0 mb-4">
           <ProcessingTerminal
-            stage={progress?.stage ?? null}
-            message={progress?.message ?? null}
+            lines={terminalLines}
+            typingIdx={terminalTypingIdx}
+            onLineTypeDone={onTerminalLineTypeDone}
             done={false}
           />
           {fileName && (

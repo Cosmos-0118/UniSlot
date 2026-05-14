@@ -1,21 +1,55 @@
-import { useState } from 'react';
-import { ThemeProvider } from './contexts/ThemeProvider';
-import { LandingPage } from './features/LandingPage';
-import { Dashboard } from './features/Dashboard';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { ThemeProvider } from './contexts/ThemeProvider'
+import { SchedulingSessionProvider } from './contexts/SchedulingSessionProvider'
+import { LandingPage } from './features/LandingPage'
+import { DashboardLayout, ComingSoonPanel } from './features/Dashboard'
+import { Scheduler } from './features/Scheduler'
+import { EmailsView } from './features/EmailsView'
+import { BarChart3, SlidersHorizontal } from 'lucide-react'
 
 export default function App() {
-  // Simple custom router state
-  // 'landing' -> The public facing landing page
-  // 'app' -> The main logged-in dashboard area
-  const [currentRoute, setCurrentRoute] = useState<'landing' | 'app'>('landing');
-
   return (
     <ThemeProvider>
-      {currentRoute === 'landing' ? (
-        <LandingPage onEnterApp={() => setCurrentRoute('app')} />
-      ) : (
-        <Dashboard onLogout={() => setCurrentRoute('landing')} />
-      )}
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route
+            path="/app"
+            element={
+              <SchedulingSessionProvider>
+                <DashboardLayout />
+              </SchedulingSessionProvider>
+            }
+          >
+            <Route index element={<Navigate to="scheduler" replace />} />
+            <Route path="scheduler" element={<Scheduler />} />
+            <Route path="emails" element={<EmailsView />} />
+            <Route
+              path="insights"
+              element={
+                <ComingSoonPanel
+                  icon={BarChart3}
+                  title="Insights in Progress"
+                  description="Course-level analytics, slot heatmaps, and scheduling quality trends are being designed for this dashboard."
+                  accent="var(--accent-info)"
+                />
+              }
+            />
+            <Route
+              path="settings"
+              element={
+                <ComingSoonPanel
+                  icon={SlidersHorizontal}
+                  title="Settings in Progress"
+                  description="Theme presets, export preferences, and advanced scheduling controls will be available here soon."
+                  accent="var(--accent-warning)"
+                />
+              }
+            />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </ThemeProvider>
-  );
+  )
 }

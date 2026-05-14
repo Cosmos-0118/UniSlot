@@ -1,9 +1,11 @@
-import { ArrowRight, CalendarDays, Sparkles, Zap, Shield, Rocket } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { ArrowRight, CalendarDays, Sparkles, Zap, Shield, Rocket } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 import type { Variants } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 
-export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
+export function LandingPage() {
+  const navigate = useNavigate()
   const containerVariants: Variants = {
     hidden: { opacity: 0 },
     visible: {
@@ -38,7 +40,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.98 }}
-            onClick={onEnterApp}
+            onClick={() => navigate('/app')}
             className="theme-btn-primary theme-focusable rounded-xl px-5 py-2.5 text-sm font-semibold"
           >
             Get Started
@@ -73,7 +75,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={onEnterApp}
+              onClick={() => navigate('/app')}
               className="theme-btn-primary theme-focusable flex w-full items-center justify-center gap-2 rounded-2xl px-8 py-4 text-lg font-semibold sm:w-auto"
             >
               Get Started <ArrowRight className="size-5" />

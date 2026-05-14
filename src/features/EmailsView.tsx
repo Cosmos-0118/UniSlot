@@ -1,10 +1,11 @@
 import { Mail, Users, Copy, CheckCircle2, FileWarning } from 'lucide-react';
-import type { PipelineOutput } from '@/hooks/useUnislotWorker'
-import { useState } from 'react';
+import { useState } from 'react'
 import { cn } from '@/shared/utils/cn'
+import { useSchedulingSession } from '@/contexts/useSchedulingSession'
 
-export function EmailsView({ result }: { result: PipelineOutput | null }) {
-  const [copied, setCopied] = useState<string | null>(null);
+export function EmailsView() {
+  const { result } = useSchedulingSession()
+  const [copied, setCopied] = useState<string | null>(null)
 
   if (!result || !result.courseEmailsData) {
     return (
