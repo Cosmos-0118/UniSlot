@@ -20,6 +20,7 @@ export type WorkerResponse =
         studentCount: number
         courseCount: number
         sectionCount: number
+        scheduling: import('../lib/unislot/engines/metrics').SchedulingStats | null
       } | null
     }
   | { type: 'error'; id: number; message: string }

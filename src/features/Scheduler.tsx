@@ -55,11 +55,12 @@ function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-bg-secondary/50 shadow-xl backdrop-blur">
       <div className="max-h-[420px] overflow-auto">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[820px] text-left text-sm">
           <thead className="sticky top-0 z-10 bg-bg/95 backdrop-blur">
             <tr className="border-b border-border text-xs uppercase tracking-wider text-text-muted">
               <th className="px-4 py-3 font-medium">Course</th>
               <th className="px-4 py-3 font-medium">Section</th>
+              <th className="px-4 py-3 font-medium">Slot</th>
               <th className="px-4 py-3 font-medium">Day</th>
               <th className="px-4 py-3 font-medium">Time</th>
               <th className="px-4 py-3 font-medium">Enrollment</th>
@@ -77,6 +78,9 @@ function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
                   <div className="text-xs text-text-muted">{e.course_title}</div>
                 </td>
                 <td className="px-4 py-3 font-mono text-text-muted">{e.section_number}</td>
+                <td className="px-4 py-3 font-mono text-xs text-text-muted" title="Global evening slot index (0–54)">
+                  {e.slot_index}
+                </td>
                 <td className="px-4 py-3">
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-tertiary/50 px-2.5 py-1 text-xs font-medium text-brand-500">
                     <CalendarDays className="size-3.5 opacity-70" aria-hidden />
@@ -296,6 +300,13 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
               <p className="mt-1 text-sm text-text-muted">
                 {result.stats?.studentCount} students · {result.stats?.courseCount} courses · {result.stats?.sectionCount} sections
               </p>
+              {result.stats?.scheduling && (
+                <p className="mt-1 text-xs text-text-muted/90">
+                  Load: peak {result.stats.scheduling.max_parallel_sections_in_slot} parallel sections in one slot ·
+                  avg {result.stats.scheduling.average_parallel_sections_per_slot} per slot ·{' '}
+                  {result.stats.scheduling.slots_with_zero_courses} unused slots (of {result.stats.scheduling.total_weekly_slots})
+                </p>
+              )}
             </div>
 
             {/* Three action buttons */}

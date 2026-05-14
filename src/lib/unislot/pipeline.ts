@@ -1,11 +1,13 @@
 import { loadAndValidate, parseExcelRows } from './parser'
 import {
+  applyDistinctFacultyPerSection,
   assignStudentsToSections,
   buildConflictGraph,
   computeSectionSplits,
   extractFacultyConstraints,
 } from './preprocessing'
 import { buildSchedule, computeClashReport, runScheduler } from './scheduler'
+import { computeSchedulingStats, type SchedulingStats } from './engines/metrics'
 import type { ClashReport, Schedule, ValidationResult } from './types'
 import { clashReportToRichWorkbookBuffer } from './excelClashReport'
 import { courseEmailsToWorkbookBuffer } from './excelCourseEmails'
@@ -53,6 +55,7 @@ export interface PipelineResult {
     studentCount: number
     courseCount: number
     sectionCount: number
+    scheduling: SchedulingStats | null
   } | null
 }
 
@@ -98,8 +101,9 @@ export async function runPipeline(
     }
   }
 
-  onProgress('preprocess', 'Building sections and conflict graph…')
+  onProgress('preprocess', 'Building sections, faculty labels, and conflict graph…')
   let courseSections = computeSectionSplits(courses)
+  applyDistinctFacultyPerSection(courses, courseSections)
   courseSections = assignStudentsToSections(students, courseSections, enrollmentRows)
   const conflictGraph = buildConflictGraph(students, courseSections)
   const facultyConstraints = extractFacultyConstraints(courseSections)
@@ -123,6 +127,8 @@ export async function runPipeline(
   ])
 
   const sectionCount = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
+  const flatSections = Object.values(courseSections).flat()
+  const schedulingStats = computeSchedulingStats(flatSections, sched.slot_assignments, conflictGraph)
 
   onProgress('done', 'Complete')
   return {
@@ -137,6 +143,7 @@ export async function runPipeline(
       studentCount: Object.keys(students).length,
       courseCount: Object.keys(courses).length,
       sectionCount,
+      scheduling: schedulingStats,
     },
   }
 }

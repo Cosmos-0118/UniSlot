@@ -6,15 +6,6 @@ export type DayName =
   | 'Friday'
   | 'Saturday'
 
-export const INDEX_TO_DAY: Record<number, DayName> = {
-  0: 'Monday',
-  1: 'Tuesday',
-  2: 'Wednesday',
-  3: 'Thursday',
-  4: 'Friday',
-  5: 'Saturday',
-}
-
 export interface EnrollmentRow {
   program: string
   register_number: string
@@ -88,7 +79,12 @@ export interface ScheduleEntry {
   course_title: string
   section_number: number
   day: DayName
+  /** Human-readable evening window + intra-day band (Constraints.md §4). */
   time: string
+  /** Global slot 0..54 (Mon band1 .. Fri band11). */
+  slot_index: number
+  /** 1..11 within the weekday. */
+  slot_band: number
   faculty: string | null
   enrollment_count: number
   programs: string

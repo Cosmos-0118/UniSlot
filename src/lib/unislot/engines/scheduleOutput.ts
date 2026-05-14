@@ -1,0 +1,183 @@
+import type {
+  ClashReport,
+  DayName,
+  Schedule,
+  ScheduleEntry,
+  Section,
+  Student,
+  StudentClashReport,
+} from '../types'
+import { INDEX_TO_DAY, formatSlotTime, slotIndexToBand } from './timeModel'
+
+const PROGRAM_ABBREVIATIONS: [string, string][] = [
+  ['computer science and engineering', 'CSE'],
+  ['computer science', 'CS'],
+  ['artificial intelligence and machine learning', 'AIML'],
+  ['artificial intelligence', 'AI'],
+  ['machine learning', 'ML'],
+  ['data science', 'DS'],
+  ['information technology', 'IT'],
+  ['electronics and communication engineering', 'ECE'],
+  ['electronics and communication', 'ECE'],
+  ['electrical and electronics engineering', 'EEE'],
+  ['mechanical engineering', 'MECH'],
+  ['civil engineering', 'CIVIL'],
+]
+
+function abbreviateProgram(program: string): string {
+  if (!program) return ''
+  let lower = program.trim().toLowerCase()
+  for (const prefix of ['b.tech.-', 'b.tech-', 'b.tech.', 'b.tech ']) {
+    if (lower.startsWith(prefix)) {
+      lower = lower.slice(prefix.length)
+      break
+    }
+  }
+  const sorted = [...PROGRAM_ABBREVIATIONS].sort((a, b) => b[0].length - a[0].length)
+  for (const [key, abbr] of sorted) {
+    if (lower.includes(key)) return abbr
+  }
+  const words = lower.split(/\s+/).filter(Boolean)
+  const skip = new Set(['b', 'tech', 'm', 'of', 'and', 'in', 'the', 'with', 'engineering'])
+  const caps = words
+    .filter((w) => !skip.has(w) && w.length > 1 && /^[a-z]/i.test(w))
+    .map((w) => w[0]!.toUpperCase())
+  if (caps.length) return caps.slice(0, 4).join('')
+  return program.slice(0, 6).toUpperCase() || 'UNK'
+}
+
+function formatPrograms(programs: string[]): string {
+  const abbrs: string[] = []
+  const seen = new Set<string>()
+  for (const p of programs) {
+    const a = abbreviateProgram(p)
+    if (!seen.has(a)) {
+      seen.add(a)
+      abbrs.push(a)
+    }
+  }
+  return abbrs.join(', ')
+}
+
+export function buildSchedule(
+  courseSections: Record<string, Section[]>,
+  slotAssignments: Record<string, number>,
+  solverMeta: { solver_used: string; solver_time_seconds: number },
+): Schedule {
+  const entries: ScheduleEntry[] = []
+
+  for (const sections of Object.values(courseSections)) {
+    for (const section of sections) {
+      const slotIdx = slotAssignments[section.section_id] ?? 0
+      const day = INDEX_TO_DAY[slotIdx] ?? 'Monday'
+      entries.push({
+        section_id: section.section_id,
+        course_code: section.course_code,
+        course_title: section.course_title,
+        section_number: section.section_number,
+        day,
+        time: formatSlotTime(slotIdx),
+        slot_index: slotIdx,
+        slot_band: slotIndexToBand(slotIdx),
+        faculty: section.faculty,
+        enrollment_count: section.enrolled_students.length,
+        programs: formatPrograms(section.programs),
+      })
+    }
+  }
+
+  entries.sort(
+    (a, b) =>
+      (a.slot_index ?? 0) - (b.slot_index ?? 0) ||
+      a.course_code.localeCompare(b.course_code) ||
+      a.section_number - b.section_number,
+  )
+
+  return {
+    entries,
+    total_sections: entries.length,
+    solver_used: solverMeta.solver_used,
+    solver_time_seconds: solverMeta.solver_time_seconds,
+    total_clashes: 0,
+  }
+}
+
+export function computeClashReport(
+  students: Record<string, Student>,
+  courseSections: Record<string, Section[]>,
+  slotAssignments: Record<string, number>,
+): ClashReport {
+  const sectionToCourse = new Map<string, string>()
+  for (const sections of Object.values(courseSections)) {
+    for (const section of sections) {
+      sectionToCourse.set(section.section_id, section.course_code)
+    }
+  }
+
+  const studentSectionsMap = new Map<string, string[]>()
+
+  for (const sections of Object.values(courseSections)) {
+    for (const section of sections) {
+      for (const studentId of section.enrolled_students) {
+        if (!studentSectionsMap.has(studentId)) studentSectionsMap.set(studentId, [])
+        studentSectionsMap.get(studentId)!.push(section.section_id)
+      }
+    }
+  }
+
+  const reports: StudentClashReport[] = []
+  let studentsWithClashes = 0
+
+  for (const [studentId, student] of Object.entries(students)) {
+    const sectionIds = studentSectionsMap.get(studentId) ?? []
+    const slotSections = new Map<number, string[]>()
+    for (const sid of sectionIds) {
+      const slot = slotAssignments[sid] ?? -1
+      if (!slotSections.has(slot)) slotSections.set(slot, [])
+      slotSections.get(slot)!.push(sid)
+    }
+
+    const clashingPairs: [string, string][] = []
+    let clashingDay: DayName | null = null
+
+    for (const [slot, sids] of slotSections) {
+      if (sids.length > 1 && slot >= 0) {
+        const courses = sids.map((id) => sectionToCourse.get(id) ?? id)
+        for (let i = 0; i < courses.length; i++) {
+          for (let j = i + 1; j < courses.length; j++) {
+            clashingPairs.push([courses[i]!, courses[j]!])
+          }
+        }
+        clashingDay = INDEX_TO_DAY[slot] ?? null
+      }
+    }
+
+    const status = clashingPairs.length ? 'Red' : 'Green'
+    if (status === 'Red') studentsWithClashes++
+
+    reports.push({
+      register_number: studentId,
+      student_name: student.name,
+      program: student.program,
+      enrolled_courses: student.enrolled_courses,
+      status,
+      clashing_courses: clashingPairs,
+      clashing_day: clashingDay,
+    })
+  }
+
+  reports.sort(
+    (a, b) =>
+      (a.status === 'Red' ? 0 : 1) - (b.status === 'Red' ? 0 : 1) ||
+      a.register_number.localeCompare(b.register_number),
+  )
+
+  const total = reports.length
+  return {
+    total_students: total,
+    students_with_clashes: studentsWithClashes,
+    clash_free_students: total - studentsWithClashes,
+    clash_percentage: total ? Math.round((studentsWithClashes / total) * 10000) / 100 : 0,
+    reports,
+  }
+}

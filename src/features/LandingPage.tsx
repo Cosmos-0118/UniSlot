@@ -36,7 +36,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
             opacity: [0.1, 0.2, 0.1] 
           }}
           transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-          className="absolute top-[40%] -right-[10%] w-[60%] h-[60%] rounded-full bg-indigo-500 blur-[120px]" 
+          className="absolute top-[40%] -right-[10%] w-[60%] h-[60%] rounded-full bg-brand-600 blur-[120px]" 
         />
       </div>
 
@@ -80,7 +80,7 @@ export function LandingPage({ onEnterApp }: { onEnterApp: () => void }) {
           
           <motion.h1 variants={itemVariants} className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tight text-text mb-8 leading-[1.1]">
             Schedule with <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-brand-500 to-indigo-500">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-brand-500 to-brand-600">
               Absolute Confidence.
             </span>
           </motion.h1>

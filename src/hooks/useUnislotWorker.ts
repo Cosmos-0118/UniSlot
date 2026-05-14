@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClashReport, Schedule, ValidationResult } from '../lib/unislot/types'
+import type { SchedulingStats } from '../lib/unislot/engines/metrics'
 import type { WorkerRequest, WorkerResponse } from '../workers/unislot.worker'
 
 export interface PipelineOutput {
@@ -14,6 +15,7 @@ export interface PipelineOutput {
     studentCount: number
     courseCount: number
     sectionCount: number
+    scheduling: SchedulingStats | null
   } | null
 }
 
