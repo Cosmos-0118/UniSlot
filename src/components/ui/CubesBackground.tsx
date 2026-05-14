@@ -30,6 +30,7 @@ export function CubesBackground() {
   const gridRef = useRef({ cols: 0, rows: 0, cell: 10, offsetX: 0, offsetY: 0, w: 0, h: 0 })
   const mountRef = useRef(0)
   const reducedMotionRef = useRef(false)
+  const timeAccRef = useRef({ lastFrame: 0, simTime: 0 })
 
   useEffect(() => {
     mountRef.current = performance.now()
@@ -87,11 +88,21 @@ export function CubesBackground() {
     document.addEventListener('visibilitychange', onVisibility)
 
     const draw = (frameTime: number) => {
+      if (timeAccRef.current.lastFrame === 0) {
+        timeAccRef.current.lastFrame = frameTime
+      }
+      
       if (!active || document.visibilityState !== 'visible') {
+        timeAccRef.current.lastFrame = frameTime
         raf = requestAnimationFrame(draw)
         return
       }
 
+      let dt = frameTime - timeAccRef.current.lastFrame
+      if (dt < 0) dt = 0
+      timeAccRef.current.lastFrame = frameTime
+      timeAccRef.current.simTime += Math.min(dt, 50) // Cap max delta to avoid huge jumps
+      
       const { cols, rows, cell, offsetX, offsetY, w, h } = gridRef.current
       if (cols < 2 || rows < 2) {
         raf = requestAnimationFrame(draw)
@@ -99,7 +110,7 @@ export function CubesBackground() {
       }
 
       const reduced = reducedMotionRef.current
-      const timeSec = frameTime * 0.001
+      const timeSec = timeAccRef.current.simTime * 0.001
 
       ctx.clearRect(0, 0, w, h)
 
