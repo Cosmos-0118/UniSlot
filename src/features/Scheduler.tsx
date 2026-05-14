@@ -6,7 +6,6 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
-  Sparkles,
   Users,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
@@ -164,10 +163,6 @@ export function Scheduler({ result, onResult }: { result: PipelineOutput | null,
     <div className="mx-auto flex flex-col px-8 py-10 max-w-5xl">
       <header className="mb-12 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1 text-xs font-medium text-brand-500">
-            <Sparkles className="size-3.5" aria-hidden />
-            Client-side · private · no upload server
-          </div>
           <h1 className="text-4xl font-bold tracking-tight text-text sm:text-5xl">
             Scheduler
           </h1>

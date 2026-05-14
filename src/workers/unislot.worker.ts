@@ -15,6 +15,7 @@ export type WorkerResponse =
       scheduleXlsx: ArrayBuffer | null
       clashXlsx: ArrayBuffer | null
       courseEmailsXlsx: ArrayBuffer | null
+      courseEmailsData: import('../lib/unislot/types').CourseEmailGroup[] | null
       stats: {
         studentCount: number
         courseCount: number
@@ -43,6 +44,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         scheduleXlsx: result.scheduleXlsx,
         clashXlsx: result.clashXlsx,
         courseEmailsXlsx: result.courseEmailsXlsx,
+        courseEmailsData: result.courseEmailsData,
         stats: result.stats,
       }
       const transfer: Transferable[] = []
