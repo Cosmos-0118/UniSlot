@@ -12,16 +12,16 @@ export function DashboardLayout() {
   const activeFeature = parts[0] === 'app' && parts[1] ? parts[1] : 'scheduler'
 
   const setActiveFeature = (feature: string) => {
-    if (feature === 'home') {
-      resetSession()
-      navigate('/')
-      return
-    }
     navigate(`/app/${feature}`)
   }
 
+  const goHome = () => {
+    resetSession()
+    navigate('/')
+  }
+
   return (
-    <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature}>
+    <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={goHome}>
       <Outlet />
     </Layout>
   )

@@ -5,12 +5,13 @@ interface LayoutProps {
   children: ReactNode;
   activeFeature: string;
   setActiveFeature: (feature: string) => void;
+  onLogoClick: () => void;
 }
 
-export function Layout({ children, activeFeature, setActiveFeature }: LayoutProps) {
+export function Layout({ children, activeFeature, setActiveFeature, onLogoClick }: LayoutProps) {
   return (
     <div className="app-shell flex h-screen overflow-hidden text-text">
-      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} />
+      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={onLogoClick} />
       <main className="relative flex-1 overflow-y-auto">
         <div
           className="pointer-events-none absolute inset-0 transition-opacity duration-700"

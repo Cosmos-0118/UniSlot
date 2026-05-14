@@ -1,17 +1,17 @@
 import { AppLogo } from '@/components/brand/AppLogo'
 import { cn } from '@/shared/utils/cn'
-import { Calendar, Home, Settings, Zap, Mail } from 'lucide-react'
+import { Calendar, Settings, Zap, Mail } from 'lucide-react'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 
 interface SidebarProps {
   activeFeature: string;
   setActiveFeature: (feature: string) => void;
+  onLogoClick: () => void;
 }
 
-export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
+export function Sidebar({ activeFeature, setActiveFeature, onLogoClick }: SidebarProps) {
 
   const features = [
-    { id: 'home', label: 'Home', icon: Home },
     { id: 'scheduler', label: 'Scheduler', icon: Calendar },
     { id: 'emails', label: 'Emails', icon: Mail },
     { id: 'insights', label: 'Insights', icon: Zap },
@@ -21,15 +21,20 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
   return (
     <aside className="theme-sidebar flex w-20 flex-shrink-0 flex-col transition-colors duration-500 md:w-80">
       <div className="px-3 pb-4 pt-5 md:px-5 md:pt-6">
-        <div className="theme-sidebar-brand flex items-center justify-center gap-3 rounded-2xl px-2.5 py-3 md:justify-start md:px-3.5">
-          <AppLogo size="nav" className="ring-1 ring-border/70 shadow-sm" />
+        <button
+          type="button"
+          onClick={onLogoClick}
+          title="Back to UniSlot home"
+          className="theme-sidebar-brand theme-focusable group flex w-full cursor-pointer items-center justify-center gap-3 rounded-2xl px-2.5 py-3 text-left transition-[transform,box-shadow] duration-200 hover:brightness-[1.03] active:scale-[0.99] md:justify-start md:px-3.5"
+        >
+          <AppLogo size="nav" className="ring-1 ring-border/70 shadow-sm transition-shadow duration-200 group-hover:ring-brand-400/35" />
           <div className="hidden md:block">
             <div className="text-lg font-semibold tracking-wide text-text">UniSlot</div>
             <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-muted">
               Scheduling Studio
             </div>
           </div>
-        </div>
+        </button>
       </div>
 
       <div className="hidden px-5 pb-1 md:block">

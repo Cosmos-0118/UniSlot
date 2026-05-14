@@ -5,13 +5,18 @@ import type { Variants } from 'framer-motion'
 import { useLayoutEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CubesBackground } from '@/components/ui/CubesBackground'
+import { RetroBootOverlay } from '@/components/ui/RetroBootOverlay'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 import { useTheme } from '@/contexts/useTheme'
 import { cn } from '@/shared/utils/cn'
 
-/** Glass surface — no overflow clip here (text must not be cropped). */
+/**
+ * Glass surface — no overflow clip here (text must not be cropped).
+ * Opacity must stay off parent entrance animations: animating opacity on a Framer
+ * ancestor breaks backdrop-filter compositing (brief “glass” then flat grey).
+ */
 const glassPanelSurface =
-  'relative rounded-[1.75rem] border border-white/[0.12] bg-[color-mix(in_srgb,var(--bg)_28%,transparent)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1),0_8px_32px_-12px_rgba(0,0,0,0.45)] backdrop-blur-2xl ring-1 ring-white/[0.05] md:rounded-[2rem]'
+  'relative rounded-[1.75rem] border border-white/[0.14] bg-[color-mix(in_srgb,var(--bg)_14%,transparent)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_8px_32px_-12px_rgba(0,0,0,0.38)] backdrop-blur-2xl ring-1 ring-white/[0.06] md:rounded-[2rem]'
 
 const glassHoverClass =
   'transition-[box-shadow,border-color] duration-500 hover:border-brand-400/30 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14),0_24px_64px_-16px_color-mix(in_srgb,var(--brand-500)_28%,transparent),0_12px_40px_-18px_rgba(0,0,0,0.55)]'
@@ -52,20 +57,27 @@ export function LandingPage() {
     }
   }, [theme, setTheme])
   const containerVariants: Variants = {
-    hidden: { opacity: 0 },
+    hidden: {},
     visible: {
-      opacity: 1,
-      transition: { staggerChildren: 0.1, delayChildren: 0.2 },
+      transition: { staggerChildren: 0.1, delayChildren: 0.12 },
     },
   }
 
   const itemVariants: Variants = {
-    hidden: { y: 20, opacity: 0 },
-    visible: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 100 } },
+    hidden: { y: 22 },
+    visible: {
+      y: 0,
+      transition: { type: 'spring', stiffness: 95, damping: 20, mass: 0.85 },
+    },
   }
 
   return (
-    <div className="app-shell relative flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto text-text">
+    <div
+      className="app-shell relative flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto text-text select-none touch-callout-none"
+      onCopy={(e) => e.preventDefault()}
+      onCut={(e) => e.preventDefault()}
+    >
+      <RetroBootOverlay />
       <CubesBackground />
 
       <nav className="relative z-30 flex w-full justify-center px-6 py-6">
