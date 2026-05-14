@@ -2,7 +2,7 @@
 
 ## Overview
 
-The input file must be an Excel file (.xlsx) with enrollment data. Each row represents **one student registered for one course**.
+The input file must be an Excel workbook (**.xlsx**) with enrollment data. Each row represents **one student registered for one course**.
 
 A student enrolled in 3 courses will have 3 rows in the file.
 
@@ -12,15 +12,15 @@ A student enrolled in 3 courses will have 3 rows in the file.
 
 | Column Name       | Type   | Required | Description                                                                        |
 | ----------------- | ------ | -------- | ---------------------------------------------------------------------------------- |
-| Program           | String | ✅ Yes   | Student's academic program (e.g., "B.Tech CSE", "M.Tech AI")                       |
-| Register Number   | String | ✅ Yes   | Unique student identifier. **Must be treated as string** to preserve leading zeros |
-| Student Name      | String | ✅ Yes   | Full name of the student                                                           |
-| Mobile Number     | String | ❌ No    | Contact phone number                                                               |
-| Email ID          | String | ❌ No    | Student email address                                                              |
-| Course Code       | String | ✅ Yes   | Unique course identifier (e.g., "CS501", "EC302")                                  |
-| Course Title      | String | ✅ Yes   | Full course name                                                                   |
-| Registration Type | String | ❌ No    | "Online" or "Manual"                                                               |
-| Remarks           | String | ❌ No    | Additional notes                                                                   |
+| Program           | String | Yes      | Student's academic program (e.g., "B.Tech CSE", "M.Tech AI")                       |
+| Register Number   | String | Yes      | Unique student identifier. **Must be treated as string** to preserve leading zeros |
+| Student Name      | String | Yes      | Full name of the student                                                           |
+| Mobile Number     | String | No       | Contact phone number                                                               |
+| Email ID          | String | No       | Student email address                                                              |
+| Course Code       | String | Yes      | Unique course identifier (e.g., "CS501", "EC302")                                  |
+| Course Title      | String | Yes      | Full course name                                                                   |
+| Registration Type | String | No       | "Online" or "Manual"                                                               |
+| Remarks           | String | No       | Additional notes                                                                   |
 
 ---
 
@@ -41,10 +41,10 @@ The parser accepts these alternate column names:
 
 ## Business Rules Validated
 
-1. **Max 5 courses per student**: If a student has more than 5 course registrations, a warning is raised
-2. **No duplicate registrations**: Same student + same course should not appear twice
-3. **Required fields**: Program, Register Number, Student Name, Course Code, Course Title must be non-empty
-4. **Course capacity**: Courses with >65 students will be automatically split into sections
+1. **Max courses per student**: If a student exceeds the configured maximum, a warning is raised (default: 10 in the web client).
+2. **No duplicate registrations**: Same student + same course should not appear twice.
+3. **Required fields**: Program, Register Number, Student Name, Course Code, Course Title must be non-empty.
+4. **Course capacity**: Courses with more than 65 students are automatically split into sections.
 
 ---
 
@@ -71,22 +71,28 @@ In this example:
 
 | Column       | Description                     |
 | ------------ | ------------------------------- |
-| Course Code  | Course identifier                |
+| Course Code  | Course identifier               |
 | Course Title | Course name                     |
 | Section      | Section number (1 if not split) |
-| Day          | Monday-Friday                   |
+| Day          | Weekday (Mon–Fri; Saturday allowed for math-style course codes) |
 | Time         | "5:00 PM - 7:00 PM"             |
-| Faculty      | Assigned faculty (if provided)  |
-| Enrollment   | Number of students in section   |
+| Faculty      | Assigned faculty (if provided) |
+| Enrollment   | Number of students in section  |
+| Programs     | Abbreviated program mix         |
 
-### 2. Clash Report (clash_report.xlsx)
+### 2. Clash report (`unislot-clash-report.xlsx`)
 
-| Column           | Description                                   |
-| ---------------- | --------------------------------------------- |
-| Register Number  | Student ID                                    |
-| Student Name     | Full name                                     |
-| Program          | Academic program                              |
-| Courses          | Comma-separated list of enrolled courses      |
-| Status           | 🟢 Green (no clashes) or 🔴 Red (has clashes)  |
-| Clashing Courses | Courses scheduled at same time (if any)       |
-| Clash Day        | Day when clash occurs (if any)                |
+Multi-sheet workbook (styled like the legacy export):
+
+- **Summary** — headline status, key metrics, clashes by day / program, top course pairs  
+- **Clashes Only** — every student with a conflict  
+- **By Program** — grouped under each program with section headers  
+- **By Day** — grouped under weekday with tint bands  
+- **By Course** — ranked course pairs and how many students they affect  
+- **Full Report** — all students with OK / CLASH status  
+
+### 3. Course emails (`unislot-course-emails.xlsx`)
+
+- **Course Emails** — one row per course: deduplicated comma-separated addresses for mail-merge / BCC-style use  
+- **Missing Emails** — rows for enrollments with no email on file (course, student, program)
+

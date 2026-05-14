@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --color-brand-50: oklch(0.97 0.02 280);
+  --color-brand-100: oklch(0.93 0.05 280);
+  --color-brand-200: oklch(0.85 0.09 280);
+  --color-brand-400: oklch(0.68 0.18 280);
+  --color-brand-500: oklch(0.58 0.22 280);
+  --color-brand-600: oklch(0.5 0.22 280);
+  --color-brand-900: oklch(0.28 0.12 280);
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply min-h-dvh bg-zinc-950 text-zinc-100 font-sans;
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -20%, oklch(0.35 0.15 280 / 0.45), transparent),
+      radial-gradient(ellipse 80% 50% at 100% 0%, oklch(0.32 0.12 240 / 0.25), transparent);
+  }
+}
