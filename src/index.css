@@ -1,24 +1,134 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
-  --color-brand-50: oklch(0.97 0.02 280);
-  --color-brand-100: oklch(0.93 0.05 280);
-  --color-brand-200: oklch(0.85 0.09 280);
-  --color-brand-400: oklch(0.68 0.18 280);
-  --color-brand-500: oklch(0.58 0.22 280);
-  --color-brand-600: oklch(0.5 0.22 280);
-  --color-brand-900: oklch(0.28 0.12 280);
+  --font-sans: 'Inter', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  
+  --color-bg: var(--bg);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-border: var(--border);
+  
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-brand-950: var(--brand-950);
 }
 
 @layer base {
+  :root {
+    /* DEFAULT DARK THEME */
+    --bg: #09090b;
+    --bg-secondary: rgba(24, 24, 27, 0.6);
+    --bg-tertiary: rgba(39, 39, 42, 0.4);
+    --text: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --border: rgba(255, 255, 255, 0.1);
+
+    --brand-50: oklch(0.97 0.02 280);
+    --brand-100: oklch(0.93 0.05 280);
+    --brand-200: oklch(0.85 0.09 280);
+    --brand-300: oklch(0.75 0.15 280);
+    --brand-400: oklch(0.68 0.18 280);
+    --brand-500: oklch(0.58 0.22 280);
+    --brand-600: oklch(0.5 0.22 280);
+    --brand-700: oklch(0.4 0.18 280);
+    --brand-800: oklch(0.32 0.15 280);
+    --brand-900: oklch(0.28 0.12 280);
+    --brand-950: oklch(0.18 0.08 280);
+  }
+
+  [data-theme="light"] {
+    --bg: #ffffff;
+    --bg-secondary: rgba(244, 244, 245, 0.7);
+    --bg-tertiary: rgba(228, 228, 231, 0.5);
+    --text: #09090b;
+    --text-muted: #52525b;
+    --border: rgba(0, 0, 0, 0.1);
+
+    --brand-50: oklch(0.97 0.02 240);
+    --brand-100: oklch(0.93 0.05 240);
+    --brand-200: oklch(0.85 0.09 240);
+    --brand-300: oklch(0.75 0.15 240);
+    --brand-400: oklch(0.68 0.18 240);
+    --brand-500: oklch(0.58 0.22 240);
+    --brand-600: oklch(0.5 0.22 240);
+    --brand-700: oklch(0.4 0.18 240);
+    --brand-800: oklch(0.32 0.15 240);
+    --brand-900: oklch(0.28 0.12 240);
+    --brand-950: oklch(0.18 0.08 240);
+  }
+
+  [data-theme="crimson"] {
+    --bg: #110000;
+    --bg-secondary: rgba(36, 0, 0, 0.6);
+    --bg-tertiary: rgba(60, 0, 0, 0.4);
+    --text: #fff0f0;
+    --text-muted: #fca5a5;
+    --border: rgba(255, 100, 100, 0.15);
+
+    --brand-50: oklch(0.97 0.02 20);
+    --brand-100: oklch(0.93 0.05 20);
+    --brand-200: oklch(0.85 0.09 20);
+    --brand-300: oklch(0.75 0.15 20);
+    --brand-400: oklch(0.68 0.18 20);
+    --brand-500: oklch(0.58 0.22 20);
+    --brand-600: oklch(0.5 0.22 20);
+    --brand-700: oklch(0.4 0.18 20);
+    --brand-800: oklch(0.32 0.15 20);
+    --brand-900: oklch(0.28 0.12 20);
+    --brand-950: oklch(0.18 0.08 20);
+  }
+
   html {
     @apply antialiased;
   }
+  
   body {
-    @apply min-h-dvh bg-zinc-950 text-zinc-100 font-sans;
-    background-image:
-      radial-gradient(ellipse 120% 80% at 50% -20%, oklch(0.35 0.15 280 / 0.45), transparent),
-      radial-gradient(ellipse 80% 50% at 100% 0%, oklch(0.32 0.12 240 / 0.25), transparent);
+    @apply min-h-dvh bg-bg text-text font-sans transition-colors duration-500;
   }
+
+  [data-theme="dark"] body {
+    background-image:
+      radial-gradient(ellipse 100% 100% at 50% -20%, rgba(120, 50, 255, 0.15), transparent),
+      radial-gradient(ellipse 80% 50% at 100% 0%, rgba(50, 100, 255, 0.1), transparent);
+  }
+
+  [data-theme="light"] body {
+    background-image:
+      radial-gradient(ellipse 100% 100% at 50% -20%, rgba(50, 150, 255, 0.1), transparent),
+      radial-gradient(ellipse 80% 50% at 100% 0%, rgba(100, 50, 255, 0.05), transparent);
+  }
+
+  [data-theme="crimson"] body {
+    background-image:
+      radial-gradient(ellipse 100% 100% at 50% -20%, rgba(255, 30, 30, 0.15), transparent),
+      radial-gradient(ellipse 80% 50% at 100% 0%, rgba(200, 10, 50, 0.1), transparent);
+  }
+}
+
+/* Custom scrollbar to match theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-text-muted;
 }

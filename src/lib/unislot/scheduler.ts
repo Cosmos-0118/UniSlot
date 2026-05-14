@@ -12,8 +12,8 @@ import { INDEX_TO_DAY } from './types'
 
 const NUM_SLOTS = 5
 const NUM_SLOTS_WITH_SATURDAY = 6
-const LOCAL_SEARCH_ITERATIONS = 500
 const MULTI_START_RUNS = 10
+const SOLUTION_POOL_TOP = 3
 const LOAD_BALANCE_FACTOR = 5
 
 function isMathCourse(courseCode: string): boolean {
@@ -37,6 +37,389 @@ function computeClashWeight(
     }
   }
   return total
+}
+
+function maxSlotForSection(sid: string, mathSections: Set<string>): number {
+  return mathSections.has(sid) ? NUM_SLOTS_WITH_SATURDAY : NUM_SLOTS
+}
+
+function tabuAttrKey(sid: string, slot: number): string {
+  return `${sid}\t${slot}`
+}
+
+/** Faculty → slot → section occupying that slot (at most one per slot per faculty when feasible). */
+function buildFacultySlotMap(
+  assignments: Record<string, number>,
+  sectionFaculty: Record<string, string | null>,
+): Map<string, Map<number, string>> {
+  const m = new Map<string, Map<number, string>>()
+  for (const sid of Object.keys(assignments)) {
+    const f = sectionFaculty[sid]
+    if (!f) continue
+    const slot = assignments[sid]!
+    if (!m.has(f)) m.set(f, new Map())
+    m.get(f)!.set(slot, sid)
+  }
+  return m
+}
+
+function slotLoadsFromAssignments(assignments: Record<string, number>): number[] {
+  const loads = Array(NUM_SLOTS_WITH_SATURDAY).fill(0)
+  for (const slot of Object.values(assignments)) {
+    loads[slot as number] = (loads[slot as number] ?? 0) + 1
+  }
+  return loads
+}
+
+function buildSectionFaculty(
+  sections: Section[],
+  facultyConstraints: Record<string, string[]>,
+): Record<string, string | null> {
+  const sectionFaculty: Record<string, string | null> = {}
+  for (const [faculty, sids] of Object.entries(facultyConstraints)) {
+    for (const sid of sids) sectionFaculty[sid] = faculty
+  }
+  for (const sec of sections) {
+    if (sectionFaculty[sec.section_id] === undefined) {
+      sectionFaculty[sec.section_id] = sec.faculty
+    }
+  }
+  return sectionFaculty
+}
+
+function hybridSATabuImprove(
+  initialAssignments: Record<string, number>,
+  sections: Section[],
+  conflictGraph: ConflictGraph,
+  adj: Map<string, Map<string, number>>,
+  facultyConstraints: Record<string, string[]>,
+  parallelCap: number,
+  mathSections: Set<string>,
+  options?: { maxIterFactor?: number },
+): Record<string, number> {
+  const sectionFaculty = buildSectionFaculty(sections, facultyConstraints)
+
+  const assignments: Record<string, number> = { ...initialAssignments }
+  const sectionIds = Object.keys(assignments)
+  const n = sectionIds.length
+  const mEdges = conflictGraph.edges.length
+
+  const slotLoads = slotLoadsFromAssignments(assignments)
+  const facultySlots = buildFacultySlotMap(assignments, sectionFaculty)
+
+  const maxIter = Math.min(
+    80_000,
+    Math.max(
+      1_500,
+      Math.floor((options?.maxIterFactor ?? 1) * (150 * n + 15 * mEdges + 800)),
+    ),
+  )
+  const baseTenure = Math.max(4, Math.min(40, Math.floor(5 + n / 8)))
+  const coolPeriod = Math.max(40, Math.floor(25 + n / 3))
+  const stagnationReheat = Math.max(250, Math.floor(180 + n * 4))
+
+  let temperature = Math.max(2, computeClashWeight(conflictGraph, assignments) * 0.04)
+  const t0 = temperature
+  let totalClash = computeClashWeight(conflictGraph, assignments)
+  let globalBest = totalClash
+  const globalBestAssign: Record<string, number> = { ...assignments }
+
+  const tabuUntil = new Map<string, number>()
+  let iterSinceGlobalBest = 0
+
+  function isTabu(sid: string, toSlot: number, iter: number): boolean {
+    return (tabuUntil.get(tabuAttrKey(sid, toSlot)) ?? 0) > iter
+  }
+
+  function clashDeltaSingleMove(sid: string, oldSlot: number, newSlot: number): number {
+    let d = 0
+    const neighbors = adj.get(sid)
+    if (!neighbors) return 0
+    for (const [v, w] of neighbors) {
+      const sv = assignments[v]!
+      d += w * ((sv === newSlot ? 1 : 0) - (sv === oldSlot ? 1 : 0))
+    }
+    return d
+  }
+
+  function feasibleSingleMove(sid: string, newSlot: number): boolean {
+    const oldSlot = assignments[sid]!
+    if (oldSlot === newSlot) return false
+    const maxS = maxSlotForSection(sid, mathSections)
+    if (newSlot < 0 || newSlot >= maxS) return false
+
+    const f = sectionFaculty[sid]
+    if (f) {
+      const occ = facultySlots.get(f)?.get(newSlot)
+      if (occ && occ !== sid) return false
+    }
+
+    if (slotLoads[newSlot]! + 1 > parallelCap) return false
+    return true
+  }
+
+  function applySingleMove(sid: string, newSlot: number): void {
+    const oldSlot = assignments[sid]!
+    const f = sectionFaculty[sid]
+    if (f) {
+      if (!facultySlots.has(f)) facultySlots.set(f, new Map())
+      const fm = facultySlots.get(f)!
+      if (fm.get(oldSlot) === sid) fm.delete(oldSlot)
+      fm.set(newSlot, sid)
+    }
+    slotLoads[oldSlot]!--
+    slotLoads[newSlot] = (slotLoads[newSlot] ?? 0) + 1
+    assignments[sid] = newSlot
+  }
+
+  function clashDeltaSwap(sid1: string, sid2: string): number | null {
+    const A = assignments[sid1]!
+    const B = assignments[sid2]!
+    if (A === B) return null
+
+    const f1 = sectionFaculty[sid1]
+    const f2 = sectionFaculty[sid2]
+    if (f1) {
+      const occ = facultySlots.get(f1)?.get(B)
+      if (occ && occ !== sid1 && occ !== sid2) return null
+    }
+    if (f2) {
+      const occ = facultySlots.get(f2)?.get(A)
+      if (occ && occ !== sid1 && occ !== sid2) return null
+    }
+
+    let d = 0
+    const nbr1 = adj.get(sid1)
+    if (nbr1) {
+      for (const [v, w] of nbr1) {
+        if (v === sid2) continue
+        const sv = assignments[v]!
+        d += w * ((sv === B ? 1 : 0) - (sv === A ? 1 : 0))
+      }
+    }
+    const nbr2 = adj.get(sid2)
+    if (nbr2) {
+      for (const [v, w] of nbr2) {
+        if (v === sid1) continue
+        const sv = assignments[v]!
+        d += w * ((sv === A ? 1 : 0) - (sv === B ? 1 : 0))
+      }
+    }
+    return d
+  }
+
+  function applySwap(sid1: string, sid2: string): void {
+    const A = assignments[sid1]!
+    const B = assignments[sid2]!
+    const f1 = sectionFaculty[sid1]
+    const f2 = sectionFaculty[sid2]
+    if (f1) {
+      if (!facultySlots.has(f1)) facultySlots.set(f1, new Map())
+      const fm = facultySlots.get(f1)!
+      if (fm.get(A) === sid1) fm.delete(A)
+      fm.set(B, sid1)
+    }
+    if (f2) {
+      if (!facultySlots.has(f2)) facultySlots.set(f2, new Map())
+      const fm = facultySlots.get(f2)!
+      if (fm.get(B) === sid2) fm.delete(B)
+      fm.set(A, sid2)
+    }
+    assignments[sid1] = B
+    assignments[sid2] = A
+  }
+
+  function buildKempeComponent(startSid: string, c1: number, c2: number): string[] | null {
+    const sc = assignments[startSid]
+    if (sc !== c1 && sc !== c2) return null
+    const stack = [startSid]
+    const seen = new Set<string>([startSid])
+    while (stack.length) {
+      const u = stack.pop()!
+      const neighbors = adj.get(u)
+      if (!neighbors) continue
+      for (const [v] of neighbors) {
+        if (seen.has(v)) continue
+        const col = assignments[v]
+        if (col === c1 || col === c2) {
+          seen.add(v)
+          stack.push(v)
+        }
+      }
+    }
+    return [...seen]
+  }
+
+  function kempeDeltaAndFeasible(
+    component: string[],
+    c1: number,
+    c2: number,
+  ): { delta: number; ok: boolean } {
+    const inComp = new Set(component)
+    let other: number | null = null
+    for (const sid of component) {
+      const s = assignments[sid]!
+      if (s !== c1) {
+        other = s
+        break
+      }
+    }
+    if (other === null || other !== c2) return { delta: 0, ok: false }
+
+    for (const sid of component) {
+      const ns = assignments[sid] === c1 ? c2 : c1
+      if (ns < 0 || ns >= maxSlotForSection(sid, mathSections)) return { delta: 0, ok: false }
+    }
+
+    let nAt1 = 0
+    let nAt2 = 0
+    for (const sid of component) {
+      if (assignments[sid] === c1) nAt1++
+      else nAt2++
+    }
+    const load1after = slotLoads[c1]! - nAt1 + nAt2
+    const load2after = slotLoads[c2]! - nAt2 + nAt1
+    if (load1after > parallelCap || load2after > parallelCap) return { delta: 0, ok: false }
+
+    const faculties = new Set<string>()
+    for (const sid of sectionIds) {
+      const f = sectionFaculty[sid]
+      if (f) faculties.add(f)
+    }
+    for (const f of faculties) {
+      const bySlot = new Map<number, string[]>()
+      for (const sid of sectionIds) {
+        if (sectionFaculty[sid] !== f) continue
+        let sl = assignments[sid]!
+        if (inComp.has(sid)) sl = sl === c1 ? c2 : c1
+        if (!bySlot.has(sl)) bySlot.set(sl, [])
+        bySlot.get(sl)!.push(sid)
+      }
+      for (const [, arr] of bySlot) {
+        if (arr.length > 1) return { delta: 0, ok: false }
+      }
+    }
+
+    let delta = 0
+    for (const u of component) {
+      const oldU = assignments[u]!
+      const newU = oldU === c1 ? c2 : c1
+      const neighbors = adj.get(u)
+      if (!neighbors) continue
+      for (const [v, w] of neighbors) {
+        if (u >= v) continue
+        const oldV = assignments[v]!
+        const newV = inComp.has(v) ? (oldV === c1 ? c2 : c1) : oldV
+        delta += w * ((newU === newV ? 1 : 0) - (oldU === oldV ? 1 : 0))
+      }
+    }
+    return { delta, ok: true }
+  }
+
+  function applyKempe(component: string[], c1: number, c2: number): void {
+    for (const sid of component) {
+      const oldS = assignments[sid]!
+      const newS = oldS === c1 ? c2 : c1
+      const f = sectionFaculty[sid]
+      if (f) {
+        if (!facultySlots.has(f)) facultySlots.set(f, new Map())
+        const fm = facultySlots.get(f)!
+        if (fm.get(oldS) === sid) fm.delete(oldS)
+        fm.set(newS, sid)
+      }
+      slotLoads[oldS]!--
+      slotLoads[newS] = (slotLoads[newS] ?? 0) + 1
+      assignments[sid] = newS
+    }
+  }
+
+  function registerTabuMoveTo(sid: string, fromSlot: number, iter: number, tenure: number): void {
+    tabuUntil.set(tabuAttrKey(sid, fromSlot), iter + tenure)
+  }
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    if (iter > 0 && iter % coolPeriod === 0) temperature *= 0.992
+
+    const tenure = baseTenure + (iter % 5)
+    const roll = Math.random()
+    const newCostIf = (delta: number) => totalClash + delta
+    const canAccept = (delta: number, tabuBlocked: boolean): boolean => {
+      const nc = newCostIf(delta)
+      if (nc < globalBest) return true
+      if (tabuBlocked) return false
+      if (delta <= 0) return true
+      return Math.random() < Math.exp(-delta / temperature)
+    }
+
+    if (roll < 0.5) {
+      const sid = sectionIds[Math.floor(Math.random() * n)]!
+      const maxS = maxSlotForSection(sid, mathSections)
+      const newSlot = Math.floor(Math.random() * maxS)
+      if (!feasibleSingleMove(sid, newSlot)) continue
+      const oldSlot = assignments[sid]!
+      const delta = clashDeltaSingleMove(sid, oldSlot, newSlot)
+      const tabuBlocked = isTabu(sid, newSlot, iter)
+      if (!canAccept(delta, tabuBlocked)) continue
+      applySingleMove(sid, newSlot)
+      totalClash += delta
+      registerTabuMoveTo(sid, oldSlot, iter, tenure)
+    } else if (roll < 0.82) {
+      const sid1 = sectionIds[Math.floor(Math.random() * n)]!
+      const sid2 = sectionIds[Math.floor(Math.random() * n)]!
+      if (sid1 === sid2) continue
+      const delta = clashDeltaSwap(sid1, sid2)
+      if (delta === null) continue
+      const slot1 = assignments[sid1]!
+      const slot2 = assignments[sid2]!
+      if (slot1 === slot2) continue
+      const tabuBlocked = isTabu(sid1, slot2, iter) || isTabu(sid2, slot1, iter)
+      if (!canAccept(delta, tabuBlocked)) continue
+      applySwap(sid1, sid2)
+      totalClash += delta
+      registerTabuMoveTo(sid1, slot1, iter, tenure)
+      registerTabuMoveTo(sid2, slot2, iter, tenure)
+    } else {
+      const startSid = sectionIds[Math.floor(Math.random() * n)]!
+      const c1 = assignments[startSid]!
+      const maxS = maxSlotForSection(startSid, mathSections)
+      let c2 = Math.floor(Math.random() * maxS)
+      if (c2 === c1) c2 = (c2 + 1) % maxS
+      const comp = buildKempeComponent(startSid, c1, c2)
+      if (!comp || comp.length < 2) continue
+      const { delta, ok } = kempeDeltaAndFeasible(comp, c1, c2)
+      if (!ok) continue
+      let tabuBlocked = false
+      for (const sid of comp) {
+        const to = assignments[sid] === c1 ? c2 : c1
+        if (isTabu(sid, to, iter)) {
+          tabuBlocked = true
+          break
+        }
+      }
+      if (!canAccept(delta, tabuBlocked)) continue
+      for (const sid of comp) {
+        const from = assignments[sid]!
+        registerTabuMoveTo(sid, from, iter, tenure)
+      }
+      applyKempe(comp, c1, c2)
+      totalClash += delta
+    }
+
+    if (totalClash < globalBest) {
+      globalBest = totalClash
+      for (const sid of sectionIds) globalBestAssign[sid] = assignments[sid]!
+      iterSinceGlobalBest = 0
+      if (globalBest === 0) break
+    } else {
+      iterSinceGlobalBest++
+      if (iterSinceGlobalBest >= stagnationReheat) {
+        temperature = Math.min(t0 * 1.5, temperature * 1.35)
+        iterSinceGlobalBest = 0
+      }
+    }
+  }
+
+  return globalBestAssign
 }
 
 const PROGRAM_ABBREVIATIONS: [string, string][] = [
@@ -192,11 +575,12 @@ function solveGreedy(
     }
   }
 
-  const improved = localSearchImprove(
+  const improved = hybridSATabuImprove(
     { ...assignments },
+    sections,
+    conflictGraph,
     adj,
     facultyConstraints,
-    [...slotLoads],
     parallelCap,
     mathSections,
   )
@@ -210,97 +594,45 @@ function solveGreedy(
   }
 }
 
-function localSearchImprove(
-  assignments: Record<string, number>,
-  adj: Map<string, Map<string, number>>,
-  facultyConstraints: Record<string, string[]>,
-  slotLoads: number[],
-  parallelCap: number,
-  mathSections: Set<string>,
-): Record<string, number> {
-  const sectionFaculty: Record<string, string | null> = {}
-  for (const [faculty, sids] of Object.entries(facultyConstraints)) {
-    for (const sid of sids) sectionFaculty[sid] = faculty
-  }
-
-  function computeClashCost(sid: string, slot: number): number {
-    let cost = 0
-    const neighbors = adj.get(sid)
-    if (!neighbors) return 0
-    for (const [otherSid, weight] of neighbors) {
-      if (assignments[otherSid] === slot) cost += weight
-    }
-    return cost
-  }
-
-  function isMoveFeasible(sid: string, newSlot: number): boolean {
-    const faculty = sectionFaculty[sid]
-    const oldSlot = assignments[sid]!
-
-    if (faculty) {
-      for (const [other, f] of Object.entries(sectionFaculty)) {
-        if (f === faculty && other !== sid && assignments[other] === newSlot) {
-          return false
-        }
-      }
-    }
-
-    if (oldSlot !== newSlot && slotLoads[newSlot]! + 1 > parallelCap) {
-      return false
-    }
-    return true
-  }
-
-  let improved = true
-  let iterations = 0
-  while (improved && iterations < LOCAL_SEARCH_ITERATIONS) {
-    improved = false
-    iterations++
-    for (const sid of Object.keys(assignments)) {
-      const currentSlot = assignments[sid]!
-      const currentCost = computeClashCost(sid, currentSlot)
-      if (currentCost === 0) continue
-
-      const maxSlot = mathSections.has(sid) ? NUM_SLOTS_WITH_SATURDAY : NUM_SLOTS
-      let bestSlot = currentSlot
-      let bestCost = currentCost
-
-      for (let newSlot = 0; newSlot < maxSlot; newSlot++) {
-        if (newSlot === currentSlot) continue
-        if (!isMoveFeasible(sid, newSlot)) continue
-        const newCost = computeClashCost(sid, newSlot)
-        if (newCost < bestCost) {
-          bestCost = newCost
-          bestSlot = newSlot
-        }
-      }
-
-      if (bestSlot !== currentSlot) {
-        slotLoads[currentSlot]!--
-        slotLoads[bestSlot] = (slotLoads[bestSlot] ?? 0) + 1
-        assignments[sid] = bestSlot
-        improved = true
-      }
-    }
-  }
-
-  return assignments
-}
-
 function solveGreedyMultiStart(
   sections: Section[],
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
   parallelCap: number,
 ): { assignments: Record<string, number>; clashWeight: number } {
-  let best: { assignments: Record<string, number>; clashWeight: number } | null = null
+  const runs: { assignments: Record<string, number>; clashWeight: number }[] = []
   for (let i = 0; i < MULTI_START_RUNS; i++) {
     const r = solveGreedy(sections, conflictGraph, facultyConstraints, parallelCap, i > 0)
-    if (!best || r.clashWeight < best.clashWeight) {
-      best = { assignments: r.assignments, clashWeight: r.clashWeight }
+    runs.push({ assignments: { ...r.assignments }, clashWeight: r.clashWeight })
+  }
+  runs.sort((a, b) => a.clashWeight - b.clashWeight)
+  let best = runs[0] ?? { assignments: {}, clashWeight: 0 }
+
+  const { adj } = analyzeConflicts(sections, conflictGraph)
+  const mathSections = new Set(
+    sections.filter((s) => isMathCourse(s.course_code)).map((s) => s.section_id),
+  )
+
+  for (let p = 1; p < Math.min(SOLUTION_POOL_TOP, runs.length); p++) {
+    const seed = runs[p]
+    if (!seed) continue
+    const refined = hybridSATabuImprove(
+      { ...seed.assignments },
+      sections,
+      conflictGraph,
+      adj,
+      facultyConstraints,
+      parallelCap,
+      mathSections,
+      { maxIterFactor: 0.45 },
+    )
+    const cw = computeClashWeight(conflictGraph, refined)
+    if (cw < best.clashWeight) {
+      best = { assignments: refined, clashWeight: cw }
     }
   }
-  return best ?? { assignments: {}, clashWeight: 0 }
+
+  return best
 }
 
 export function runScheduler(
@@ -324,7 +656,7 @@ export function runScheduler(
   )
   return {
     slot_assignments: assignments,
-    solver_used: 'greedy-multi-start',
+    solver_used: 'hybrid-sa-tabu',
     solver_time_seconds: performance.now() / 1000 - t0,
     total_clash_weight: clashWeight,
   }
