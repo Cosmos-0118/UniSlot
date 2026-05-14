@@ -68,7 +68,7 @@ export function LandingPage() {
           </motion.h1>
 
           <motion.p variants={itemVariants} className="text-xl md:text-2xl text-text-muted max-w-2xl mb-12 leading-relaxed">
-            Process massive enrollment files, detect clashes instantly, and generate optimal conflict-free schedules securely inside your browser.
+            Process large enrollment workbooks, surface clashes quickly, and build high-quality evening timetables locally in your browser with transparent exports.
           </motion.p>
 
           <motion.div variants={itemVariants} className="w-full sm:w-auto">
@@ -106,7 +106,7 @@ export function LandingPage() {
           <FeatureCard
             icon={CalendarDays}
             title="Smart Clash Detection"
-            description="Advanced greedy multi-start algorithms with local search ensure optimal scheduling with zero undetected clashes."
+            description="Multi-start local search targets fewer student overlaps and balanced slot use. Exports and clash reports make remaining conflicts visible for review."
             accent="var(--accent-warning)"
           />
         </motion.div>

@@ -303,6 +303,7 @@ export function parseExcelRows(sheetRows: unknown[][]): {
       email_id: cleanEmail(getCell(row, 'email_id')),
       course_code,
       course_title: course_title.replace(/\b\w/g, (c) => c.toUpperCase()),
+      faculty: cleanString(getCell(row, 'faculty')) || null,
       registration_type: cleanString(getCell(row, 'registration_type')) || null,
       remarks: cleanString(getCell(row, 'remarks')) || null,
     })
@@ -310,7 +311,9 @@ export function parseExcelRows(sheetRows: unknown[][]): {
   }
 
   const errorRate = result.total_rows ? result.errors.length / result.total_rows : 1
-  result.is_valid = errorRate < 0.2 && result.valid_rows > 0
+  const maxAbsoluteErrors = Math.max(12, Math.ceil(result.total_rows * 0.04))
+  result.is_valid =
+    errorRate <= 0.06 && result.errors.length <= maxAbsoluteErrors && result.valid_rows > 0
 
   return { rows: out, validation: result }
 }
@@ -393,6 +396,11 @@ export function buildCanonicalData(rows: EnrollmentRow[]): {
         section_count: 1,
       }
     }
+    const fac = row.faculty?.trim() || null
+    if (fac) {
+      const c = courses[row.course_code]!
+      if (!c.faculty) c.faculty = fac
+    }
     if (!courseEnrollments.has(row.course_code)) {
       courseEnrollments.set(row.course_code, [])
     }
@@ -431,6 +439,23 @@ export function loadAndValidate(rows: EnrollmentRow[], parseValidation: Validati
   }
 
   const { students, courses } = buildCanonicalData(validRows)
+
+  const facultyByCourse = new Map<string, Set<string>>()
+  for (const row of validRows) {
+    const f = row.faculty?.trim()
+    if (!f) continue
+    if (!facultyByCourse.has(row.course_code)) facultyByCourse.set(row.course_code, new Set())
+    facultyByCourse.get(row.course_code)!.add(f)
+  }
+  for (const [code, set] of facultyByCourse) {
+    if (set.size > 1) {
+      combined.warnings.push({
+        field: 'faculty',
+        message: `Course ${code}: multiple distinct faculty names in the sheet (${[...set].join(' · ')}). Using the first value encountered when building sections.`,
+        value: code,
+      })
+    }
+  }
 
   for (const [reg, st] of Object.entries(students)) {
     if (st.enrolled_courses.length < 1) {

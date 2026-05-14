@@ -73,8 +73,8 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
                   className={cn(
                     'size-4 transition-all duration-200',
                     isActive
-                      ? 'text-brand-200'
-                      : 'text-text-muted/90 group-hover:text-brand-300'
+                      ? 'text-brand-500'
+                      : 'text-text-muted group-hover:text-brand-500'
                   )}
                 />
               </span>

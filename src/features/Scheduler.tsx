@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useState, type CSSProperties } from 'react'
 import { cn } from '@/shared/utils/cn'
-import type { ScheduleEntry, StudentClashReport, ValidationError } from '@/modules/scheduling/types'
+import type { Schedule, ScheduleEntry, StudentClashReport, ValidationError } from '@/modules/scheduling/types'
 import { useSchedulingSession } from '../contexts/useSchedulingSession'
 import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
 
@@ -24,6 +24,39 @@ function downloadArrayBuffer(data: ArrayBuffer, filename: string) {
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+function HardConstraintAuditNotice({ schedule }: { schedule: Schedule }) {
+  if (schedule.hard_constraints_feasible !== false) return null
+  const items = schedule.hard_constraint_violations ?? []
+  return (
+    <div
+      className="mb-6 rounded-2xl border px-4 py-3 text-left text-sm"
+      style={{
+        borderColor: 'var(--soft-warning-border)',
+        background: 'var(--soft-warning-bg)',
+        color: 'var(--text)',
+      }}
+    >
+      <div className="flex gap-3">
+        <AlertTriangle className="size-5 shrink-0" style={{ color: 'var(--accent-warning)' }} aria-hidden />
+        <div>
+          <p className="font-medium">Hard-constraint audit reported issues</p>
+          <p className="mt-1 text-xs opacity-90">
+            The timetable may still violate Constraints.md rules (faculty overlap, capacity, parallel cap, or split-section
+            alignment). Treat exports as provisional until resolved.
+          </p>
+          {items.length > 0 && (
+            <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 font-mono text-[11px] leading-snug opacity-95">
+              {items.map((v, i) => (
+                <li key={i}>{v}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function ValidationList({ items, variant }: { items: ValidationError[]; variant: 'error' | 'warn' }) {
@@ -321,6 +354,7 @@ export function Scheduler() {
       {showActions && result && (
         <section className="mb-10">
           <div className="results-panel">
+            {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
             {/* Success icon */}
             <div className="results-check">
               <CheckCircle2 className="size-7" />
@@ -381,6 +415,7 @@ export function Scheduler() {
       {/* ── Details view (full results) ──────────────────── */}
       {showDetails && result && (
         <section className="space-y-10 pb-20">
+          {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
           {/* Back to actions button (only if valid) */}
           {result.validation.is_valid && (
             <button

@@ -62,7 +62,13 @@ function formatPrograms(programs: string[]): string {
 export function buildSchedule(
   courseSections: Record<string, Section[]>,
   slotAssignments: Record<string, number>,
-  solverMeta: { solver_used: string; solver_time_seconds: number },
+  solverMeta: {
+    solver_used: string
+    solver_time_seconds: number
+    hard_constraints_feasible?: boolean
+    hard_constraint_violations?: string[]
+    solver_primary_metrics_zero?: boolean
+  },
 ): Schedule {
   const entries: ScheduleEntry[] = []
 
@@ -99,6 +105,9 @@ export function buildSchedule(
     solver_used: solverMeta.solver_used,
     solver_time_seconds: solverMeta.solver_time_seconds,
     total_clashes: 0,
+    hard_constraints_feasible: solverMeta.hard_constraints_feasible,
+    hard_constraint_violations: solverMeta.hard_constraint_violations,
+    solver_primary_metrics_zero: solverMeta.solver_primary_metrics_zero,
   }
 }
 

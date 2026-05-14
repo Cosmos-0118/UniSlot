@@ -130,3 +130,36 @@ Impact:
 Recommendation:
 
 - Add admission control (single-flight guard) or explicit queue semantics.
+
+## Prioritized Optimization Plan
+
+### P0 (Immediate, high ROI)
+
+- Add cancellable worker protocol (run + cancel).
+- Stop generating courseEmailsXlsx unless explicitly requested.
+- Add per-export request flags to worker request/result contract.
+
+### P1 (Short-term)
+
+- Lazy-initialize worker at first scheduler run.
+- Return lightweight summary first; load heavy details on demand.
+- Change export strategy to on-demand generation.
+
+### P2 (Medium-term)
+
+- Dynamic import export modules in worker pipeline.
+- Add a dedicated export worker or worker pool if large export throughput is a requirement.
+- Add runtime instrumentation (phase timings, peak memory estimates, transfer sizes).
+
+## Suggested Success Metrics
+
+- Time-to-first-progress after upload (target: reduce by 25-40%).
+- Peak JS heap during export (target: reduce by 30%+).
+- Worker startup parse+compile time (target: reduce by 20%+).
+- Average total run time when user only needs schedule + clash outputs (target: reduce by 15-30%).
+
+## Final Verdict
+
+Your worker architecture is already good in principle and correctly offloads heavy CPU from the UI.
+
+To use the browser to maximum efficiency, the next major win is to make heavy export generation and payload transfer demand-driven, and to add true cancellation support.

@@ -4,7 +4,6 @@ export type DayName =
   | 'Wednesday'
   | 'Thursday'
   | 'Friday'
-  | 'Saturday'
 
 export interface EnrollmentRow {
   program: string
@@ -14,6 +13,8 @@ export interface EnrollmentRow {
   email_id: string | null
   course_code: string
   course_title: string
+  /** Optional; when present, merged onto {@link Course.faculty} in canonical data (Constraints.md §5.2). */
+  faculty: string | null
   registration_type: string | null
   remarks: string | null
 }
@@ -96,6 +97,11 @@ export interface Schedule {
   solver_used: string
   solver_time_seconds: number
   total_clashes: number
+  /** Post-solve audit: faculty, capacity, parallel cap, split same-slot (Constraints.md §13). */
+  hard_constraints_feasible?: boolean
+  hard_constraint_violations?: string[]
+  /** True when hard audit passes and solver best had zero RED students and zero clash weight (not a global optimality proof). */
+  solver_primary_metrics_zero?: boolean
 }
 
 export type ClashStatus = 'Green' | 'Red'
@@ -125,9 +131,15 @@ export interface SchedulerResult {
   slot_assignments: Record<string, number>
   solver_used: string
   solver_time_seconds: number
-  optimal: boolean
+  /** Hard-constraint audit passed (Constraints.md §13). */
   feasible: boolean
+  /**
+   * Heuristic certificate: {@link feasible} and best solution has zero RED students and zero clash weight.
+   * Does **not** imply a globally optimal timetable.
+   */
+  optimal: boolean
   total_clash_weight: number
+  hard_constraint_violations: string[]
 }
 
 export interface CourseEmailGroup {

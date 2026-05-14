@@ -115,6 +115,9 @@ export async function runPipeline(
   let schedule = buildSchedule(courseSections, sched.slot_assignments, {
     solver_used: sched.solver_used,
     solver_time_seconds: sched.solver_time_seconds,
+    hard_constraints_feasible: sched.feasible,
+    hard_constraint_violations: sched.hard_constraint_violations,
+    solver_primary_metrics_zero: sched.optimal,
   })
   const clashReport = computeClashReport(students, courseSections, sched.slot_assignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
