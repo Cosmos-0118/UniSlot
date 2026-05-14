@@ -30,6 +30,25 @@
 
 @layer base {
 
+  html {
+    background-color: var(--bg);
+    overscroll-behavior: none;
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    overscroll-behavior: none;
+    min-height: 100%;
+    min-height: 100dvh;
+  }
+
+  #root {
+    min-height: 100%;
+    min-height: 100dvh;
+    background-color: var(--bg);
+  }
+
   /* ═══════════════════════════════════════════════════════════
      DARK — Midnight Aurora (indigo-cyan)
      ═══════════════════════════════════════════════════════════ */

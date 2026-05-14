@@ -1,17 +1,7 @@
 import { AppLogo } from '@/components/brand/AppLogo'
-import { useTheme } from '../../contexts/useTheme';
 import { cn } from '@/shared/utils/cn'
-import {
-  Calendar,
-  Home,
-  Moon,
-  Settings,
-  Sun,
-  Droplet,
-  Zap,
-  Mail,
-} from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { Calendar, Home, Settings, Zap, Mail } from 'lucide-react'
+import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 
 interface SidebarProps {
   activeFeature: string;
@@ -19,7 +9,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
-  const { theme, setTheme } = useTheme();
 
   const features = [
     { id: 'home', label: 'Home', icon: Home },
@@ -78,57 +67,8 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
       </nav>
 
       <div className="border-t border-border/60 px-3 pb-4 pt-4 md:px-4 md:pt-5">
-        <div className="theme-muted-surface rounded-2xl p-2">
-          <div className="mb-2 hidden px-2 text-xs font-medium uppercase tracking-[0.16em] text-text-muted md:block">
-            Theme
-          </div>
-          <div className="theme-theme-toggle grid grid-cols-1 gap-1.5 rounded-2xl p-1.5 md:grid-cols-3">
-            <ThemeButton
-              icon={Sun}
-              label="Light"
-              isActive={theme === 'light'}
-              onClick={() => setTheme('light')}
-            />
-            <ThemeButton
-              icon={Moon}
-              label="Dark"
-              isActive={theme === 'dark'}
-              onClick={() => setTheme('dark')}
-            />
-            <ThemeButton
-              icon={Droplet}
-              label="Crimson"
-              isActive={theme === 'crimson'}
-              onClick={() => setTheme('crimson')}
-            />
-          </div>
-        </div>
+        <ThemeSwitcher layout="sidebar" />
       </div>
     </aside>
-  );
-}
-
-function ThemeButton({
-  icon: Icon,
-  label,
-  isActive,
-  onClick,
-}: {
-  icon: LucideIcon
-  label: string
-  isActive: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'theme-theme-button theme-focusable flex items-center justify-center gap-2 rounded-xl px-2 py-2.5 md:flex-col md:gap-1',
-        isActive && 'theme-theme-button-active'
-      )}
-    >
-      <Icon className="size-4" />
-      <span className="hidden text-[11px] font-semibold tracking-wide md:block">{label}</span>
-    </button>
   );
 }
