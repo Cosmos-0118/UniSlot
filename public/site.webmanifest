@@ -1,0 +1,29 @@
+{
+  "name": "UniSlot",
+  "short_name": "UniSlot",
+  "description": "Evening course scheduling in your browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1b",
+  "theme_color": "#1a1a1b",
+  "icons": [
+    {
+      "src": "/brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

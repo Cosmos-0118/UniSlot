@@ -1,4 +1,5 @@
-import { ArrowRight, CalendarDays, Sparkles, Zap, Shield, Rocket } from 'lucide-react'
+import { AppLogo } from '@/components/brand/AppLogo'
+import { ArrowRight, CalendarDays, Zap, Shield, Rocket } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 import type { Variants } from 'framer-motion'
@@ -27,10 +28,10 @@ export function LandingPage() {
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6 }}
-          className="flex items-center gap-2 text-2xl font-bold tracking-wide"
+          className="flex items-center gap-3 text-2xl font-bold tracking-wide"
         >
-          <Sparkles className="size-6 text-brand-400" />
-          <span className="text-brand-400">UniSlot</span>
+          <AppLogo size="hero" className="shadow-lg shadow-brand-500/25" />
+          <span className="text-text">UniSlot</span>
         </motion.div>
         <motion.div
           initial={{ opacity: 0, x: 20 }}

@@ -1,3 +1,4 @@
+import { AppLogo } from '@/components/brand/AppLogo'
 import { useTheme } from '../../contexts/useTheme';
 import { cn } from '@/shared/utils/cn'
 import {
@@ -7,7 +8,6 @@ import {
   Settings,
   Sun,
   Droplet,
-  Sparkles,
   Zap,
   Mail,
 } from 'lucide-react'
@@ -33,14 +33,7 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
     <aside className="theme-sidebar flex w-20 flex-shrink-0 flex-col transition-colors duration-500 md:w-80">
       <div className="px-3 pb-4 pt-5 md:px-5 md:pt-6">
         <div className="theme-sidebar-brand flex items-center justify-center gap-3 rounded-2xl px-2.5 py-3 md:justify-start md:px-3.5">
-          <div
-            className="flex size-9 items-center justify-center rounded-xl"
-            style={{
-              background: 'color-mix(in srgb, var(--brand-500) 75%, transparent)',
-            }}
-          >
-            <Sparkles className="size-4 text-white" />
-          </div>
+          <AppLogo size="nav" className="ring-1 ring-border/70 shadow-sm" />
           <div className="hidden md:block">
             <div className="text-lg font-semibold tracking-wide text-text">UniSlot</div>
             <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-muted">
