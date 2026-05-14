@@ -138,7 +138,7 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
 type ViewMode = 'idle' | 'processing' | 'actions' | 'details'
 
 export function Scheduler({ result, onResult }: { result: PipelineOutput | null, onResult: (r: PipelineOutput | null) => void }) {
-  const { run, running, progress } = useUnislotWorker()
+  const { run, progress } = useUnislotWorker()
   const [drag, setDrag] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('idle')

@@ -49,7 +49,7 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
               className={cn(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
                 isActive
-                  ? 'bg-brand-500/10 text-brand-500 shadow-[inset_0_0_0_1px_rgba(var(--brand-500-rgb),0.2)]'
+                  ? 'bg-brand-500/10 text-brand-500 border border-brand-500/20'
                   : 'text-text-muted hover:text-text hover:bg-bg-tertiary/50'
               )}
             >
