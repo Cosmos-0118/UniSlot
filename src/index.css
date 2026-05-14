@@ -817,6 +817,14 @@
   box-shadow: 0 0 12px var(--term-bar-glow);
 }
 
+.terminal-progress-bar--determinate {
+  width: 0%;
+  min-width: 2%;
+  animation: none;
+  transform: none;
+  transition: width 0.35s ease-out;
+}
+
 @keyframes progress-slide {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }

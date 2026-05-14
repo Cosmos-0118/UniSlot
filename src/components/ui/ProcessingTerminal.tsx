@@ -63,9 +63,17 @@ interface Props {
   typingIdx: number
   onLineTypeDone: () => void
   done: boolean
+  /** 0–1 overall pipeline when the worker reports it; otherwise the bar stays indeterminate. */
+  progressFraction?: number | null
 }
 
-export function ProcessingTerminal({ lines, typingIdx, onLineTypeDone, done }: Props) {
+export function ProcessingTerminal({
+  lines,
+  typingIdx,
+  onLineTypeDone,
+  done,
+  progressFraction,
+}: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -114,7 +122,21 @@ export function ProcessingTerminal({ lines, typingIdx, onLineTypeDone, done }: P
 
       {!done && (
         <div className="terminal-progress">
-          <div className="terminal-progress-bar" />
+          <div
+            className={cn(
+              'terminal-progress-bar',
+              progressFraction != null &&
+                Number.isFinite(progressFraction) &&
+                'terminal-progress-bar--determinate',
+            )}
+            style={
+              progressFraction != null && Number.isFinite(progressFraction)
+                ? {
+                    width: `${Math.round(Math.max(0, Math.min(1, progressFraction)) * 100)}%`,
+                  }
+                : undefined
+            }
+          />
         </div>
       )}
     </div>

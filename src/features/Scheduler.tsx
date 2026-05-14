@@ -224,6 +224,8 @@ export function Scheduler() {
     viewMode,
     setViewMode,
     run,
+    running,
+    progress,
     resetTerminalLog,
     terminalLines,
     terminalTypingIdx,
@@ -406,6 +408,7 @@ export function Scheduler() {
             typingIdx={terminalTypingIdx}
             onLineTypeDone={onTerminalLineTypeDone}
             done={false}
+            progressFraction={running ? progress?.fraction : undefined}
           />
           {fileName && (
             <p className="mt-3 text-center text-xs text-text-muted">

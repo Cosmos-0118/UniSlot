@@ -1,12 +1,12 @@
 /// <reference lib="webworker" />
 
 import { runPipeline } from './pipeline'
-import type { RunPipelineOptions } from './pipeline'
+import type { PipelineProgressEvent, RunPipelineOptions } from './pipeline'
 
 export type WorkerRequest = { type: 'run'; id: number; buffer: ArrayBuffer } & RunPipelineOptions
 
 export type WorkerResponse =
-  | { type: 'progress'; id: number; stage: string; message: string }
+  | ({ type: 'progress'; id: number } & PipelineProgressEvent)
   | {
       type: 'result'
       id: number
@@ -35,8 +35,8 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
 
   void (async () => {
     try {
-      const result = await runPipeline(buffer, (stage, message) => {
-        const r: WorkerResponse = { type: 'progress', id, stage, message }
+      const result = await runPipeline(buffer, (event) => {
+        const r: WorkerResponse = { type: 'progress', id, ...event }
         self.postMessage(r)
       }, { randomSeed, allowProvisionalScheduleExport })
       const out: WorkerResponse = {

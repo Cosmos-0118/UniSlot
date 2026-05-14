@@ -19,14 +19,12 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
   const [fileName, setFileName] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<SchedulerViewMode>('idle')
 
-  const stage = progress?.stage ?? null
-  const message = progress?.message ?? null
   const {
     lines: terminalLines,
     typingIdx: terminalTypingIdx,
     handleTypeDone: onTerminalLineTypeDone,
     reset: resetTerminalLog,
-  } = useSchedulingTerminalLog(stage, message)
+  } = useSchedulingTerminalLog(progress)
 
   useEffect(() => {
     if (!running) return

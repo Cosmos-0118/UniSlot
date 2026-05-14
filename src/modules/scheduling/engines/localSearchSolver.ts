@@ -20,6 +20,27 @@ function solutionPoolSize(runCount: number): number {
   return Math.min(14, Math.max(4, Math.floor(runCount / 5)))
 }
 
+/** Exposed for pipeline UX (seed counts match the solver). */
+export function localSearchSeedPlan(courseCount: number): { runCount: number; poolSize: number } {
+  const runCount = multiStartRunCount(courseCount)
+  return { runCount, poolSize: solutionPoolSize(runCount) }
+}
+
+export type SchedulerProgressEvent = {
+  message: string
+  etaSeconds?: number | null
+  /** Portion of the solver pass, 0 = start … ~1 before hard-constraint audit */
+  solverFraction?: number
+}
+
+function formatEtaSeconds(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '…'
+  if (sec < 120) return `~${Math.max(1, Math.round(sec))}s`
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  return `~${m}m ${s}s`
+}
+
 /** Hard ceiling for sections per slot (solvability); soft objective still pushes toward 11. */
 function parallelHardCap(totalSections: number): number {
   return Math.min(36, Math.max(TARGET_PARALLEL_SECTIONS, Math.ceil((totalSections * 1.35) / TOTAL_WEEKLY_SLOTS) + 6))
@@ -808,7 +829,7 @@ export function runScheduler(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
-  onProgress?: (msg: string) => void,
+  onProgress?: (evt: SchedulerProgressEvent) => void,
   options?: { randomSeed?: number },
 ): {
   slot_assignments: Record<string, number>
@@ -848,15 +869,17 @@ export function runScheduler(
     students: number
   }[] = []
 
-  if (onProgress) {
-    onProgress(`Phase 1/2: Exploring ${runCount} bundle-aware seeds (${TOTAL_WEEKLY_SLOTS} slots)…`)
-  }
+  const push = (evt: SchedulerProgressEvent) => onProgress?.(evt)
 
-  const progressStep = Math.max(1, Math.floor(runCount / 8))
+  const tPhase1 = performance.now()
+  push({
+    message: `Phase 1/2: ${runCount} bundle-aware greedy seeds (${TOTAL_WEEKLY_SLOTS} slots/week)`,
+    etaSeconds: null,
+    solverFraction: 0,
+  })
+
+  const progressStep = Math.max(1, Math.floor(runCount / 10))
   for (let i = 0; i < runCount; i++) {
-    if (i % progressStep === 0 && i > 0 && onProgress) {
-      onProgress(`Phase 1/2: Seeds ${i}/${runCount}…`)
-    }
     const r = solveGreedySeed(
       courseCodes,
       sections,
@@ -871,47 +894,94 @@ export function runScheduler(
     const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
     const students = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
     runs.push({ slotByCourse: { ...r.slotByCourse }, clashWeight: r.clashWeight, students })
+
+    const done = i + 1
+    const elapsed = (performance.now() - tPhase1) / 1000
+    const shouldReport = done === 1 || done === runCount || done % progressStep === 0
+    if (shouldReport) {
+      const etaSeconds = done >= 2 ? (elapsed / done) * (runCount - done) : null
+      push({
+        message: `Phase 1/2: ${done}/${runCount} seeds · ${elapsed.toFixed(1)}s elapsed${
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
+            : ''
+        }`,
+        etaSeconds:
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
+        solverFraction: 0.55 * (done / runCount),
+      })
+    }
   }
 
   runs.sort((a, b) => a.students - b.students || a.clashWeight - b.clashWeight)
   let best = runs[0] ?? { slotByCourse: {}, clashWeight: 0, students: 0 }
 
   const pool = Math.min(poolSize, runs.length)
-  if (onProgress) {
-    onProgress(
-      `Phase 2/2: Refining top ${pool} candidates (best: ${best.students} RED students · clash weight ${best.clashWeight})…`,
-    )
-  }
+  const refinementSteps = Math.max(1, pool - 1)
 
-  for (let p = 1; p < pool; p++) {
-    const seed = runs[p]
-    if (!seed) continue
-    if (onProgress) onProgress(`Phase 2/2: Refining candidate ${p}/${pool}…`)
-    const refined = hybridSATabuImprove(
-      { ...seed.slotByCourse },
-      courseCodes,
-      sections,
-      conflictGraph,
-      courseAdj,
-      sectionCountByCourse,
-      parallelCap,
-      { maxIterFactor: 1.85 },
-      rng,
-    )
-    const slotMap = sectionSlotsFromBundle(sections, refined)
-    const cw = computeClashWeight(conflictGraph, slotMap)
-    const st = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
-    if (st < best.students || (st === best.students && cw < best.clashWeight)) {
-      best = { slotByCourse: refined, clashWeight: cw, students: st }
+  if (pool <= 1) {
+    push({
+      message: `Phase 2/2 skipped (single seed). Best: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`,
+      etaSeconds: null,
+      solverFraction: 0.92,
+    })
+  } else {
+    push({
+      message: `Phase 2/2: Tabu/SA refine top ${pool} candidates (best so far: ${best.students} overlaps · weight ${best.clashWeight})`,
+      etaSeconds: null,
+      solverFraction: 0.55,
+    })
+
+    const tPhase2 = performance.now()
+    for (let p = 1; p < pool; p++) {
+      const seed = runs[p]
+      if (!seed) continue
+      const elapsed = (performance.now() - tPhase2) / 1000
+      const finished = p - 1
+      const etaSeconds =
+        finished >= 1 ? (elapsed / finished) * (refinementSteps - finished) : null
+      push({
+        message: `Phase 2/2: refine ${p}/${refinementSteps} · ${elapsed.toFixed(1)}s${
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
+            : ''
+        }`,
+        etaSeconds:
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
+        solverFraction: 0.55 + 0.44 * (p / refinementSteps),
+      })
+      const refined = hybridSATabuImprove(
+        { ...seed.slotByCourse },
+        courseCodes,
+        sections,
+        conflictGraph,
+        courseAdj,
+        sectionCountByCourse,
+        parallelCap,
+        { maxIterFactor: 1.85 },
+        rng,
+      )
+      const slotMap = sectionSlotsFromBundle(sections, refined)
+      const cw = computeClashWeight(conflictGraph, slotMap)
+      const st = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
+      if (st < best.students || (st === best.students && cw < best.clashWeight)) {
+        best = { slotByCourse: refined, clashWeight: cw, students: st }
+      }
     }
   }
 
-  if (onProgress) {
-    onProgress(`Done: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`)
-  }
+  push({
+    message: `Search finished: ${best.students} students with slot overlaps · clash weight ${best.clashWeight}.`,
+    etaSeconds: null,
+    solverFraction: 0.96,
+  })
 
   if (!facultySlotsFeasible(sections, best.slotByCourse)) {
-    if (onProgress) onProgress('Post-process: resolving faculty double-bookings (bundle moves)…')
+    push({
+      message: 'Post-process: resolving faculty bundle double-bookings (slot moves)…',
+      etaSeconds: null,
+      solverFraction: 0.98,
+    })
     const fixed = tryRepairFacultyBundleOverlaps(
       courseCodes,
       sections,

@@ -6,8 +6,8 @@ import type {
   ValidationResult,
 } from '@/modules/scheduling/types'
 import type { SchedulingStats } from '@/modules/scheduling/engines/metrics'
+import type { PipelineProgressEvent, RunPipelineOptions } from '@/modules/scheduling/pipeline'
 import type { WorkerRequest, WorkerResponse } from '@/modules/scheduling/scheduling.worker'
-import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
 
 export interface PipelineOutput {
   validation: ValidationResult
@@ -29,7 +29,7 @@ export interface PipelineOutput {
 
 export function useUnislotWorker() {
   const workerRef = useRef<Worker | null>(null)
-  const [progress, setProgress] = useState<{ stage: string; message: string } | null>(null)
+  const [progress, setProgress] = useState<PipelineProgressEvent | null>(null)
   const [running, setRunning] = useState(false)
 
   useEffect(() => {
@@ -48,7 +48,12 @@ export function useUnislotWorker() {
 
     return file.arrayBuffer().then((buffer) => {
       setRunning(true)
-      setProgress({ stage: 'queued', message: 'Starting…' })
+      setProgress({
+        stage: 'queued',
+        message: 'Handing file to Web Worker thread…',
+        fraction: 0.005,
+        etaSeconds: null,
+      })
       const id = Math.floor(Math.random() * 1e9)
 
       return new Promise<PipelineOutput>((resolve, reject) => {
@@ -57,7 +62,12 @@ export function useUnislotWorker() {
           if ('id' in data && data.id !== id) return
 
           if (data.type === 'progress') {
-            setProgress({ stage: data.stage, message: data.message })
+            setProgress({
+              stage: data.stage,
+              message: data.message,
+              fraction: data.fraction,
+              etaSeconds: data.etaSeconds,
+            })
             return
           }
           if (data.type === 'error') {
