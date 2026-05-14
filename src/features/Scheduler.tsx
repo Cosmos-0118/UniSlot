@@ -12,7 +12,7 @@ import {
 import { useCallback, useState } from 'react'
 import { cn } from '../lib/cn'
 import type { ScheduleEntry, StudentClashReport, ValidationError } from '../lib/unislot/types'
-import { useUnislotWorker } from '../hooks/useUnislotWorker'
+import { useUnislotWorker, type PipelineOutput } from '../hooks/useUnislotWorker'
 
 function downloadArrayBuffer(data: ArrayBuffer, filename: string) {
   const blob = new Blob([data], {
@@ -135,10 +135,9 @@ function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
   )
 }
 
-export function Scheduler() {
+export function Scheduler({ result, onResult }: { result: PipelineOutput | null, onResult: (r: PipelineOutput | null) => void }) {
   const { run, running, progress } = useUnislotWorker()
   const [drag, setDrag] = useState(false)
-  const [result, setResult] = useState<Awaited<ReturnType<typeof run>> | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
 
   const handleFile = useCallback(
@@ -149,16 +148,16 @@ export function Scheduler() {
         return
       }
       setFileName(file.name)
-      setResult(null)
+      onResult(null)
       try {
         const out = await run(file)
-        setResult(out)
+        onResult(out)
       } catch (e) {
         console.error(e)
         alert(e instanceof Error ? e.message : 'Something went wrong')
       }
     },
-    [run],
+    [run, onResult],
   )
 
   return (

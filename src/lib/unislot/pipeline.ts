@@ -10,6 +10,36 @@ import type { ClashReport, Schedule, ValidationResult } from './types'
 import { clashReportToRichWorkbookBuffer } from './excelClashReport'
 import { courseEmailsToWorkbookBuffer } from './excelCourseEmails'
 import { readFirstSheetAsAoA, scheduleToWorkbookBuffer } from './excelIo'
+import type { CourseEmailGroup, EnrollmentRow } from './types'
+
+export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
+  const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
+  
+  for (const row of rows) {
+    if (!row.course_code) continue
+    const em = row.email_id?.trim().toLowerCase()
+    
+    let g = courseMap.get(row.course_code)
+    if (!g) {
+      g = { title: row.course_title || '', student_count: 0, emails: new Set() }
+      courseMap.set(row.course_code, g)
+    }
+    g.title = g.title || row.course_title || ''
+    g.student_count++
+    if (em) g.emails.add(em)
+  }
+
+  const result: CourseEmailGroup[] = []
+  for (const [code, info] of courseMap.entries()) {
+    result.push({
+      course_code: code,
+      course_title: info.title,
+      student_count: info.student_count,
+      emails: Array.from(info.emails),
+    })
+  }
+  return result.sort((a, b) => a.course_code.localeCompare(b.course_code))
+}
 
 export interface PipelineResult {
   validation: ValidationResult
@@ -18,6 +48,7 @@ export interface PipelineResult {
   scheduleXlsx: ArrayBuffer | null
   clashXlsx: ArrayBuffer | null
   courseEmailsXlsx: ArrayBuffer | null
+  courseEmailsData: import('./types').CourseEmailGroup[] | null
   stats: {
     studentCount: number
     courseCount: number
@@ -45,6 +76,7 @@ export async function runPipeline(
       scheduleXlsx: null,
       clashXlsx: null,
       courseEmailsXlsx: null,
+      courseEmailsData: null,
       stats: null,
     }
   }
@@ -61,6 +93,7 @@ export async function runPipeline(
       scheduleXlsx: null,
       clashXlsx: null,
       courseEmailsXlsx: null,
+      courseEmailsData: null,
       stats: null,
     }
   }
@@ -97,6 +130,7 @@ export async function runPipeline(
     scheduleXlsx,
     clashXlsx,
     courseEmailsXlsx,
+    courseEmailsData: computeCourseEmailGroups(enrollmentRows),
     stats: {
       studentCount: Object.keys(students).length,
       courseCount: Object.keys(courses).length,

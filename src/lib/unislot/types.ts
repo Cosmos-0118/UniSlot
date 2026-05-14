@@ -130,3 +130,10 @@ export interface SchedulerResult {
   feasible: boolean
   total_clash_weight: number
 }
+
+export interface CourseEmailGroup {
+  course_code: string
+  course_title: string
+  student_count: number
+  emails: string[]
+}

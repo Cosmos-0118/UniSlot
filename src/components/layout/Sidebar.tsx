@@ -1,4 +1,4 @@
-import { useTheme } from '../../contexts/useTheme'
+import { useTheme } from '../../contexts/useTheme';
 import { cn } from '../../lib/cn';
 import {
   Calendar,
@@ -9,6 +9,7 @@ import {
   Droplet,
   Sparkles,
   Zap,
+  Mail,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -23,6 +24,7 @@ export function Sidebar({ activeFeature, setActiveFeature }: SidebarProps) {
   const features = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'scheduler', label: 'Scheduler', icon: Calendar },
+    { id: 'emails', label: 'Emails', icon: Mail },
     { id: 'insights', label: 'Insights', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];

@@ -9,6 +9,7 @@ export interface PipelineOutput {
   scheduleXlsx: ArrayBuffer | null
   clashXlsx: ArrayBuffer | null
   courseEmailsXlsx: ArrayBuffer | null
+  courseEmailsData: import('../lib/unislot/types').CourseEmailGroup[] | null
   stats: {
     studentCount: number
     courseCount: number
@@ -67,6 +68,7 @@ export function useUnislotWorker() {
               scheduleXlsx: data.scheduleXlsx,
               clashXlsx: data.clashXlsx,
               courseEmailsXlsx: data.courseEmailsXlsx,
+              courseEmailsData: data.courseEmailsData,
               stats: data.stats,
             })
           }
