@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useState, type CSSProperties } from 'react'
 import { cn } from '@/shared/utils/cn'
+import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
 import type { Schedule, ScheduleEntry, StudentClashReport, ValidationError } from '@/modules/scheduling/types'
 import { useSchedulingSession } from '../contexts/useSchedulingSession'
 import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
@@ -55,6 +56,31 @@ function HardConstraintAuditNotice({ schedule }: { schedule: Schedule }) {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ScheduleExportBlockedNotice({
+  blocked,
+  reason,
+}: {
+  blocked?: boolean
+  reason?: string | null
+}) {
+  if (!blocked) return null
+  return (
+    <div
+      className="mb-6 rounded-2xl border px-4 py-3 text-left text-sm"
+      style={{
+        borderColor: 'var(--border)',
+        background: 'color-mix(in srgb, var(--accent-info) 10%, var(--bg-secondary))',
+      }}
+    >
+      <p className="font-medium text-text">Schedule workbook was not exported</p>
+      <p className="mt-1 text-xs text-text-muted leading-relaxed">
+        {reason ??
+          'Hard-constraint audit failed. Enable “Allow provisional schedule export” under Run options and process the file again if you need the .xlsx.'}
+      </p>
     </div>
   )
 }
@@ -204,6 +230,8 @@ export function Scheduler() {
     onTerminalLineTypeDone,
   } = useSchedulingSession()
   const [drag, setDrag] = useState(false)
+  const [runSeedInput, setRunSeedInput] = useState('')
+  const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
 
   const handleFile = useCallback(
     async (file: File | null) => {
@@ -217,7 +245,15 @@ export function Scheduler() {
       setResult(null)
       setViewMode('processing')
       try {
-        const out = await run(file)
+        const pipelineOpts: RunPipelineOptions = {}
+        const raw = runSeedInput.trim()
+        if (raw !== '') {
+          const n = Number(raw)
+          if (Number.isFinite(n)) pipelineOpts.randomSeed = Math.floor(n)
+        }
+        if (allowProvisionalExport) pipelineOpts.allowProvisionalScheduleExport = true
+        const keys = Object.keys(pipelineOpts) as (keyof RunPipelineOptions)[]
+        const out = await run(file, keys.length > 0 ? pipelineOpts : undefined)
         setResult(out)
         if (out.validation.is_valid) {
           setViewMode('actions')
@@ -231,7 +267,7 @@ export function Scheduler() {
         alert(e instanceof Error ? e.message : 'Something went wrong')
       }
     },
-    [run, setResult, setFileName, setViewMode, resetTerminalLog],
+    [run, setResult, setFileName, setViewMode, resetTerminalLog, runSeedInput, allowProvisionalExport],
   )
 
   const showUploader = viewMode === 'idle'
@@ -283,6 +319,35 @@ export function Scheduler() {
       {/* ── Upload zone ──────────────────────────────────── */}
       {showUploader && (
         <section className="mb-10">
+          <details className="theme-card mb-6 rounded-2xl border border-border px-4 py-3">
+            <summary className="cursor-pointer select-none text-sm font-medium text-text">
+              Run options (determinism & exports)
+            </summary>
+            <div className="mt-4 space-y-4 border-t border-border/60 pt-4">
+              <label className="block text-sm">
+                <span className="text-text-muted">Deterministic RNG seed (optional)</span>
+                <input
+                  type="number"
+                  value={runSeedInput}
+                  onChange={(e) => setRunSeedInput(e.target.value)}
+                  placeholder="e.g. 42 — same file + seed → same search path"
+                  className="theme-focusable mt-1.5 w-full max-w-md rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text"
+                />
+              </label>
+              <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={allowProvisionalExport}
+                  onChange={(e) => setAllowProvisionalExport(e.target.checked)}
+                  className="theme-focusable mt-0.5 size-4 shrink-0 rounded border-border"
+                />
+                <span>
+                  Allow provisional <span className="font-mono text-xs text-text">schedule</span> workbook (.xlsx) when
+                  the hard-constraint audit fails. Use only when you intentionally accept a non-certified export.
+                </span>
+              </label>
+            </div>
+          </details>
           <button
             type="button"
             onDragOver={(e) => {
@@ -355,6 +420,10 @@ export function Scheduler() {
         <section className="mb-10">
           <div className="results-panel">
             {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
+            <ScheduleExportBlockedNotice
+              blocked={result.schedule_export_blocked}
+              reason={result.schedule_export_block_reason}
+            />
             {/* Success icon */}
             <div className="results-check">
               <CheckCircle2 className="size-7" />
@@ -378,7 +447,7 @@ export function Scheduler() {
 
             {/* Three action buttons */}
             <div className="results-actions">
-              {result.scheduleXlsx && (
+              {result.scheduleXlsx ? (
                 <button
                   type="button"
                   onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
@@ -386,6 +455,19 @@ export function Scheduler() {
                 >
                   <Download className="size-4" aria-hidden />
                   Download Schedule
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title={
+                    result.schedule_export_block_reason ??
+                    'Schedule workbook was not generated for this run.'
+                  }
+                  className="btn-download btn-download-primary cursor-not-allowed opacity-50"
+                >
+                  <Download className="size-4" aria-hidden />
+                  Schedule export blocked
                 </button>
               )}
               {result.clashXlsx && (
@@ -416,6 +498,10 @@ export function Scheduler() {
       {showDetails && result && (
         <section className="space-y-10 pb-20">
           {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
+          <ScheduleExportBlockedNotice
+            blocked={result.schedule_export_blocked}
+            reason={result.schedule_export_block_reason}
+          />
           {/* Back to actions button (only if valid) */}
           {result.validation.is_valid && (
             <button
@@ -470,7 +556,7 @@ export function Scheduler() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {result.scheduleXlsx && (
+                  {result.scheduleXlsx ? (
                     <button
                       type="button"
                       onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
@@ -478,6 +564,19 @@ export function Scheduler() {
                     >
                       <Download className="size-4" aria-hidden />
                       Schedule
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      title={
+                        result.schedule_export_block_reason ??
+                        'Schedule workbook was not generated for this run.'
+                      }
+                      className="theme-btn-primary inline-flex cursor-not-allowed items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium opacity-50"
+                    >
+                      <Download className="size-4" aria-hidden />
+                      Schedule (blocked)
                     </button>
                   )}
                   {result.clashXlsx && (

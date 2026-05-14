@@ -20,6 +20,6 @@ export type {
 } from './types'
 export type { SchedulingStats } from './engines/metrics'
 export type { PipelineResult } from './pipeline'
-export { runPipeline, computeCourseEmailGroups } from './pipeline'
+export { runPipeline, computeCourseEmailGroups, type RunPipelineOptions } from './pipeline'
 export { parseExcelRows, loadAndValidate } from './parser'
 export { runScheduler, auditScheduleHardConstraints } from './scheduler'

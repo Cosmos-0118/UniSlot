@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs'
-import type { Schedule } from '../types'
 
 /** Normalize cell values to plain strings for the legacy parser (pandas-like). */
 export function cellValueToString(val: ExcelJS.CellValue | null | undefined): string {
@@ -40,51 +39,3 @@ export async function readFirstSheetAsAoA(arrayBuffer: ArrayBuffer): Promise<unk
   return aoa
 }
 
-function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
-}
-
-export async function scheduleToWorkbookBuffer(schedule: Schedule): Promise<ArrayBuffer> {
-  const wb = new ExcelJS.Workbook()
-  const s = wb.addWorksheet('Schedule')
-  s.addRow([
-    'Course Code',
-    'Course Title',
-    'Section',
-    'Slot',
-    'Band',
-    'Day',
-    'Time',
-    'Faculty',
-    'Enrollment',
-    'Programs',
-  ])
-  for (const e of schedule.entries) {
-    s.addRow([
-      e.course_code,
-      e.course_title,
-      e.section_number,
-      e.slot_index,
-      e.slot_band,
-      e.day,
-      e.time,
-      e.faculty ?? '',
-      e.enrollment_count,
-      e.programs,
-    ])
-  }
-
-  const m = wb.addWorksheet('Meta')
-  m.addRow(['Key', 'Value'])
-  m.addRow(['Solver', schedule.solver_used])
-  m.addRow(['Seconds', schedule.solver_time_seconds])
-  m.addRow(['Sections', schedule.total_sections])
-  m.addRow(['Students with clashes', schedule.total_clashes])
-
-  const buf = await wb.xlsx.writeBuffer()
-  return writeBufferToArrayBuffer(buf)
-}

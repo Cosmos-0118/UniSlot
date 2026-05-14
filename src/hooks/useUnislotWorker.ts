@@ -7,6 +7,7 @@ import type {
 } from '@/modules/scheduling/types'
 import type { SchedulingStats } from '@/modules/scheduling/engines/metrics'
 import type { WorkerRequest, WorkerResponse } from '@/modules/scheduling/scheduling.worker'
+import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
 
 export interface PipelineOutput {
   validation: ValidationResult
@@ -22,6 +23,8 @@ export interface PipelineOutput {
     sectionCount: number
     scheduling: SchedulingStats | null
   } | null
+  schedule_export_blocked?: boolean
+  schedule_export_block_reason?: string | null
 }
 
 export function useUnislotWorker() {
@@ -39,7 +42,7 @@ export function useUnislotWorker() {
     }
   }, [])
 
-  const run = useCallback((file: File): Promise<PipelineOutput> => {
+  const run = useCallback((file: File, pipelineOptions?: RunPipelineOptions): Promise<PipelineOutput> => {
     const w = workerRef.current
     if (!w) return Promise.reject(new Error('Worker not ready'))
 
@@ -77,11 +80,18 @@ export function useUnislotWorker() {
               courseEmailsXlsx: data.courseEmailsXlsx,
               courseEmailsData: data.courseEmailsData,
               stats: data.stats,
+              schedule_export_blocked: data.schedule_export_blocked,
+              schedule_export_block_reason: data.schedule_export_block_reason,
             })
           }
         }
         w.addEventListener('message', onMessage)
-        const req: WorkerRequest = { type: 'run', id, buffer }
+        const req: WorkerRequest = {
+          type: 'run',
+          id,
+          buffer,
+          ...pipelineOptions,
+        }
         w.postMessage(req, [buffer])
       })
     })

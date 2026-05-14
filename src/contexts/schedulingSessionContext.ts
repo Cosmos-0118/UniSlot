@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { LogLine } from '@/components/ui/processingTerminalModel'
+import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
 import type { PipelineOutput } from '@/hooks/useUnislotWorker'
 
 export type SchedulerViewMode = 'idle' | 'processing' | 'actions' | 'details'
@@ -11,7 +12,7 @@ export type SchedulingSessionValue = {
   setFileName: (name: string | null) => void
   viewMode: SchedulerViewMode
   setViewMode: (mode: SchedulerViewMode) => void
-  run: (file: File) => Promise<PipelineOutput>
+  run: (file: File, pipelineOptions?: RunPipelineOptions) => Promise<PipelineOutput>
   running: boolean
   progress: { stage: string; message: string } | null
   resetSession: () => void

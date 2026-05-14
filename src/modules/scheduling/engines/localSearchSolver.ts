@@ -758,6 +758,52 @@ function solveGreedySeed(
   return { slotByCourse: improved, clashWeight: cw }
 }
 
+/** Greedy bundle moves to eliminate same-faculty double-booking across courses (post-SA polish). */
+function tryRepairFacultyBundleOverlaps(
+  courseCodes: string[],
+  sections: Section[],
+  slotByCourse: Record<string, number>,
+  sectionCountByCourse: Map<string, number>,
+  parallelCap: number,
+  rng: Rng,
+  maxIterations: number,
+): Record<string, number> | null {
+  let cur = { ...slotByCourse }
+  if (facultySlotsFeasible(sections, cur)) return cur
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    if (facultySlotsFeasible(sections, cur)) return cur
+
+    const order = [...courseCodes].sort(() => rng() - 0.5)
+    let progressed = false
+    for (const code of order) {
+      const oldSlot = cur[code]!
+      const slotsTry = [...Array(TOTAL_WEEKLY_SLOTS).keys()].sort(() => rng() - 0.5)
+      for (const newSlot of slotsTry) {
+        if (newSlot === oldSlot) continue
+        const trial = { ...cur, [code]: newSlot }
+        if (!facultySlotsFeasible(sections, trial)) continue
+        const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
+        let bad = false
+        for (let i = 0; i < loads.length; i++) {
+          if ((loads[i] ?? 0) > parallelCap) {
+            bad = true
+            break
+          }
+        }
+        if (bad) continue
+        cur = trial
+        progressed = true
+        break
+      }
+      if (progressed) break
+    }
+    if (!progressed) break
+  }
+
+  return facultySlotsFeasible(sections, cur) ? cur : null
+}
+
 export function runScheduler(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
@@ -862,6 +908,25 @@ export function runScheduler(
 
   if (onProgress) {
     onProgress(`Done: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`)
+  }
+
+  if (!facultySlotsFeasible(sections, best.slotByCourse)) {
+    if (onProgress) onProgress('Post-process: resolving faculty double-bookings (bundle moves)…')
+    const fixed = tryRepairFacultyBundleOverlaps(
+      courseCodes,
+      sections,
+      best.slotByCourse,
+      sectionCountByCourse,
+      parallelCap,
+      rng,
+      800,
+    )
+    if (fixed) {
+      const slotMap = sectionSlotsFromBundle(sections, fixed)
+      const cw = computeClashWeight(conflictGraph, slotMap)
+      const st = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
+      best = { slotByCourse: fixed, clashWeight: cw, students: st }
+    }
   }
 
   const slot_assignments = sectionSlotsFromBundle(sections, best.slotByCourse)
