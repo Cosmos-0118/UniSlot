@@ -17,6 +17,40 @@ const outDir = path.join(root, 'public', 'brand')
 
 const THEME_BG = { r: 26, g: 26, b: 27, alpha: 1 } // #1a1a1b — matches mark body
 
+/**
+ * Windows .ico containing embedded PNGs (Vista+). No extra npm deps.
+ * @param {{ width: number; height: number; png: Buffer }[]} entries
+ */
+function encodeIcoWithPngImages(entries) {
+  const headerSize = 6 + entries.length * 16
+  let offset = headerSize
+  const rows = entries.map((e) => {
+    const row = { ...e, offset, len: e.png.length }
+    offset += e.png.length
+    return row
+  })
+  const buf = Buffer.alloc(offset)
+  buf.writeUInt16LE(0, 0)
+  buf.writeUInt16LE(1, 2)
+  buf.writeUInt16LE(entries.length, 4)
+  let pos = 6
+  for (const e of rows) {
+    buf.writeUInt8(e.width >= 256 ? 0 : e.width, pos)
+    buf.writeUInt8(e.height >= 256 ? 0 : e.height, pos + 1)
+    buf.writeUInt8(0, pos + 2)
+    buf.writeUInt8(0, pos + 3)
+    buf.writeUInt16LE(0, pos + 4) // planes — 0 for PNG-in-ICO
+    buf.writeUInt16LE(0, pos + 6) // bit count — 0 for PNG-in-ICO
+    buf.writeUInt32LE(e.len, pos + 8)
+    buf.writeUInt32LE(e.offset, pos + 12)
+    pos += 16
+  }
+  for (const e of rows) {
+    e.png.copy(buf, e.offset)
+  }
+  return buf
+}
+
 /** ~iOS icon corner proportion; clamp so tiny favicons stay readable */
 function squircleMaskSvg(size) {
   const rx = Math.max(2, Math.min(Math.floor(size / 2) - 1, Math.round(size * 0.223)))
@@ -141,6 +175,15 @@ async function main() {
   await writeSquareIcon(trimmed, 'icon-192.png', 192)
   await writeSquareIcon(trimmed, 'icon-512.png', 512)
   await writeSquareIcon(trimmed, 'apple-touch-icon.png', 180)
+
+  const png16 = await fs.promises.readFile(path.join(outDir, 'icon-16.png'))
+  const png32 = await fs.promises.readFile(path.join(outDir, 'icon-32.png'))
+  const ico = encodeIcoWithPngImages([
+    { width: 16, height: 16, png: png16 },
+    { width: 32, height: 32, png: png32 },
+  ])
+  await fs.promises.writeFile(path.join(root, 'public', 'favicon.ico'), ico)
+
   await writeMaskable512(trimmed)
   await writeOgImage(trimmed)
 
@@ -179,7 +222,7 @@ async function main() {
     'utf8',
   )
 
-  console.log(`Brand assets written to public/brand/ (source: ${path.relative(root, src)})`)
+  console.log(`Brand assets written to public/brand/ + public/favicon.ico (source: ${path.relative(root, src)})`)
 }
 
 main().catch((err) => {
