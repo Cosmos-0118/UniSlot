@@ -16,7 +16,6 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkgJson.version),
   },
   build: {
-    /** Scheduling web worker bundles solver + Excel stack (~1 MB); main app splits via lazy routes + manualChunks. */
     chunkSizeWarningLimit: 1100,
     rollupOptions: {
       output: {
@@ -25,6 +24,26 @@ export default defineConfig({
           if (id.includes('exceljs')) return 'vendor-exceljs'
           if (id.includes('framer-motion')) return 'vendor-framer-motion'
           if (id.includes('lucide-react')) return 'vendor-lucide'
+          return undefined
+        },
+      },
+    },
+  },
+  /**
+   * ESM workers enable native dynamic import() chunking. Default IIFE inlines the full
+   * solver + Excel graph into a ~1 MB monolithic scheduling.worker-*.js entry.
+   */
+  worker: {
+    format: 'es',
+    rollupOptions: {
+      output: {
+        chunkFileNames: 'assets/worker-chunk-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        manualChunks(id) {
+          if (id.includes('node_modules/exceljs')) return 'worker-vendor-exceljs'
+          if (id.includes('/solver/localSearchSolver')) return 'worker-core-solver'
+          if (id.includes('/solver/')) return 'worker-solver-support'
+          if (id.includes('node_modules')) return 'worker-vendor-common'
           return undefined
         },
       },

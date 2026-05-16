@@ -121,7 +121,7 @@ export function Scheduler() {
     if (viewMode !== 'idle') return
     let cancelled = false
     const runWarmup = () => {
-      if (!cancelled) warmupWorker()
+      if (!cancelled) warmupWorker({ includeSolver: true })
     }
     if (typeof requestIdleCallback === 'function') {
       const id = requestIdleCallback(runWarmup, { timeout: 2500 })

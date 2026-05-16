@@ -21,7 +21,7 @@ export type SchedulingSessionValue = {
   fetchSchedulingSnapshot: () => Promise<SchedulingSnapshot>
   fetchScheduleEntries: () => Promise<ScheduleEntry[]>
   syncWorkerArtifacts: (patch: { schedule?: Schedule; snapshot?: SchedulingSnapshot }) => void
-  warmupWorker: () => void
+  warmupWorker: (options?: { includeSolver?: boolean }) => void
   running: boolean
   progress: PipelineProgressEvent | null
   resetSession: () => void

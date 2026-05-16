@@ -23,7 +23,6 @@ import {
   buildScheduleXlsxBuffer,
   type PipelineExportKind,
 } from './exports'
-import { readFirstSheetAsAoA } from '../io/excelIo'
 
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
   const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
@@ -154,6 +153,7 @@ export async function runPipeline(
 
   emit({ stage: 'read', message: 'Reading first worksheet from workbook…', fraction: 0.02 })
   throwIfAborted(signal)
+  const { readFirstSheetAsAoA } = await import('../io/excelIo')
   const aoa = await readFirstSheetAsAoA(arrayBuffer)
   if (!aoa) {
     emit({

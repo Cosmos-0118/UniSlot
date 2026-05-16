@@ -19,6 +19,7 @@ import {
 } from './runState'
 
 export type WorkerRequest =
+  | { type: 'warmup'; id: number; includeSolver?: boolean }
   | ({ type: 'run'; id: number; buffer: ArrayBuffer } & RunPipelineOptions)
   | { type: 'cancel'; id: number }
   | { type: 'export'; id: number; kind: PipelineExportKind }
@@ -63,10 +64,43 @@ export type WorkerResponse =
     }
   | { type: 'exportResult'; id: number; kind: PipelineExportKind; buffer: ArrayBuffer }
   | { type: 'cancelled'; id: number }
+  | { type: 'warmed'; id: number }
   | { type: 'error'; id: number; message: string }
+
+let warmupPromise: Promise<void> | null = null
+
+function warmupWorkerModules(includeSolver: boolean): Promise<void> {
+  if (!warmupPromise) {
+    warmupPromise = (async () => {
+      await import('../pipeline/run')
+      if (includeSolver) {
+        await import('../solver/scheduler')
+      }
+    })()
+  }
+  return warmupPromise
+}
 
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data
+
+  if (msg.type === 'warmup') {
+    void (async () => {
+      try {
+        await warmupWorkerModules(msg.includeSolver === true)
+        const out: WorkerResponse = { type: 'warmed', id: msg.id }
+        self.postMessage(out)
+      } catch (e) {
+        const err: WorkerResponse = {
+          type: 'error',
+          id: msg.id,
+          message: e instanceof Error ? e.message : String(e),
+        }
+        self.postMessage(err)
+      }
+    })()
+    return
+  }
 
   if (msg.type === 'cancel') {
     if (cancelWorkerRun(msg.id)) {

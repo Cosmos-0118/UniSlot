@@ -84,10 +84,14 @@ export function useUnislotWorker() {
     return workerRef.current
   }, [])
 
-  const warmupWorker = useCallback(() => {
-    void import('@/modules/scheduling/pipeline/run').then(() => {
-      ensureWorker()
-    })
+  const warmupWorker = useCallback((options?: { includeSolver?: boolean }) => {
+    const w = ensureWorker()
+    const id = Math.floor(Math.random() * 1e9)
+    w.postMessage({
+      type: 'warmup',
+      id,
+      includeSolver: options?.includeSolver,
+    } satisfies WorkerRequest)
   }, [ensureWorker])
 
   const terminateWorker = useCallback(() => {

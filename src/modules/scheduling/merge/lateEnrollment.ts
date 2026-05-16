@@ -6,7 +6,6 @@ import { computeCourseEmailGroups, type PipelineResult, type RunPipelineOptions 
 import { loadAndValidate, parseExcelRows, validateBusinessRules, buildCanonicalData } from '../parse/parser'
 import type { EnrollmentRow, Section, Student, ValidationResult } from '../types'
 import { buildClashXlsxBuffer, buildScheduleXlsxBuffer } from '../pipeline/exports'
-import { readFirstSheetAsAoA } from '../io/excelIo'
 import {
   cloneSchedulingSnapshot,
   deepCloneCourseSections,
@@ -126,6 +125,7 @@ export async function mergeLateEnrollmentIntoSnapshot(
 ): Promise<MergeLateEnrollmentResult> {
   const snap = cloneSchedulingSnapshot(snapshot)
 
+  const { readFirstSheetAsAoA } = await import('../io/excelIo')
   const aoa = await readFirstSheetAsAoA(newWorkbookBuffer)
   if (!aoa) {
     return { ...emptyInvalid('No worksheets found or workbook could not be read.'), mergeSummary: null }
