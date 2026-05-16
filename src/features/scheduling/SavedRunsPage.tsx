@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
+import { SavedRunListCard, SavedRunsEmptyState } from '@/features/scheduling/SavedRunListCard'
+import { formatSavedAt, snapshotStats, sourceFileLabel } from '@/features/scheduling/savedRunDisplay'
 import { cn } from '@/shared/utils/cn'
 import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/merge/facultyMapping'
 import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
@@ -29,24 +31,6 @@ import {
   SchedulePreview,
 } from '@/features/scheduling/schedulerResultUi'
 import type { Schedule } from '@/modules/scheduling/types'
-
-function formatWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })
-  } catch {
-    return iso
-  }
-}
-
-function snapshotStats(s: SavedScheduleRun['snapshot']) {
-  const sectionCount = Object.values(s.courseSections).reduce((n, arr) => n + arr.length, 0)
-  const studentCount = Object.keys(s.students).length
-  const courseCount = Object.keys(s.courseSections).length
-  return { sectionCount, studentCount, courseCount }
-}
 
 export function SavedRunsPage() {
   const { runId } = useParams<{ runId?: string }>()
@@ -86,60 +70,31 @@ export function SavedRunsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-10 sm:px-8">
-      <header className="mb-10">
-        <h1 className="text-4xl font-bold tracking-tight text-text sm:text-5xl">Saved runs</h1>
-        <p className="mt-3 max-w-2xl text-lg leading-relaxed text-text-muted">
-          Each successful scheduler pass can be stored here with its timetable frozen. Open a run to attach late
-          registrations: new rows are merged into existing sections without moving timeslots for students who were
-          already placed.
-        </p>
+    <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-10 sm:px-8">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand-400">Workspace</p>
+          <h1 className="mt-1 text-4xl font-bold tracking-tight text-text sm:text-5xl">Saved runs</h1>
+          <p className="mt-3 max-w-2xl text-base leading-relaxed text-text-muted">
+            Frozen timetables from successful scheduler passes. Open a run to merge late registrations, map faculty, or
+            export workbooks—without moving slots for students already placed.
+          </p>
+        </div>
+        {runs.length > 0 ? (
+          <span className="theme-soft-info inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold">
+            <CalendarDays className="size-4 text-[var(--accent-info)]" aria-hidden />
+            {runs.length} {runs.length === 1 ? 'run' : 'runs'}
+          </span>
+        ) : null}
       </header>
 
       {runs.length === 0 ? (
-        <div className="theme-card rounded-3xl border border-border/80 p-10 text-center">
-          <CalendarDays className="mx-auto size-10 text-text-muted opacity-60" aria-hidden />
-          <p className="mt-4 text-text-muted">
-            No saved runs yet. After you process a workbook in <Link className="text-brand-500 underline" to="/app/scheduler">Scheduler</Link>, use{' '}
-            <span className="font-medium text-text">Save run</span> to store it here.
-          </p>
-        </div>
+        <SavedRunsEmptyState />
       ) : (
-        <ul className="space-y-3">
-          {runs.map((r) => {
-            const { studentCount, courseCount, sectionCount } = snapshotStats(r.snapshot)
-            return (
-              <li key={r.id}>
-                <Link
-                  to={`/app/runs/${r.id}`}
-                  className="theme-card theme-focusable group flex flex-col gap-3 rounded-2xl border border-border/80 p-5 transition-colors hover:border-brand-500/35 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <p className="text-lg font-semibold text-text group-hover:text-brand-500">{r.title}</p>
-                    <p className="mt-1 text-sm text-text-muted">
-                      {formatWhen(r.createdAt)}
-                      {r.sourceFileName ? (
-                        <>
-                          {' · '}
-                          <span className="font-mono text-xs">{r.sourceFileName}</span>
-                        </>
-                      ) : null}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-3 text-sm text-text-muted">
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-bg-tertiary/60 px-2.5 py-1">
-                      <Users className="size-3.5" aria-hidden />
-                      {studentCount} students
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-bg-tertiary/60 px-2.5 py-1">
-                      <FileSpreadsheet className="size-3.5" aria-hidden />
-                      {courseCount} courses · {sectionCount} sections
-                    </span>
-                  </div>
-                </Link>
-              </li>
-            )
-          })}
+        <ul className="flex w-full flex-col gap-3">
+          {runs.map((r) => (
+            <SavedRunListCard key={r.id} run={r} />
+          ))}
         </ul>
       )}
     </div>
@@ -274,10 +229,11 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
             </div>
           </label>
           <p className="mt-2 text-sm text-text-muted">
-            Saved {formatWhen(run.createdAt)}
+            Saved {formatSavedAt(run.createdAt).primary}
             {run.sourceFileName ? (
               <>
-                {' · '}Original file <span className="font-mono text-xs">{run.sourceFileName}</span>
+                {' · '}Original file{' '}
+                <span className="font-mono text-xs">{sourceFileLabel(run.sourceFileName)}</span>
               </>
             ) : null}
           </p>
@@ -292,16 +248,29 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
-          { label: 'Students', value: studentCount, icon: Users },
-          { label: 'Courses', value: courseCount, icon: FileSpreadsheet },
-          { label: 'Sections', value: sectionCount, icon: CalendarDays },
-        ].map(({ label, value, icon: Icon }) => (
-          <div key={label} className="theme-card rounded-2xl p-5">
-            <Icon className="size-5 text-brand-500" aria-hidden />
-            <p className="mt-3 text-3xl font-semibold tabular-nums text-text">{value}</p>
-            <p className="text-sm text-text-muted">{label}</p>
+          { label: 'Students', value: studentCount, icon: Users, shell: 'theme-soft-info', iconClass: 'text-[var(--accent-info)]' },
+          {
+            label: 'Courses',
+            value: courseCount,
+            icon: FileSpreadsheet,
+            shell:
+              'border-[color-mix(in_srgb,var(--brand-500)_32%,transparent)] bg-[color-mix(in_srgb,var(--brand-500)_14%,transparent)]',
+            iconClass: 'text-brand-400',
+          },
+          {
+            label: 'Sections',
+            value: sectionCount,
+            icon: CalendarDays,
+            shell: 'theme-soft-success',
+            iconClass: 'text-[var(--accent-success)]',
+          },
+        ].map(({ label, value, icon: Icon, shell, iconClass }) => (
+          <div key={label} className={cn('rounded-2xl border p-5', shell)}>
+            <Icon className={cn('size-5', iconClass)} aria-hidden />
+            <p className="mt-3 text-3xl font-bold tabular-nums text-text">{value.toLocaleString()}</p>
+            <p className="text-sm font-medium text-text-muted">{label}</p>
           </div>
         ))}
       </div>
