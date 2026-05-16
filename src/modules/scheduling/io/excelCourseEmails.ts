@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
+import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -59,6 +60,14 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
   })
   ws.getRow(headerRow).height = 28
 
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 16, min: 14, max: 24 },
+    { col: 2, width: 45, min: 28, max: 56 },
+    { col: 3, width: 14, min: 12, max: 18 },
+    { col: 4, width: 12, min: 10, max: 16 },
+    { col: 5, width: 60, min: 40, max: 100 },
+  ])
+
   let r = headerRow + 1
   for (const code of [...courseMap.keys()].sort()) {
     const info = courseMap.get(code)!
@@ -71,27 +80,23 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
       }
     }
     const rowFill = r % 2 === 0 ? XL.rowAlt : XL.white
-    const vals = [code, info.title, info.students.size, emails.length, emails.join(', ')]
-    vals.forEach((v, i) => {
-      const cell = ws.getRow(r).getCell(i + 1)
-      cell.value = v
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowFill } }
-      cell.alignment =
-        i === 4
-          ? { vertical: 'middle', wrapText: true, horizontal: 'left' }
-          : i === 2 || i === 3
-            ? { horizontal: 'center', vertical: 'middle' }
-            : { horizontal: 'left', vertical: 'middle' }
-    })
-    ws.getRow(r).height = 24
+    const row = ws.getRow(r)
+    const wrappedLines = applyDataRow(
+      row,
+      [
+        { col: 1, value: code },
+        { col: 2, value: info.title, wrap: true },
+        { col: 3, value: info.students.size, horizontal: 'center', numFmt: '0' },
+        { col: 4, value: emails.length, horizontal: 'center', numFmt: '0' },
+        { col: 5, value: emails.join(', '), wrap: true },
+      ],
+      { fillArgb: rowFill, columnWidths: colWidths },
+    )
+    fitRowHeight(row, wrappedLines, true)
     r++
   }
 
-  ws.getColumn(1).width = 16
-  ws.getColumn(2).width = 45
-  ws.getColumn(3).width = 14
-  ws.getColumn(4).width = 12
-  ws.getColumn(5).width = 90
+  colWidths.apply(ws)
   ws.views = [{ state: 'frozen', ySplit: headerRow, xSplit: 0, activeCell: 'A4', showGridLines: true }]
 
   const m = wb.addWorksheet('Missing Emails')
@@ -113,27 +118,36 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
   })
   m.getRow(headerRow).height = 28
 
+  const missingColWidths = new ColumnWidthTracker([
+    { col: 1, width: 16, min: 14, max: 24 },
+    { col: 2, width: 45, min: 28, max: 56 },
+    { col: 3, width: 18, min: 14, max: 24 },
+    { col: 4, width: 28, min: 20, max: 40 },
+    { col: 5, width: 24, min: 18, max: 44 },
+  ])
+
   let mr = headerRow + 1
   for (const code of [...courseMap.keys()].sort()) {
     const info = courseMap.get(code)!
     for (const miss of info.missing) {
       const rowFill = mr % 2 === 0 ? XL.rowAlt : XL.white
-      const vals = [code, info.title, miss.register_number, miss.student_name, miss.program]
-      vals.forEach((v, i) => {
-        const cell = m.getRow(mr).getCell(i + 1)
-        cell.value = v
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowFill } }
-        cell.alignment = { horizontal: 'left', vertical: 'middle' }
-      })
-      m.getRow(mr).height = 22
+      const row = m.getRow(mr)
+      const wrappedLines = applyDataRow(
+        row,
+        [
+          { col: 1, value: code },
+          { col: 2, value: info.title, wrap: true },
+          { col: 3, value: miss.register_number },
+          { col: 4, value: miss.student_name },
+          { col: 5, value: miss.program, wrap: true },
+        ],
+        { fillArgb: rowFill, columnWidths: missingColWidths },
+      )
+      fitRowHeight(row, wrappedLines, true)
       mr++
     }
   }
-  m.getColumn(1).width = 16
-  m.getColumn(2).width = 45
-  m.getColumn(3).width = 18
-  m.getColumn(4).width = 28
-  m.getColumn(5).width = 24
+  missingColWidths.apply(m)
   m.views = [{ state: 'frozen', ySplit: headerRow, xSplit: 0, activeCell: 'A4', showGridLines: true }]
 
   const buf = await wb.xlsx.writeBuffer()

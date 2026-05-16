@@ -1,6 +1,13 @@
 import ExcelJS from 'exceljs'
 import type { Schedule, ScheduleEntry } from '../types'
 import { WEEKDAY_ORDER } from '../solver/timeModel'
+import {
+  applyDataRow,
+  ColumnWidthTracker,
+  fitRowHeight,
+  safeCellString,
+  thinBorder,
+} from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -11,31 +18,8 @@ function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
   throw new Error('Unexpected workbook buffer type')
 }
 
-const thinBorder: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-  left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-  bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-  right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-}
-
-function colWidthFromText(s: string, min: number, max: number): number {
-  const len = s.length
-  const est = Math.ceil(len * 1.05) + 2
-  return Math.min(max, Math.max(min, est))
-}
-
-function safeCellString(v: string | number | null | undefined): string {
-  if (v === null || v === undefined) return ''
-  return String(v)
-}
-
 function facultyDisplay(faculty: string | null | undefined): string {
   return faculty == null || faculty === '' ? '—' : faculty
-}
-
-function wrappedLines(text: string, charsPerLine: number): number {
-  if (!text) return 1
-  return Math.max(1, Math.ceil(text.length / charsPerLine))
 }
 
 /** Optional banner text for the main “Schedule” sheet (edit in Excel or pass from your app later). */
@@ -224,7 +208,24 @@ function buildScheduleMainSheet(
   applyHeaderRow(ws.getRow(headerRowIndex), MAIN_HEADERS, MAIN_COL_COUNT)
   r++
 
-  const widths = [6, 14, 14, 36, 12, 11, 22, 10, 22, 12, 16, 28, 9, 22, 7, 7].map((w, i) => ({ i, w: w as number }))
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 6, min: 5, max: 8 },
+    { col: 2, width: 18, min: 14, max: 48 },
+    { col: 3, width: 14, min: 12, max: 22 },
+    { col: 4, width: 36, min: 24, max: 56 },
+    { col: 5, width: 12, min: 10, max: 16 },
+    { col: 6, width: 11, min: 9, max: 14 },
+    { col: 7, width: 22, min: 18, max: 36 },
+    { col: 8, width: 10, min: 8, max: 14 },
+    { col: 9, width: 22, min: 14, max: 42 },
+    { col: 10, width: 12, min: 10, max: 16 },
+    { col: 11, width: 16, min: 12, max: 20 },
+    { col: 12, width: 28, min: 18, max: 40 },
+    { col: 13, width: 9, min: 8, max: 12 },
+    { col: 14, width: 22, min: 14, max: 36 },
+    { col: 15, width: 7, min: 6, max: 10 },
+    { col: 16, width: 7, min: 6, max: 10 },
+  ])
 
   let idx = 1
   for (const e of entries) {
@@ -232,66 +233,37 @@ function buildScheduleMainSheet(
     const titleStr = safeCellString(e.course_title)
     const programsStr = safeCellString(e.programs)
     const timeDisp = timingForDisplay(safeCellString(e.time))
-    const lineGuess = Math.max(
-      wrappedLines(titleStr, 44),
-      wrappedLines(programsStr, 20),
-      wrappedLines(timeDisp, 36),
-    )
-    row.height = Math.min(120, Math.max(18, 12 * lineGuess))
-
-    const cells: (string | number)[] = [
-      idx,
-      programsStr,
-      safeCellString(e.course_code),
-      titleStr,
-      e.enrollment_count,
-      e.day,
-      timeDisp,
-      brand.venuePlaceholder,
-      facultyDisplay(e.faculty),
-      '—',
-      '—',
-      '—',
-      e.section_number,
-      safeCellString(e.section_id),
-      e.slot_index,
-      e.slot_band,
-    ]
-
     const fillArgb = rowFillForEntry(e, r)
-    const wrapCols = new Set([4, 9, 12])
-    const centerCols = new Set([1, 5, 6, 13, 15, 16])
-    for (let c = 1; c <= MAIN_COL_COUNT; c++) {
-      const cell = row.getCell(c)
-      cell.value = cells[c - 1]
-      cell.border = thinBorder
-      cell.alignment = {
-        vertical: 'middle',
-        wrapText: wrapCols.has(c),
-        horizontal: centerCols.has(c) ? 'center' : 'left',
-      }
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } }
-    }
-    row.getCell(1).numFmt = '0'
-    row.getCell(5).numFmt = '0'
-    row.getCell(13).numFmt = '0'
-    row.getCell(15).numFmt = '0'
-    row.getCell(16).numFmt = '0'
 
-    widths[2].w = Math.max(widths[2].w, colWidthFromText(safeCellString(e.course_code), 12, 20))
-    widths[3].w = Math.max(widths[3].w, colWidthFromText(titleStr, 24, 52))
-    widths[6].w = Math.max(widths[6].w, colWidthFromText(timeDisp, 18, 36))
-    widths[8].w = Math.max(widths[8].w, colWidthFromText(facultyDisplay(e.faculty), 14, 40))
-    widths[1].w = Math.max(widths[1].w, colWidthFromText(programsStr, 12, 28))
-    widths[13].w = Math.max(widths[13].w, colWidthFromText(e.section_id, 14, 36))
+    const wrappedLines = applyDataRow(
+      row,
+      [
+        { col: 1, value: idx, horizontal: 'center', numFmt: '0' },
+        { col: 2, value: programsStr, wrap: true },
+        { col: 3, value: safeCellString(e.course_code) },
+        { col: 4, value: titleStr, wrap: true },
+        { col: 5, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
+        { col: 6, value: e.day, horizontal: 'center' },
+        { col: 7, value: timeDisp },
+        { col: 8, value: brand.venuePlaceholder, horizontal: 'center' },
+        { col: 9, value: facultyDisplay(e.faculty), wrap: true },
+        { col: 10, value: '—', horizontal: 'center' },
+        { col: 11, value: '—', horizontal: 'center' },
+        { col: 12, value: '—', wrap: true },
+        { col: 13, value: e.section_number, horizontal: 'center', numFmt: '0' },
+        { col: 14, value: safeCellString(e.section_id) },
+        { col: 15, value: e.slot_index, horizontal: 'center', numFmt: '0' },
+        { col: 16, value: e.slot_band, horizontal: 'center', numFmt: '0' },
+      ],
+      { fillArgb, columnWidths: colWidths, defaultVertical: 'middle' },
+    )
+    fitRowHeight(row, wrappedLines, true)
 
     idx++
     r++
   }
 
-  for (const { i, w } of widths) {
-    ws.getColumn(i + 1).width = w
-  }
+  colWidths.apply(ws)
 
   if (entries.length > 0) {
     ws.autoFilter = {
@@ -310,6 +282,16 @@ function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
   ws.getCell(1, 1).value = 'SCHEDULE BY DAY'
   ws.getRow(2).height = 8
 
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 5, min: 4, max: 7 },
+    { col: 2, width: 14, min: 12, max: 22 },
+    { col: 3, width: 40, min: 28, max: 56 },
+    { col: 4, width: 9, min: 8, max: 12 },
+    { col: 5, width: 11, min: 10, max: 14 },
+    { col: 6, width: 28, min: 20, max: 52 },
+    { col: 7, width: 22, min: 18, max: 36 },
+  ])
+
   let r = 3
   for (const day of WEEKDAY_ORDER) {
     const dayEntries = entries.filter((e) => e.day === day)
@@ -327,47 +309,28 @@ function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     )
     for (const e of sortedDay) {
       const row = ws.getRow(r)
-      row.height = 20
-      const vals = [
-        n,
-        e.course_code,
-        e.course_title,
-        e.section_number,
-        e.enrollment_count,
-        e.programs,
-        timingForDisplay(e.time),
-      ]
-      for (let c = 1; c <= lastCol; c++) {
-        const cell = row.getCell(c)
-        cell.value = vals[c - 1]
-        cell.border = thinBorder
-        cell.alignment = {
-          vertical: 'middle',
-          wrapText: c === 3 || c === 6,
-          horizontal: c === 1 || c === 4 || c === 5 ? 'center' : 'left',
-        }
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: rowFillForEntry(e, r) },
-        }
-      }
-      row.getCell(1).numFmt = '0'
-      row.getCell(4).numFmt = '0'
-      row.getCell(5).numFmt = '0'
+      const fillArgb = rowFillForEntry(e, r)
+      const wrappedLines = applyDataRow(
+        row,
+        [
+          { col: 1, value: n, horizontal: 'center', numFmt: '0' },
+          { col: 2, value: e.course_code },
+          { col: 3, value: e.course_title, wrap: true },
+          { col: 4, value: e.section_number, horizontal: 'center', numFmt: '0' },
+          { col: 5, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
+          { col: 6, value: e.programs, wrap: true },
+          { col: 7, value: timingForDisplay(e.time) },
+        ],
+        { fillArgb, columnWidths: colWidths },
+      )
+      fitRowHeight(row, wrappedLines, true)
       n++
       r++
     }
     r++
   }
 
-  ws.getColumn(1).width = 5
-  ws.getColumn(2).width = 14
-  ws.getColumn(3).width = 40
-  ws.getColumn(4).width = 9
-  ws.getColumn(5).width = 11
-  ws.getColumn(6).width = 22
-  ws.getColumn(7).width = 22
+  colWidths.apply(ws)
 }
 
 function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
@@ -378,6 +341,15 @@ function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
   styleBannerRow(ws, 1, lastCol, 16)
   ws.getCell(1, 1).value = 'SCHEDULE BY PROGRAM'
   ws.getRow(2).height = 8
+
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 5, min: 4, max: 7 },
+    { col: 2, width: 14, min: 12, max: 22 },
+    { col: 3, width: 44, min: 28, max: 56 },
+    { col: 4, width: 12, min: 10, max: 14 },
+    { col: 5, width: 22, min: 18, max: 36 },
+    { col: 6, width: 11, min: 10, max: 14 },
+  ])
 
   let r = 3
   const tokensRaw = uniqueProgramTokens(entries)
@@ -405,37 +377,27 @@ function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     let n = 1
     for (const e of sortedP) {
       const row = ws.getRow(r)
-      row.height = 20
-      const vals = [n, e.course_code, e.course_title, e.day, timingForDisplay(e.time), e.enrollment_count]
-      for (let c = 1; c <= lastCol; c++) {
-        const cell = row.getCell(c)
-        cell.value = vals[c - 1]
-        cell.border = thinBorder
-        cell.alignment = {
-          vertical: 'middle',
-          wrapText: c === 3,
-          horizontal: c === 1 || c === 6 ? 'center' : 'left',
-        }
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: rowFillForEntry(e, r) },
-        }
-      }
-      row.getCell(1).numFmt = '0'
-      row.getCell(6).numFmt = '0'
+      const fillArgb = rowFillForEntry(e, r)
+      const wrappedLines = applyDataRow(
+        row,
+        [
+          { col: 1, value: n, horizontal: 'center', numFmt: '0' },
+          { col: 2, value: e.course_code },
+          { col: 3, value: e.course_title, wrap: true },
+          { col: 4, value: e.day },
+          { col: 5, value: timingForDisplay(e.time) },
+          { col: 6, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
+        ],
+        { fillArgb, columnWidths: colWidths },
+      )
+      fitRowHeight(row, wrappedLines, true)
       n++
       r++
     }
     r++
   }
 
-  ws.getColumn(1).width = 5
-  ws.getColumn(2).width = 14
-  ws.getColumn(3).width = 44
-  ws.getColumn(4).width = 12
-  ws.getColumn(5).width = 22
-  ws.getColumn(6).width = 11
+  colWidths.apply(ws)
 }
 
 function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
@@ -497,12 +459,22 @@ function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[])
     if (f !== '—') g.faculties.add(f)
   }
 
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 7, min: 6, max: 9 },
+    { col: 2, width: 14, min: 12, max: 22 },
+    { col: 3, width: 44, min: 28, max: 56 },
+    { col: 4, width: 14, min: 12, max: 18 },
+    { col: 5, width: 16, min: 12, max: 18 },
+    { col: 6, width: 28, min: 18, max: 40 },
+    { col: 7, width: 32, min: 22, max: 52 },
+    { col: 8, width: 26, min: 18, max: 44 },
+  ])
+
   const codes = [...byCode.keys()].sort((a, b) => a.localeCompare(b))
   let sn = 1
   for (const code of codes) {
     const g = byCode.get(code)!
     const row = ws.getRow(r)
-    row.height = 22
     const dayRank = (x: string) => {
       const i = WEEKDAY_ORDER.indexOf(x as (typeof WEEKDAY_ORDER)[number])
       return i < 0 ? 99 : i
@@ -510,46 +482,27 @@ function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[])
     const dayStr = [...g.days].sort((a, b) => dayRank(a) - dayRank(b)).join(', ')
     const progStr = [...g.programs].sort((a, b) => a.localeCompare(b)).join(', ')
     const facStr = g.faculties.size ? [...g.faculties].join(' · ') : '—'
-    const vals = [
-      sn,
-      code,
-      g.title,
-      g.sectionIds.size,
-      g.enroll,
-      dayStr || '—',
-      progStr || '—',
-      facStr,
-    ]
-    for (let c = 1; c <= lastCol; c++) {
-      const cell = row.getCell(c)
-      cell.value = vals[c - 1]
-      cell.border = thinBorder
-      cell.alignment = {
-        vertical: 'middle',
-        wrapText: c === 3 || c === 6 || c === 7 || c === 8,
-        horizontal: c === 1 || c === 4 || c === 5 ? 'center' : 'left',
-      }
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: r % 2 === 0 ? XL.rowAlt : XL.white },
-      }
-    }
-    row.getCell(1).numFmt = '0'
-    row.getCell(4).numFmt = '0'
-    row.getCell(5).numFmt = '0'
+    const fillArgb = r % 2 === 0 ? XL.rowAlt : XL.white
+    const wrappedLines = applyDataRow(
+      row,
+      [
+        { col: 1, value: sn, horizontal: 'center', numFmt: '0' },
+        { col: 2, value: code },
+        { col: 3, value: g.title, wrap: true },
+        { col: 4, value: g.sectionIds.size, horizontal: 'center', numFmt: '0' },
+        { col: 5, value: g.enroll, horizontal: 'center', numFmt: '0' },
+        { col: 6, value: dayStr || '—', wrap: true },
+        { col: 7, value: progStr || '—', wrap: true },
+        { col: 8, value: facStr, wrap: true },
+      ],
+      { fillArgb, columnWidths: colWidths },
+    )
+    fitRowHeight(row, wrappedLines, true)
     sn++
     r++
   }
 
-  ws.getColumn(1).width = 7
-  ws.getColumn(2).width = 14
-  ws.getColumn(3).width = 44
-  ws.getColumn(4).width = 14
-  ws.getColumn(5).width = 16
-  ws.getColumn(6).width = 28
-  ws.getColumn(7).width = 28
-  ws.getColumn(8).width = 26
+  colWidths.apply(ws)
 }
 
 function buildSummarySheet(wb: ExcelJS.Workbook, schedule: Schedule, entries: ScheduleEntry[]) {

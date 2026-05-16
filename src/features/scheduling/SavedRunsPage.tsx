@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/merge/facultyMapping'
 import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
-import { mergeLateEnrollmentIntoSnapshot, type MergeLateEnrollmentResult } from '@/modules/scheduling/merge/lateEnrollment'
-import { buildCourseEmailsXlsxBuffer } from '@/modules/scheduling/pipeline/exports'
+import { mergeLateEnrollmentIntoSnapshot } from '@/modules/scheduling/merge/lateEnrollment'
+import {
+  buildSavedRunClashXlsx,
+  buildSavedRunCourseEmailsXlsx,
+  buildSavedRunScheduleXlsx,
+  computeSavedRunExportState,
+} from '@/modules/scheduling/merge/savedRunExports'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
 import {
   deleteSavedRun,
@@ -146,8 +151,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
   const [mergeBusy, setMergeBusy] = useState(false)
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
   const [lastMergeMessage, setLastMergeMessage] = useState<string | null>(null)
-  const [postMerge, setPostMerge] = useState<MergeLateEnrollmentResult | null>(null)
-  const [courseEmailsExportBusy, setCourseEmailsExportBusy] = useState(false)
+  const [exportBusy, setExportBusy] = useState<'schedule' | 'clash' | 'courseEmails' | null>(null)
 
   const [schedule, setSchedule] = useState<Schedule>(() => buildScheduleFromSnapshot(snapshot).schedule)
 
@@ -156,9 +160,16 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
       setSnapshot(next.snapshot)
       setSchedule(next.schedule)
       updateSavedRunSnapshot(run.id, next.snapshot)
-      setPostMerge(null)
     },
     [run.id],
+  )
+
+  const exportState = useMemo(
+    () =>
+      computeSavedRunExportState(snapshot, {
+        allowProvisionalScheduleExport: allowProvisionalExport,
+      }),
+    [snapshot, allowProvisionalExport],
   )
 
   const persistTitle = useCallback(() => {
@@ -192,7 +203,6 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
         setSnapshot(out.schedulingSnapshot)
         setSchedule(out.schedule!)
         updateSavedRunSnapshot(run.id, out.schedulingSnapshot)
-        setPostMerge(out)
         const s = out.mergeSummary
         setLastMergeMessage(
           s
@@ -284,19 +294,6 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
           <UserPlus className="size-8 shrink-0 text-brand-500/80" aria-hidden />
         </div>
 
-        <label className="mt-5 flex cursor-pointer items-start gap-3 text-sm leading-snug text-text-muted">
-          <input
-            type="checkbox"
-            checked={allowProvisionalExport}
-            onChange={(e) => setAllowProvisionalExport(e.target.checked)}
-            className="theme-focusable mt-0.5 size-4 shrink-0 rounded border-border"
-          />
-          <span>
-            Allow provisional schedule workbook if the post-merge hard-constraint audit fails (same behaviour as the
-            main scheduler).
-          </span>
-        </label>
-
         <div className="mt-5">
           <button
             type="button"
@@ -326,74 +323,6 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
             <span className="font-medium text-text">Last merge:</span> {lastMergeMessage}
           </p>
         )}
-
-        {postMerge?.schedule && (
-          <div className="mt-6 space-y-4 border-t border-border/60 pt-6">
-            <h3 className="text-sm font-semibold text-text">Exports after last merge</h3>
-            <HardConstraintAuditNotice schedule={postMerge.schedule} />
-            <ScheduleExportBlockedNotice
-              blocked={postMerge.schedule_export_blocked}
-              reason={postMerge.schedule_export_block_reason}
-            />
-            <div className="flex flex-wrap gap-2">
-              {postMerge.scheduleXlsx ? (
-                <button
-                  type="button"
-                  onClick={() => downloadArrayBuffer(postMerge.scheduleXlsx!, 'unislot-schedule-after-merge.xlsx')}
-                  className="theme-btn-primary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
-                >
-                  <Download className="size-4" aria-hidden />
-                  Schedule
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  title={postMerge.schedule_export_block_reason ?? undefined}
-                  className="theme-btn-primary inline-flex cursor-not-allowed items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium opacity-50"
-                >
-                  <Download className="size-4" aria-hidden />
-                  Schedule (blocked)
-                </button>
-              )}
-              {postMerge.clashXlsx && (
-                <button
-                  type="button"
-                  onClick={() => downloadArrayBuffer(postMerge.clashXlsx!, 'unislot-clash-after-merge.xlsx')}
-                  className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
-                >
-                  <Download className="size-4" aria-hidden />
-                  Clash report
-                </button>
-              )}
-              {postMerge.schedulingSnapshot?.enrollmentRows?.length ? (
-                <button
-                  type="button"
-                  disabled={courseEmailsExportBusy}
-                  onClick={() => {
-                    void (async () => {
-                      setCourseEmailsExportBusy(true)
-                      try {
-                        const buf = await buildCourseEmailsXlsxBuffer(
-                          postMerge.schedulingSnapshot!.enrollmentRows,
-                        )
-                        downloadArrayBuffer(buf, 'unislot-course-emails-after-merge.xlsx')
-                      } catch (e) {
-                        alert(e instanceof Error ? e.message : 'Export failed')
-                      } finally {
-                        setCourseEmailsExportBusy(false)
-                      }
-                    })()
-                  }}
-                  className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
-                >
-                  <Download className="size-4" aria-hidden />
-                  {courseEmailsExportBusy ? 'Preparing…' : 'Course emails'}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        )}
       </section>
 
       <FacultyMappingPanel
@@ -406,6 +335,115 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
           Boolean(snapshot.facultyOverrides && Object.keys(snapshot.facultyOverrides).length > 0)
         }
       />
+
+      <section className="theme-card space-y-4 rounded-3xl border border-border/80 p-6">
+        <div>
+          <h2 className="text-lg font-semibold text-text">Download workbooks</h2>
+          <p className="mt-1 max-w-xl text-sm leading-relaxed text-text-muted">
+            Schedule, clash report, and course emails reflect the current saved snapshot (including late merges and
+            faculty mapping).
+          </p>
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug text-text-muted">
+          <input
+            type="checkbox"
+            checked={allowProvisionalExport}
+            onChange={(e) => setAllowProvisionalExport(e.target.checked)}
+            className="theme-focusable mt-0.5 size-4 shrink-0 rounded border-border"
+          />
+          <span>
+            Allow provisional schedule workbook if the hard-constraint audit fails (same behaviour as the main
+            scheduler).
+          </span>
+        </label>
+
+        <HardConstraintAuditNotice schedule={exportState.schedule} />
+        <ScheduleExportBlockedNotice
+          blocked={exportState.schedule_export_blocked}
+          reason={exportState.schedule_export_block_reason}
+        />
+
+        <div className="flex flex-wrap gap-2">
+          {exportState.schedule_export_blocked ? (
+            <button
+              type="button"
+              disabled
+              title={exportState.schedule_export_block_reason ?? undefined}
+              className="theme-btn-primary inline-flex cursor-not-allowed items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium opacity-50"
+            >
+              <Download className="size-4" aria-hidden />
+              Schedule (blocked)
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={exportBusy === 'schedule'}
+              onClick={() => {
+                void (async () => {
+                  setExportBusy('schedule')
+                  try {
+                    const buf = await buildSavedRunScheduleXlsx(exportState)
+                    if (buf) downloadArrayBuffer(buf, 'unislot-schedule.xlsx')
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : 'Export failed')
+                  } finally {
+                    setExportBusy(null)
+                  }
+                })()
+              }}
+              className="theme-btn-primary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+            >
+              <Download className="size-4" aria-hidden />
+              {exportBusy === 'schedule' ? 'Preparing…' : 'Schedule'}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={exportBusy === 'clash'}
+            onClick={() => {
+              void (async () => {
+                setExportBusy('clash')
+                try {
+                  const buf = await buildSavedRunClashXlsx(exportState)
+                  downloadArrayBuffer(buf, 'unislot-clash-report.xlsx')
+                } catch (e) {
+                  alert(e instanceof Error ? e.message : 'Export failed')
+                } finally {
+                  setExportBusy(null)
+                }
+              })()
+            }}
+            className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+          >
+            <Download className="size-4" aria-hidden />
+            {exportBusy === 'clash' ? 'Preparing…' : 'Clash report'}
+          </button>
+          {snapshot.enrollmentRows.length > 0 ? (
+            <button
+              type="button"
+              disabled={exportBusy === 'courseEmails'}
+              onClick={() => {
+                void (async () => {
+                  setExportBusy('courseEmails')
+                  try {
+                    const buf = await buildSavedRunCourseEmailsXlsx(snapshot)
+                    if (buf) downloadArrayBuffer(buf, 'unislot-course-emails.xlsx')
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : 'Export failed')
+                  } finally {
+                    setExportBusy(null)
+                  }
+                })()
+              }}
+              className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+            >
+              <Download className="size-4" aria-hidden />
+              {exportBusy === 'courseEmails' ? 'Preparing…' : 'Course emails'}
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       <section className="space-y-4">
         <h2 className="text-xl font-semibold text-text">Timetable (frozen slots)</h2>

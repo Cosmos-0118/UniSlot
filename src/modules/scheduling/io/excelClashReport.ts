@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { ClashReport, StudentClashReport } from '../types'
+import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -12,6 +13,33 @@ function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
 
 function clashers(report: ClashReport): StudentClashReport[] {
   return report.reports.filter((r) => r.status === 'Red')
+}
+
+function writeStudentClashRow(
+  row: ExcelJS.Row,
+  specs: {
+    values: (string | number)[]
+    wrapCols: Set<number>
+    centerCols: Set<number>
+    fillArgb: string
+    colWidths: ColumnWidthTracker
+  },
+): void {
+  const cells = specs.values.map((value, i) => {
+    const col = i + 1
+    return {
+      col,
+      value,
+      wrap: specs.wrapCols.has(col),
+      horizontal: specs.centerCols.has(col) ? ('center' as const) : ('left' as const),
+      numFmt: col === 1 && typeof value === 'number' ? '0' : undefined,
+    }
+  })
+  const wrappedLines = applyDataRow(row, cells, {
+    fillArgb: specs.fillArgb,
+    columnWidths: specs.colWidths,
+  })
+  fitRowHeight(row, wrappedLines, specs.wrapCols.size > 0)
 }
 
 /**
@@ -166,40 +194,44 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
       c.value = text
       c.font = { bold: true, color: { argb: XL.white } }
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primaryLight } }
-      c.alignment = { horizontal: 'center', vertical: 'middle' }
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
     })
     wsC.getRow(r).height = 28
     r++
+
+    const colWidths = new ColumnWidthTracker([
+      { col: 1, width: 6, min: 5, max: 8 },
+      { col: 2, width: 18, min: 14, max: 24 },
+      { col: 3, width: 28, min: 20, max: 36 },
+      { col: 4, width: 50, min: 24, max: 56 },
+      { col: 5, width: 36, min: 24, max: 60 },
+      { col: 6, width: 36, min: 24, max: 60 },
+      { col: 7, width: 14, min: 12, max: 20 },
+    ])
 
     const sorted = [...red].sort(
       (a, b) => a.program.localeCompare(b.program) || a.student_name.localeCompare(b.student_name),
     )
     sorted.forEach((student, idx) => {
       const clashText = student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
-      const vals = [
-        idx + 1,
-        student.register_number,
-        student.student_name,
-        student.program,
-        student.enrolled_courses.join(', '),
-        clashText,
-        student.clashing_day ?? '',
-      ]
-      vals.forEach((v, i) => {
-        const cell = wsC.getRow(r).getCell(i + 1)
-        cell.value = v
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.clashRow } }
-        cell.alignment =
-          i === 0 || i === 6
-            ? { horizontal: 'center', vertical: 'middle' }
-            : { horizontal: 'left', vertical: 'middle', wrapText: false }
+      writeStudentClashRow(wsC.getRow(r), {
+        values: [
+          idx + 1,
+          student.register_number,
+          student.student_name,
+          student.program,
+          student.enrolled_courses.join(', '),
+          clashText,
+          student.clashing_day ?? '',
+        ],
+        wrapCols: new Set([4, 5, 6]),
+        centerCols: new Set([1, 7]),
+        fillArgb: XL.clashRow,
+        colWidths,
       })
-      wsC.getRow(r).height = 22
       r++
     })
-    ;[6, 18, 28, 50, 30, 32, 14].forEach((w, i) => {
-      wsC.getColumn(i + 1).width = w
-    })
+    colWidths.apply(wsC)
   } else {
     wsC.mergeCells('A1:C1')
     const c = wsC.getCell('A1')
@@ -218,6 +250,13 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   pTitle.alignment = { horizontal: 'center', vertical: 'middle' }
   wsP.getRow(1).height = 35
   let rp = 3
+  const byProgramColWidths = new ColumnWidthTracker([
+    { col: 1, width: 5, min: 4, max: 8 },
+    { col: 2, width: 18, min: 14, max: 24 },
+    { col: 3, width: 28, min: 20, max: 40 },
+    { col: 4, width: 40, min: 28, max: 56 },
+    { col: 5, width: 14, min: 12, max: 20 },
+  ])
   if (red.length) {
     const programGroups = new Map<string, StudentClashReport[]>()
     for (const s of red) {
@@ -253,22 +292,18 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
           student.clashing_days.length > 0
             ? student.clashing_days.join(', ')
             : (student.clashing_day ?? '')
-        const vals = [idx + 1, student.register_number, student.student_name, clashText, dayLabel]
-        vals.forEach((v, i) => {
-          const cell = wsP.getRow(rp).getCell(i + 1)
-          cell.value = v
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.clashRow } }
-          cell.alignment =
-            i === 0 || i === 4 ? { horizontal: 'center', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' }
+        writeStudentClashRow(wsP.getRow(rp), {
+          values: [idx + 1, student.register_number, student.student_name, clashText, dayLabel],
+          wrapCols: new Set([4]),
+          centerCols: new Set([1, 5]),
+          fillArgb: XL.clashRow,
+          colWidths: byProgramColWidths,
         })
-        wsP.getRow(rp).height = 22
         rp++
       })
       rp++
     }
-    ;[5, 18, 28, 35, 14].forEach((w, i) => {
-      wsP.getColumn(i + 1).width = w
-    })
+    byProgramColWidths.apply(wsP)
   } else {
     wsP.getCell(rp, 1).value = 'No clashes to display.'
     wsP.getCell(rp, 1).font = { italic: true }
@@ -284,6 +319,13 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   dTitle.alignment = { horizontal: 'center', vertical: 'middle' }
   wsD.getRow(1).height = 35
   let rd = 3
+  const byDayColWidths = new ColumnWidthTracker([
+    { col: 1, width: 5, min: 4, max: 8 },
+    { col: 2, width: 18, min: 14, max: 24 },
+    { col: 3, width: 28, min: 20, max: 40 },
+    { col: 4, width: 50, min: 24, max: 56 },
+    { col: 5, width: 40, min: 28, max: 56 },
+  ])
   if (red.length) {
     const dayGroups = new Map<string, StudentClashReport[]>()
     for (const s of red) {
@@ -324,21 +366,18 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
       students.forEach((student, idx) => {
         const clashText = student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
-        const vals = [idx + 1, student.register_number, student.student_name, student.program, clashText]
-        vals.forEach((v, i) => {
-          const cell = wsD.getRow(rd).getCell(i + 1)
-          cell.value = v
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: dayArgb } }
-          cell.alignment = i === 0 ? { horizontal: 'center', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' }
+        writeStudentClashRow(wsD.getRow(rd), {
+          values: [idx + 1, student.register_number, student.student_name, student.program, clashText],
+          wrapCols: new Set([4, 5]),
+          centerCols: new Set([1]),
+          fillArgb: dayArgb,
+          colWidths: byDayColWidths,
         })
-        wsD.getRow(rd).height = 22
         rd++
       })
       rd++
     }
-    ;[5, 18, 28, 50, 35].forEach((w, i) => {
-      wsD.getColumn(i + 1).width = w
-    })
+    byDayColWidths.apply(wsD)
   } else {
     wsD.getCell(rd, 1).value = 'No clashes to display.'
     wsD.getCell(rd, 1).font = { italic: true }
@@ -354,6 +393,12 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   pairTitle.alignment = { horizontal: 'center', vertical: 'middle' }
   wsPair.getRow(1).height = 35
   let rk = 3
+  const pairColWidths = new ColumnWidthTracker([
+    { col: 1, width: 6, min: 5, max: 8 },
+    { col: 2, width: 35, min: 24, max: 48 },
+    { col: 3, width: 18, min: 12, max: 22 },
+    { col: 4, width: 45, min: 28, max: 56 },
+  ])
   if (red.length) {
     const pairStudents = new Map<string, StudentClashReport[]>()
     for (const s of red) {
@@ -378,21 +423,17 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
     sortedPairs.forEach(([key, students], rank) => {
       const [c1, c2] = key.split('\t')
       const programs = [...new Set(students.map((s) => s.program))].sort()
-      const progStr = programs.slice(0, 3).join(', ') + (programs.length > 3 ? '…' : '')
-      const vals = [rank + 1, `${c1} & ${c2}`, students.length, progStr]
-      vals.forEach((v, i) => {
-        const cell = wsPair.getRow(rk).getCell(i + 1)
-        cell.value = v
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.clashRow } }
-        cell.alignment =
-          i === 0 || i === 2 ? { horizontal: 'center', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' }
+      const progStr = programs.join(', ')
+      writeStudentClashRow(wsPair.getRow(rk), {
+        values: [rank + 1, `${c1} & ${c2}`, students.length, progStr],
+        wrapCols: new Set([2, 4]),
+        centerCols: new Set([1, 3]),
+        fillArgb: XL.clashRow,
+        colWidths: pairColWidths,
       })
-      wsPair.getRow(rk).height = 22
       rk++
     })
-    ;[6, 35, 18, 45].forEach((w, i) => {
-      wsPair.getColumn(i + 1).width = w
-    })
+    pairColWidths.apply(wsPair)
   } else {
     wsPair.getCell(rk, 1).value = 'No clashes to analyze.'
     wsPair.getCell(rk, 1).font = { italic: true }
@@ -420,6 +461,16 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   wsF.getRow(rf).height = 28
   rf++
 
+  const fullColWidths = new ColumnWidthTracker([
+    { col: 1, width: 6, min: 5, max: 8 },
+    { col: 2, width: 18, min: 14, max: 24 },
+    { col: 3, width: 28, min: 20, max: 36 },
+    { col: 4, width: 50, min: 24, max: 56 },
+    { col: 5, width: 36, min: 24, max: 60 },
+    { col: 6, width: 10, min: 8, max: 14 },
+    { col: 7, width: 36, min: 24, max: 60 },
+  ])
+
   const sortedAll = [...report.reports].sort(
     (a, b) =>
       (a.status === 'Red' ? 0 : 1) - (b.status === 'Red' ? 0 : 1) ||
@@ -432,29 +483,25 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
         ? student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
         : '—'
     const statusText = student.status === 'Red' ? 'CLASH' : 'OK'
-    const vals = [
-      idx + 1,
-      student.register_number,
-      student.student_name,
-      student.program,
-      student.enrolled_courses.join(', '),
-      statusText,
-      clashText,
-    ]
     const fillArgb = student.status === 'Red' ? XL.clashRow : idx % 2 === 0 ? XL.rowAlt : XL.white
-    vals.forEach((v, i) => {
-      const cell = wsF.getRow(rf).getCell(i + 1)
-      cell.value = v
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } }
-      cell.alignment =
-        i === 0 || i === 5 ? { horizontal: 'center', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' }
+    writeStudentClashRow(wsF.getRow(rf), {
+      values: [
+        idx + 1,
+        student.register_number,
+        student.student_name,
+        student.program,
+        student.enrolled_courses.join(', '),
+        statusText,
+        clashText,
+      ],
+      wrapCols: new Set([4, 5, 7]),
+      centerCols: new Set([1, 6]),
+      fillArgb,
+      colWidths: fullColWidths,
     })
-    wsF.getRow(rf).height = 22
     rf++
   })
-  ;[6, 18, 28, 50, 30, 10, 32].forEach((w, i) => {
-    wsF.getColumn(i + 1).width = w
-  })
+  fullColWidths.apply(wsF)
 
   const buf = await wb.xlsx.writeBuffer()
   return writeBufferToArrayBuffer(buf)
