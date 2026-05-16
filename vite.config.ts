@@ -15,6 +15,21 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkgJson.version),
   },
+  build: {
+    /** Scheduling web worker bundles solver + Excel stack (~1 MB); main app splits via lazy routes + manualChunks. */
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('exceljs')) return 'vendor-exceljs'
+          if (id.includes('framer-motion')) return 'vendor-framer-motion'
+          if (id.includes('lucide-react')) return 'vendor-lucide'
+          return undefined
+        },
+      },
+    },
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

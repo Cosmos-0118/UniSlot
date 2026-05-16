@@ -1,4 +1,6 @@
+import { Suspense } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { RouteChunkFallback } from '@/components/ui/RouteChunkFallback'
 import { Layout } from '../components/layout/Layout'
 import { useSchedulingSession } from '../contexts/useSchedulingSession'
 import type { LucideIcon } from 'lucide-react'
@@ -22,7 +24,9 @@ export function DashboardLayout() {
 
   return (
     <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={goHome}>
-      <Outlet />
+      <Suspense fallback={<RouteChunkFallback />}>
+        <Outlet />
+      </Suspense>
     </Layout>
   )
 }

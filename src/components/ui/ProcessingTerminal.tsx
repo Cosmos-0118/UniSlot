@@ -65,6 +65,12 @@ interface Props {
   done: boolean
   /** 0–1 overall pipeline when the worker reports it; otherwise the bar stays indeterminate. */
   progressFraction?: number | null
+  /** Latest worker status line (shown under the bar). */
+  progressMessage?: string | null
+  /** Estimated seconds remaining when the worker provides it. */
+  progressEta?: number | null
+  /** Optional file name shown in the footer while processing. */
+  fileLabel?: string | null
 }
 
 export function ProcessingTerminal({
@@ -73,8 +79,21 @@ export function ProcessingTerminal({
   onLineTypeDone,
   done,
   progressFraction,
+  progressMessage,
+  progressEta,
+  fileLabel,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const determinate =
+    progressFraction != null && Number.isFinite(progressFraction) && progressFraction >= 0
+  const pct = determinate ? Math.round(Math.max(0, Math.min(1, progressFraction)) * 100) : null
+  const etaLabel =
+    progressEta != null && Number.isFinite(progressEta) && progressEta > 0
+      ? progressEta >= 120
+        ? `~${Math.round(progressEta / 60)}m left`
+        : `~${Math.max(1, Math.round(progressEta))}s left`
+      : null
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -121,22 +140,53 @@ export function ProcessingTerminal({
       </div>
 
       {!done && (
-        <div className="terminal-progress">
+        <div className="terminal-footer" aria-busy="true" aria-live="polite">
           <div
-            className={cn(
-              'terminal-progress-bar',
-              progressFraction != null &&
-                Number.isFinite(progressFraction) &&
-                'terminal-progress-bar--determinate',
-            )}
-            style={
-              progressFraction != null && Number.isFinite(progressFraction)
-                ? {
-                    width: `${Math.round(Math.max(0, Math.min(1, progressFraction)) * 100)}%`,
-                  }
-                : undefined
+            className={cn('terminal-progress-track', !determinate && 'terminal-progress-track--indeterminate')}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct ?? undefined}
+            aria-valuetext={
+              determinate
+                ? `${pct}% — ${progressMessage ?? 'Working'}`
+                : progressMessage ?? 'In progress'
             }
-          />
+          >
+            {!determinate && <div className="terminal-progress-shimmer" aria-hidden />}
+            <div
+              className={cn('terminal-progress-fill', determinate && 'terminal-progress-fill--determinate')}
+              style={determinate ? { width: `${pct}%` } : undefined}
+            />
+          </div>
+          <div className="terminal-footer-meta">
+            <div className="terminal-footer-left">
+              {determinate ? (
+                <span className="terminal-progress-pct">{pct}%</span>
+              ) : (
+                <span className="terminal-progress-pulse">
+                  <span className="terminal-progress-dot" />
+                  <span className="terminal-progress-dot" />
+                  <span className="terminal-progress-dot" />
+                </span>
+              )}
+              {(progressMessage ?? '').trim() ? (
+                <span className="terminal-progress-msg" title={progressMessage ?? undefined}>
+                  {progressMessage}
+                </span>
+              ) : (
+                <span className="terminal-progress-msg terminal-progress-msg--muted">Initializing…</span>
+              )}
+            </div>
+            <div className="terminal-footer-right">
+              {etaLabel && <span className="terminal-progress-eta">{etaLabel}</span>}
+              {fileLabel ? (
+                <span className="terminal-progress-file" title={fileLabel}>
+                  {fileLabel}
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
       )}
     </div>

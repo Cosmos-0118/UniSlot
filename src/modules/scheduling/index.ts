@@ -21,5 +21,14 @@ export type {
 export type { SchedulingStats } from './engines/metrics'
 export type { PipelineResult } from './pipeline'
 export { runPipeline, computeCourseEmailGroups, type RunPipelineOptions } from './pipeline'
+export type { SchedulingSnapshot } from './schedulingSnapshot'
+export { cloneSchedulingSnapshot } from './schedulingSnapshot'
+export {
+  mergeLateEnrollmentIntoSnapshot,
+  appendStudentToCourseSection,
+  type MergeLateEnrollmentResult,
+  type LateMergeSummary,
+} from './lateEnrollmentMerge'
 export { parseExcelRows, loadAndValidate } from './parser'
 export { runScheduler, auditScheduleHardConstraints } from './scheduler'
+export type { ScheduleWorkbookBranding } from './io/excelScheduleWorkbook'

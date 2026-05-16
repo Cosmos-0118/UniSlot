@@ -1,6 +1,6 @@
 import { AppLogo } from '@/components/brand/AppLogo'
 import { cn } from '@/shared/utils/cn'
-import { Calendar, Settings, Zap, Mail } from 'lucide-react'
+import { Calendar, Library, Settings, Zap, Mail } from 'lucide-react'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ export function Sidebar({ activeFeature, setActiveFeature, onLogoClick }: Sideba
 
   const features = [
     { id: 'scheduler', label: 'Scheduler', icon: Calendar },
+    { id: 'runs', label: 'Saved runs', icon: Library },
     { id: 'emails', label: 'Emails', icon: Mail },
     { id: 'insights', label: 'Insights', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },

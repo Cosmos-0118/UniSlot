@@ -11,12 +11,16 @@ import { computeSchedulingStats, type SchedulingStats } from './engines/metrics'
 import { sumConflictGraphWeights } from './engines/conflictGraph'
 import { TOTAL_WEEKLY_SLOTS } from './engines/timeModel'
 import type { SchedulerProgressEvent } from './engines/localSearchSolver'
-import type { ClashReport, Schedule, ValidationResult } from './types'
+import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from './types'
+import {
+  cloneStudents,
+  deepCloneCourseSections,
+  type SchedulingSnapshot,
+} from './schedulingSnapshot'
 import { clashReportToRichWorkbookBuffer } from './io/excelClashReport'
 import { courseEmailsToWorkbookBuffer } from './io/excelCourseEmails'
 import { readFirstSheetAsAoA } from './io/excelIo'
 import { scheduleToWorkbookBuffer } from './io/excelScheduleWorkbook'
-import type { CourseEmailGroup, EnrollmentRow } from './types'
 
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
   const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
@@ -95,6 +99,8 @@ export interface PipelineResult {
   } | null
   schedule_export_blocked?: boolean
   schedule_export_block_reason?: string | null
+  /** Present after a full solve so runs can be saved and extended with late registrations. */
+  schedulingSnapshot: SchedulingSnapshot | null
 }
 
 export async function runPipeline(
@@ -127,6 +133,7 @@ export async function runPipeline(
       courseEmailsXlsx: null,
       courseEmailsData: null,
       stats: null,
+      schedulingSnapshot: null,
     }
   }
 
@@ -155,6 +162,7 @@ export async function runPipeline(
       courseEmailsXlsx: null,
       courseEmailsData: null,
       stats: null,
+      schedulingSnapshot: null,
     }
   }
 
@@ -262,5 +270,11 @@ export async function runPipeline(
     },
     schedule_export_blocked: scheduleExportBlocked,
     schedule_export_block_reason: scheduleExportBlockReason,
+    schedulingSnapshot: {
+      slot_assignments: { ...sched.slot_assignments },
+      courseSections: deepCloneCourseSections(courseSections),
+      students: cloneStudents(students),
+      enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
+    },
   }
 }

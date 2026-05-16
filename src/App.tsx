@@ -1,18 +1,44 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { RouteChunkFallback } from './components/ui/RouteChunkFallback'
 import { ThemeProvider } from './contexts/ThemeProvider'
 import { SchedulingSessionProvider } from './contexts/SchedulingSessionProvider'
-import { LandingPage } from './features/LandingPage'
 import { DashboardLayout, ComingSoonPanel } from './features/Dashboard'
-import { Scheduler } from './features/Scheduler'
-import { EmailsView } from './features/EmailsView'
 import { BarChart3, SlidersHorizontal } from 'lucide-react'
+
+const LandingPage = lazy(async () => {
+  const m = await import('./features/LandingPage')
+  return { default: m.LandingPage }
+})
+
+const Scheduler = lazy(async () => {
+  const m = await import('./features/Scheduler')
+  return { default: m.Scheduler }
+})
+
+const SavedRunsPage = lazy(async () => {
+  const m = await import('./features/SavedRunsPage')
+  return { default: m.SavedRunsPage }
+})
+
+const EmailsView = lazy(async () => {
+  const m = await import('./features/EmailsView')
+  return { default: m.EmailsView }
+})
 
 export default function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
+          <Route
+            path="/"
+            element={
+              <Suspense fallback={<RouteChunkFallback />}>
+                <LandingPage />
+              </Suspense>
+            }
+          />
           <Route
             path="/app"
             element={
@@ -23,6 +49,7 @@ export default function App() {
           >
             <Route index element={<Navigate to="scheduler" replace />} />
             <Route path="scheduler" element={<Scheduler />} />
+            <Route path="runs/:runId?" element={<SavedRunsPage />} />
             <Route path="emails" element={<EmailsView />} />
             <Route
               path="insights"

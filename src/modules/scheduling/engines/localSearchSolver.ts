@@ -42,7 +42,7 @@ function formatEtaSeconds(sec: number): string {
 }
 
 /** Hard ceiling for sections per slot (solvability); soft objective still pushes toward 11. */
-function parallelHardCap(totalSections: number): number {
+export function parallelHardCap(totalSections: number): number {
   return Math.min(36, Math.max(TARGET_PARALLEL_SECTIONS, Math.ceil((totalSections * 1.35) / TOTAL_WEEKLY_SLOTS) + 6))
 }
 

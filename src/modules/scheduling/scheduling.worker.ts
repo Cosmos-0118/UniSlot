@@ -25,6 +25,7 @@ export type WorkerResponse =
       } | null
       schedule_export_blocked?: boolean
       schedule_export_block_reason?: string | null
+      schedulingSnapshot: import('./schedulingSnapshot').SchedulingSnapshot | null
     }
   | { type: 'error'; id: number; message: string }
 
@@ -52,6 +53,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         stats: result.stats,
         schedule_export_blocked: result.schedule_export_blocked,
         schedule_export_block_reason: result.schedule_export_block_reason,
+        schedulingSnapshot: result.schedulingSnapshot,
       }
       const transfer: Transferable[] = []
       if (result.scheduleXlsx) transfer.push(result.scheduleXlsx)

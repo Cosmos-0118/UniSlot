@@ -25,6 +25,7 @@ export interface PipelineOutput {
   } | null
   schedule_export_blocked?: boolean
   schedule_export_block_reason?: string | null
+  schedulingSnapshot: import('@/modules/scheduling/schedulingSnapshot').SchedulingSnapshot | null
 }
 
 export function useUnislotWorker() {
@@ -92,6 +93,7 @@ export function useUnislotWorker() {
               stats: data.stats,
               schedule_export_blocked: data.schedule_export_blocked,
               schedule_export_block_reason: data.schedule_export_block_reason,
+              schedulingSnapshot: data.schedulingSnapshot,
             })
           }
         }
