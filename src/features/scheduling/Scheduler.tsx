@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom'
 import { cn } from '@/shared/utils/cn'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
 import type { ValidationError } from '@/modules/scheduling/types'
+import { useAppDialog } from '@/contexts/appDialog/useAppDialog'
 import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
 import { ProcessingTerminal } from '@/components/ui/ProcessingTerminal'
 import { createSavedRun } from '@/features/scheduling/storage/savedRunsStorage'
@@ -81,6 +82,7 @@ export function Scheduler() {
     terminalTypingIdx,
     onTerminalLineTypeDone,
   } = useSchedulingSession()
+  const { alert: showAlert } = useAppDialog()
   const navigate = useNavigate()
   const [drag, setDrag] = useState(false)
   const [runSeedInput, setRunSeedInput] = useState('')
@@ -138,27 +140,36 @@ export function Scheduler() {
   useEffect(() => {
     if (!result?.hasDeferredSnapshot || result.schedulingSnapshot) return
     if (viewMode !== 'actions' && viewMode !== 'details') return
-    void ensureSnapshot()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void ensureSnapshot()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [viewMode, result?.hasDeferredSnapshot, result?.schedulingSnapshot, ensureSnapshot])
 
   useEffect(() => {
     if (viewMode !== 'details' || !result?.schedule) return
     if (result.schedule.entries.length > 0 || !result.hasDeferredScheduleEntries) return
     let cancelled = false
-    setEntriesBusy(true)
-    void fetchScheduleEntries()
-      .then((entries) => {
-        if (cancelled || !result.schedule) return
-        setResult({
-          ...result,
-          schedule: scheduleWithEntries(result.schedule, entries),
-          hasDeferredScheduleEntries: false,
+    queueMicrotask(() => {
+      if (cancelled) return
+      setEntriesBusy(true)
+      void fetchScheduleEntries()
+        .then((entries) => {
+          if (cancelled || !result.schedule) return
+          setResult({
+            ...result,
+            schedule: scheduleWithEntries(result.schedule, entries),
+            hasDeferredScheduleEntries: false,
+          })
         })
-      })
-      .catch((e) => console.error(e))
-      .finally(() => {
-        if (!cancelled) setEntriesBusy(false)
-      })
+        .catch((e) => console.error(e))
+        .finally(() => {
+          if (!cancelled) setEntriesBusy(false)
+        })
+    })
     return () => {
       cancelled = true
     }
@@ -182,19 +193,27 @@ export function Scheduler() {
         setResult({ ...result, [bufferKey]: buf })
         downloadArrayBuffer(buf, filename)
       } catch (e) {
-        alert(e instanceof Error ? e.message : 'Export failed')
+        void showAlert({
+          title: 'Export failed',
+          message: e instanceof Error ? e.message : 'Export failed',
+          tone: 'warning',
+        })
       } finally {
         setExportBusy(null)
       }
     },
-    [result, exportXlsx, setResult],
+    [result, exportXlsx, setResult, showAlert],
   )
 
   const handleFile = useCallback(
     async (file: File | null) => {
       if (!file) return
       if (!/\.xlsx$/i.test(file.name)) {
-        alert('Please upload an Excel workbook (.xlsx)')
+        void showAlert({
+          title: 'Invalid file',
+          message: 'Please upload an Excel workbook (.xlsx).',
+          tone: 'warning',
+        })
         return
       }
       resetTerminalLog()
@@ -223,10 +242,14 @@ export function Scheduler() {
         setViewMode('idle')
         if (msg.toLowerCase().includes('cancelled')) return
         console.error(e)
-        alert(msg)
+        void showAlert({
+          title: 'Scheduling failed',
+          message: msg,
+          tone: 'warning',
+        })
       }
     },
-    [run, setResult, setFileName, setViewMode, resetTerminalLog, runSeedInput, allowProvisionalExport],
+    [run, setResult, setFileName, setViewMode, resetTerminalLog, runSeedInput, allowProvisionalExport, showAlert],
   )
 
   const showUploader = viewMode === 'idle'

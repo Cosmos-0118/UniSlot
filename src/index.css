@@ -1081,6 +1081,65 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+.app-dialog-backdrop {
+  animation: app-dialog-backdrop-in 0.22s ease-out both;
+}
+
+.app-dialog-panel {
+  animation: panel-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes app-dialog-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.app-dialog-panel--fit {
+  width: max-content;
+  max-width: min(44rem, calc(100vw - 1.5rem));
+  min-width: min(17.5rem, 100%);
+}
+
+.app-dialog-panel--standard {
+  width: min(100%, calc(100vw - 1.5rem));
+  max-width: 32rem;
+}
+
+.app-dialog-panel--wide {
+  width: min(100%, calc(100vw - 1.5rem));
+  max-width: min(44rem, calc(100vw - 1.5rem));
+}
+
+.app-dialog-prose {
+  overflow-wrap: normal;
+  word-break: normal;
+  text-wrap: pretty;
+  hyphens: none;
+}
+
+.app-dialog-prose--pre {
+  white-space: pre-wrap;
+}
+
+.app-dialog-body {
+  scrollbar-gutter: stable;
+  width: 100%;
+}
+
+.app-dialog-list--scroll {
+  max-height: min(16rem, 42dvh);
+  overflow-y: auto;
+  overscroll-contain: contain;
+  padding: 0.875rem 1rem;
+  scrollbar-gutter: stable;
+}
+
+@media (min-width: 640px) {
+  .app-dialog-list--scroll {
+    max-height: min(18rem, 38dvh);
+  }
+}
+
 .results-check {
   width: 56px;
   height: 56px;

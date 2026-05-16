@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { RouteChunkFallback } from '@/components/ui/RouteChunkFallback'
+import { AppDialogProvider } from '@/contexts/appDialog/AppDialogProvider'
 import { ThemeProvider } from '@/contexts/theme/ThemeProvider'
 import { SchedulingSessionProvider } from '@/contexts/scheduling/SchedulingSessionProvider'
 import { DashboardLayout, ComingSoonPanel } from '@/features/dashboard/Dashboard'
@@ -29,8 +30,9 @@ const EmailsView = lazy(async () => {
 export default function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <Routes>
+      <AppDialogProvider>
+        <BrowserRouter>
+          <Routes>
           <Route
             path="/"
             element={
@@ -77,6 +79,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </AppDialogProvider>
     </ThemeProvider>
   )
 }

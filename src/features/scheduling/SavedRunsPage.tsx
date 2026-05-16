@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/merge/facultyMapping'
 import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
@@ -20,6 +20,7 @@ import {
   updateSavedRunSnapshot,
   type SavedScheduleRun,
 } from '@/features/scheduling/storage/savedRunsStorage'
+import { useAppDialog } from '@/contexts/appDialog/useAppDialog'
 import { downloadArrayBuffer } from '@/shared/lib/downloadArrayBuffer'
 import { FacultyMappingPanel } from '@/features/scheduling/FacultyMappingPanel'
 import {
@@ -146,11 +147,13 @@ export function SavedRunsPage() {
 }
 
 function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: () => void }) {
+  const { alert: showAlert, confirm: showConfirm } = useAppDialog()
   const [title, setTitle] = useState(run.title)
   const [snapshot, setSnapshot] = useState(run.snapshot)
   const [mergeBusy, setMergeBusy] = useState(false)
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
-  const [lastMergeMessage, setLastMergeMessage] = useState<string | null>(null)
+  const [mergeIssues, setMergeIssues] = useState<string[]>([])
+  const [mergeSuccessSummary, setMergeSuccessSummary] = useState<string | null>(null)
   const [exportBusy, setExportBusy] = useState<'schedule' | 'clash' | 'courseEmails' | null>(null)
 
   const [schedule, setSchedule] = useState<Schedule>(() => buildScheduleFromSnapshot(snapshot).schedule)
@@ -182,47 +185,68 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
     async (file: File | null) => {
       if (!file) return
       if (!/\.xlsx$/i.test(file.name)) {
-        alert('Please upload an Excel workbook (.xlsx)')
+        void showAlert({
+          title: 'Invalid file',
+          message: 'Please upload an Excel workbook (.xlsx).',
+          tone: 'warning',
+        })
         return
       }
-      setLastMergeMessage(null)
+      setMergeIssues([])
+      setMergeSuccessSummary(null)
       setMergeBusy(true)
       try {
         const buf = await file.arrayBuffer()
         const opts: RunPipelineOptions = {}
         if (allowProvisionalExport) opts.allowProvisionalScheduleExport = true
         const out = await mergeLateEnrollmentIntoSnapshot(snapshot, buf, opts)
+        const issueMessages = [
+          ...out.validation.errors.map((e) => e.message),
+          ...out.validation.warnings.map((w) => w.message),
+        ]
         if (!out.validation.is_valid || !out.schedulingSnapshot) {
-          const msg =
-            out.validation.errors[0]?.message ??
-            'Merge did not complete. Fix the sheet or check that courses match this saved run.'
-          setLastMergeMessage(msg)
-          alert(msg)
+          setMergeIssues(
+            issueMessages.length > 0
+              ? issueMessages
+              : ['Merge did not complete. Fix the sheet or check that courses match this saved run.'],
+          )
+          setMergeSuccessSummary(null)
           return
         }
         setSnapshot(out.schedulingSnapshot)
         setSchedule(out.schedule!)
         updateSavedRunSnapshot(run.id, out.schedulingSnapshot)
         const s = out.mergeSummary
-        setLastMergeMessage(
+        setMergeSuccessSummary(
           s
             ? `Merged ${s.addedEnrollmentRows} new row(s) · ${s.newStudents} new student(s) · ${s.existingStudentsNewCourses} existing student(s) with added course(s).`
             : 'Merge complete.',
         )
+        if (issueMessages.length > 0) setMergeIssues(issueMessages)
       } catch (e) {
         console.error(e)
-        alert(e instanceof Error ? e.message : 'Merge failed')
+        setMergeIssues([e instanceof Error ? e.message : 'Merge failed'])
+        setMergeSuccessSummary(null)
       } finally {
         setMergeBusy(false)
       }
     },
-    [allowProvisionalExport, run.id, snapshot],
+    [allowProvisionalExport, run.id, snapshot, showAlert],
   )
 
   const handleDelete = () => {
-    if (!confirm('Delete this saved run? This cannot be undone.')) return
-    deleteSavedRun(run.id)
-    onDeleted()
+    void (async () => {
+      const ok = await showConfirm({
+        title: 'Delete saved run?',
+        message: 'This cannot be undone. The timetable snapshot will be removed from this browser.',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Keep',
+        tone: 'danger',
+      })
+      if (!ok) return
+      deleteSavedRun(run.id)
+      onDeleted()
+    })()
   }
 
   const { studentCount, courseCount, sectionCount } = snapshotStats(snapshot)
@@ -294,7 +318,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
           <UserPlus className="size-8 shrink-0 text-brand-500/80" aria-hidden />
         </div>
 
-        <div className="mt-5">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={mergeBusy}
@@ -316,13 +340,40 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
             <FileSpreadsheet className="size-4" aria-hidden />
             {mergeBusy ? 'Merging…' : 'Add enrollments from .xlsx'}
           </button>
+          {mergeIssues.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                void showAlert({
+                  title: 'Merge issues',
+                  message:
+                    mergeIssues.length > 1
+                      ? `${mergeIssues.length} issues from the last enrollment upload.`
+                      : undefined,
+                  items: mergeIssues,
+                  tone: 'warning',
+                  size: mergeIssues.length > 5 ? 'lg' : 'md',
+                })
+              }}
+              className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl border-[var(--soft-warning-border)] bg-[var(--soft-warning-bg)] px-4 py-2.5 text-sm font-medium text-text"
+            >
+              <AlertTriangle className="size-4 shrink-0 text-[var(--accent-warning)]" aria-hidden />
+              Issues
+              <span className="rounded-md bg-[color-mix(in_srgb,var(--accent-warning)_22%,transparent)] px-1.5 py-0.5 text-xs font-semibold tabular-nums text-[var(--accent-warning)]">
+                {mergeIssues.length}
+              </span>
+            </button>
+          ) : null}
         </div>
 
-        {lastMergeMessage && (
-          <p className="mt-4 text-sm text-text-muted">
-            <span className="font-medium text-text">Last merge:</span> {lastMergeMessage}
+        {mergeSuccessSummary ? (
+          <p className="mt-4 flex items-start gap-2 text-sm text-text-muted">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--accent-success)]" aria-hidden />
+            <span>
+              <span className="font-medium text-text">Last merge:</span> {mergeSuccessSummary}
+            </span>
           </p>
-        )}
+        ) : null}
       </section>
 
       <FacultyMappingPanel
@@ -386,7 +437,11 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
                     const buf = await buildSavedRunScheduleXlsx(exportState)
                     if (buf) downloadArrayBuffer(buf, 'unislot-schedule.xlsx')
                   } catch (e) {
-                    alert(e instanceof Error ? e.message : 'Export failed')
+                    void showAlert({
+                      title: 'Export failed',
+                      message: e instanceof Error ? e.message : 'Export failed',
+                      tone: 'warning',
+                    })
                   } finally {
                     setExportBusy(null)
                   }
@@ -408,7 +463,11 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
                   const buf = await buildSavedRunClashXlsx(exportState)
                   downloadArrayBuffer(buf, 'unislot-clash-report.xlsx')
                 } catch (e) {
-                  alert(e instanceof Error ? e.message : 'Export failed')
+                  void showAlert({
+                    title: 'Export failed',
+                    message: e instanceof Error ? e.message : 'Export failed',
+                    tone: 'warning',
+                  })
                 } finally {
                   setExportBusy(null)
                 }
@@ -430,7 +489,11 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
                     const buf = await buildSavedRunCourseEmailsXlsx(snapshot)
                     if (buf) downloadArrayBuffer(buf, 'unislot-course-emails.xlsx')
                   } catch (e) {
-                    alert(e instanceof Error ? e.message : 'Export failed')
+                    void showAlert({
+                      title: 'Export failed',
+                      message: e instanceof Error ? e.message : 'Export failed',
+                      tone: 'warning',
+                    })
                   } finally {
                     setExportBusy(null)
                   }
