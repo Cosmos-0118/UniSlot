@@ -3,12 +3,12 @@ export {
   buildAdjacency,
   computeClashWeight,
   sumConflictGraphWeights,
-} from './engines/conflictGraph'
-export { computeSectionSplits } from './engines/capacity'
-export { assignStudentsToSections } from './engines/sectioning'
-export { applyDistinctFacultyPerSection, extractFacultyConstraints } from './engines/faculty'
+} from '../solver/conflictGraph'
+export { computeSectionSplits } from '../solver/capacity'
+export { assignStudentsToSections } from '../solver/sectioning'
+export { applyDistinctFacultyPerSection, extractFacultyConstraints } from '../solver/faculty'
 
-import type { Section } from './types'
+import type { Section } from '../types'
 
 export function getAllSections(courseSections: Record<string, Section[]>): Section[] {
   return Object.values(courseSections).flat()

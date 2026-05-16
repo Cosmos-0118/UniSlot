@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PipelineProgressEvent } from '@/modules/scheduling/pipeline'
+import type { PipelineProgressEvent } from '@/modules/scheduling/pipeline/run'
 import { STAGE_SUMMARY, type LineType, type LogLine } from '@/components/ui/processingTerminalModel'
 
 /**

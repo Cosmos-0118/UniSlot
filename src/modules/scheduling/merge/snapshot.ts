@@ -1,4 +1,4 @@
-import type { EnrollmentRow, Section, Student } from './types'
+import type { EnrollmentRow, Section, Student } from '../types'
 
 /** Serializable state needed to attach late registrations without re-solving slots. */
 export type SchedulingSnapshot = {

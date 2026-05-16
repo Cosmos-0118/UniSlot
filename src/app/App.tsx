@@ -1,28 +1,28 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { RouteChunkFallback } from './components/ui/RouteChunkFallback'
-import { ThemeProvider } from './contexts/ThemeProvider'
-import { SchedulingSessionProvider } from './contexts/SchedulingSessionProvider'
-import { DashboardLayout, ComingSoonPanel } from './features/Dashboard'
+import { RouteChunkFallback } from '@/components/ui/RouteChunkFallback'
+import { ThemeProvider } from '@/contexts/theme/ThemeProvider'
+import { SchedulingSessionProvider } from '@/contexts/scheduling/SchedulingSessionProvider'
+import { DashboardLayout, ComingSoonPanel } from '@/features/dashboard/Dashboard'
 import { BarChart3, SlidersHorizontal } from 'lucide-react'
 
 const LandingPage = lazy(async () => {
-  const m = await import('./features/LandingPage')
+  const m = await import('@/features/landing/LandingPage')
   return { default: m.LandingPage }
 })
 
 const Scheduler = lazy(async () => {
-  const m = await import('./features/Scheduler')
+  const m = await import('@/features/scheduling/Scheduler')
   return { default: m.Scheduler }
 })
 
 const SavedRunsPage = lazy(async () => {
-  const m = await import('./features/SavedRunsPage')
+  const m = await import('@/features/scheduling/SavedRunsPage')
   return { default: m.SavedRunsPage }
 })
 
 const EmailsView = lazy(async () => {
-  const m = await import('./features/EmailsView')
+  const m = await import('@/features/scheduling/EmailsView')
   return { default: m.EmailsView }
 })
 

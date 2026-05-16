@@ -1,7 +1,7 @@
 import { Mail, Users, Copy, CheckCircle2, FileWarning } from 'lucide-react';
 import { useState } from 'react'
 import { cn } from '@/shared/utils/cn'
-import { useSchedulingSession } from '@/contexts/useSchedulingSession'
+import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
 
 export function EmailsView() {
   const { result } = useSchedulingSession()

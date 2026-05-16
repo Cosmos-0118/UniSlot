@@ -1,9 +1,9 @@
 import { createContext } from 'react'
 import type { LogLine } from '@/components/ui/processingTerminalModel'
-import type { PipelineProgressEvent, RunPipelineOptions } from '@/modules/scheduling/pipeline'
-import type { PipelineOutput } from '@/hooks/useUnislotWorker'
-import type { PipelineExportKind } from '@/modules/scheduling/pipelineExports'
-import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
+import type { PipelineProgressEvent, RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
+import type { PipelineOutput } from '@/features/scheduling/hooks/useUnislotWorker'
+import type { PipelineExportKind } from '@/modules/scheduling/pipeline/exports'
+import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
 import type { Schedule, ScheduleEntry } from '@/modules/scheduling/types'
 
 export type SchedulerViewMode = 'idle' | 'processing' | 'actions' | 'details'

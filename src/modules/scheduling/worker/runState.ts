@@ -1,5 +1,5 @@
-import type { ClashReport, EnrollmentRow, Schedule } from './types'
-import type { SchedulingSnapshot } from './schedulingSnapshot'
+import type { ClashReport, EnrollmentRow, Schedule } from '../types'
+import type { SchedulingSnapshot } from '../merge/snapshot'
 
 export type WorkerRunArtifacts = {
   schedule: Schedule | null

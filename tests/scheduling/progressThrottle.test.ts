@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProgressThrottle } from '../../src/modules/scheduling/progressThrottle'
+import { createProgressThrottle } from '../../src/modules/scheduling/worker/progressThrottle'
 
 describe('createProgressThrottle', () => {
   it('coalesces rapid schedule-stage updates', () => {

@@ -18,19 +18,19 @@ export type {
   ValidationError,
   ValidationResult,
 } from './types'
-export type { SchedulingStats } from './engines/metrics'
-export type { PipelineResult } from './pipeline'
-export { runPipeline, computeCourseEmailGroups, type RunPipelineOptions } from './pipeline'
-export type { SchedulingSnapshot } from './schedulingSnapshot'
-export { cloneSchedulingSnapshot } from './schedulingSnapshot'
+export type { SchedulingStats } from './solver/metrics'
+export type { PipelineResult } from './pipeline/run'
+export { runPipeline, computeCourseEmailGroups, type RunPipelineOptions } from './pipeline/run'
+export type { SchedulingSnapshot } from './merge/snapshot'
+export { cloneSchedulingSnapshot } from './merge/snapshot'
 export {
   mergeLateEnrollmentIntoSnapshot,
   appendStudentToCourseSection,
   type MergeLateEnrollmentResult,
   type LateMergeSummary,
-} from './lateEnrollmentMerge'
-export { parseExcelRows, loadAndValidate } from './parser'
-export { runScheduler, auditScheduleHardConstraints } from './scheduler'
+} from './merge/lateEnrollment'
+export { parseExcelRows, loadAndValidate } from './parse/parser'
+export { runScheduler, auditScheduleHardConstraints } from './solver/scheduler'
 export {
   applyAndValidateFacultyMapping,
   applyFacultyOverridesToSnapshot,
@@ -41,5 +41,5 @@ export {
   listFacultyMappingRows,
   parseFacultyMappingTable,
   type ParseFacultyMappingResult,
-} from './facultyMapping'
+} from './merge/facultyMapping'
 export type { ScheduleWorkbookBranding } from './io/excelScheduleWorkbook'

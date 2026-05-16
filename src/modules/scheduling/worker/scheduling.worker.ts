@@ -3,8 +3,8 @@
 import { PipelineCancelledError } from './cancellation'
 import { slimClashReportForTransfer } from './clashReportTransfer'
 import { createProgressThrottle } from './progressThrottle'
-import type { PipelineProgressEvent, RunPipelineOptions } from './pipeline'
-import { buildPipelineExportBuffer, type PipelineExportKind } from './pipelineExports'
+import type { PipelineProgressEvent, RunPipelineOptions } from '../pipeline/run'
+import { buildPipelineExportBuffer, type PipelineExportKind } from '../pipeline/exports'
 import { slimScheduleForTransfer } from './scheduleTransfer'
 import {
   beginWorkerRun,
@@ -16,7 +16,7 @@ import {
   patchWorkerRunArtifacts,
   setWorkerRunArtifacts,
   setWorkerRunSnapshot,
-} from './workerRunState'
+} from './runState'
 
 export type WorkerRequest =
   | ({ type: 'run'; id: number; buffer: ArrayBuffer } & RunPipelineOptions)
@@ -26,8 +26,8 @@ export type WorkerRequest =
   | { type: 'getScheduleEntries'; id: number }
   | {
       type: 'syncArtifacts'
-      schedule?: import('./types').Schedule | null
-      snapshot?: import('./schedulingSnapshot').SchedulingSnapshot | null
+      schedule?: import('../types').Schedule | null
+      snapshot?: import('../merge/snapshot').SchedulingSnapshot | null
     }
 
 export type WorkerResponse =
@@ -35,18 +35,18 @@ export type WorkerResponse =
   | {
       type: 'result'
       id: number
-      validation: import('./types').ValidationResult
-      schedule: import('./types').Schedule | null
-      clashReport: import('./types').ClashReport | null
+      validation: import('../types').ValidationResult
+      schedule: import('../types').Schedule | null
+      clashReport: import('../types').ClashReport | null
       scheduleXlsx: ArrayBuffer | null
       clashXlsx: ArrayBuffer | null
       courseEmailsXlsx: ArrayBuffer | null
-      courseEmailsData: import('./types').CourseEmailGroup[] | null
+      courseEmailsData: import('../types').CourseEmailGroup[] | null
       stats: {
         studentCount: number
         courseCount: number
         sectionCount: number
-        scheduling: import('./engines/metrics').SchedulingStats | null
+        scheduling: import('../solver/metrics').SchedulingStats | null
       } | null
       schedule_export_blocked?: boolean
       schedule_export_block_reason?: string | null
@@ -55,11 +55,11 @@ export type WorkerResponse =
       /** Deferred — fetch via `getScheduleEntries` for timetable preview. */
       hasDeferredScheduleEntries: boolean
     }
-  | { type: 'snapshot'; id: number; snapshot: import('./schedulingSnapshot').SchedulingSnapshot }
+  | { type: 'snapshot'; id: number; snapshot: import('../merge/snapshot').SchedulingSnapshot }
   | {
       type: 'scheduleEntries'
       id: number
-      entries: import('./types').ScheduleEntry[]
+      entries: import('../types').ScheduleEntry[]
     }
   | { type: 'exportResult'; id: number; kind: PipelineExportKind; buffer: ArrayBuffer }
   | { type: 'cancelled'; id: number }
@@ -148,7 +148,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
 
   void (async () => {
     try {
-      const { runPipeline } = await import('./pipeline')
+      const { runPipeline } = await import('../pipeline/run')
       const emitProgress = createProgressThrottle((event) => {
         if (!isWorkerRunActive(id)) return
         const r: WorkerResponse = { type: 'progress', id, ...event }

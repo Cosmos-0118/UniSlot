@@ -1,8 +1,8 @@
-import { auditScheduleHardConstraints, parallelHardCap } from './scheduler'
-import { buildSchedule } from './engines/scheduleOutput'
-import { extractFacultyConstraints } from './preprocessing'
-import { cloneSchedulingSnapshot, type SchedulingSnapshot } from './schedulingSnapshot'
-import type { Schedule, Section } from './types'
+import { auditScheduleHardConstraints, parallelHardCap } from '../solver/scheduler'
+import { buildSchedule } from '../solver/scheduleOutput'
+import { extractFacultyConstraints } from '../preprocess/preprocessing'
+import { cloneSchedulingSnapshot, type SchedulingSnapshot } from './snapshot'
+import type { Schedule, Section } from '../types'
 
 export const PLANNING_FACULTY_PREFIX = 'Planning:'
 

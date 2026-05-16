@@ -1,5 +1,5 @@
 import { useContext } from 'react'
-import { SchedulingSessionContext } from './schedulingSessionContext'
+import { SchedulingSessionContext } from './context'
 
 export function useSchedulingSession() {
   const ctx = useContext(SchedulingSessionContext)

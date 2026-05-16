@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { Schedule, ScheduleEntry } from '../types'
-import { WEEKDAY_ORDER } from '../engines/timeModel'
+import { WEEKDAY_ORDER } from '../solver/timeModel'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {

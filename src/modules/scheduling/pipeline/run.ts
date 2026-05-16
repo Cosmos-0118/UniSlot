@@ -1,29 +1,29 @@
-import { loadAndValidate, parseExcelRows } from './parser'
+import { loadAndValidate, parseExcelRows } from '../parse/parser'
 import {
   applyDistinctFacultyPerSection,
   assignStudentsToSections,
   buildConflictGraph,
   computeSectionSplits,
   extractFacultyConstraints,
-} from './preprocessing'
-import { computeSchedulingStats, type SchedulingStats } from './engines/metrics'
-import { sumConflictGraphWeights } from './engines/conflictGraph'
-import { TOTAL_WEEKLY_SLOTS } from './engines/timeModel'
-import type { SchedulerProgressEvent } from './engines/localSearchSolver'
-import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from './types'
+} from '../preprocess/preprocessing'
+import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
+import { sumConflictGraphWeights } from '../solver/conflictGraph'
+import { TOTAL_WEEKLY_SLOTS } from '../solver/timeModel'
+import type { SchedulerProgressEvent } from '../solver/localSearchSolver'
+import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
 import {
   cloneStudents,
   deepCloneCourseSections,
   type SchedulingSnapshot,
-} from './schedulingSnapshot'
-import { throwIfAborted } from './cancellation'
+} from '../merge/snapshot'
+import { throwIfAborted } from '../worker/cancellation'
 import {
   buildClashXlsxBuffer,
   buildCourseEmailsXlsxBuffer,
   buildScheduleXlsxBuffer,
   type PipelineExportKind,
-} from './pipelineExports'
-import { readFirstSheetAsAoA } from './io/excelIo'
+} from './exports'
+import { readFirstSheetAsAoA } from '../io/excelIo'
 
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
   const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
@@ -101,7 +101,7 @@ export interface PipelineResult {
   scheduleXlsx: ArrayBuffer | null
   clashXlsx: ArrayBuffer | null
   courseEmailsXlsx: ArrayBuffer | null
-  courseEmailsData: import('./types').CourseEmailGroup[] | null
+  courseEmailsData: import('../types').CourseEmailGroup[] | null
   stats: {
     studentCount: number
     courseCount: number
@@ -239,7 +239,7 @@ export async function runPipeline(
   })
 
   const { localSearchSeedPlan, runScheduler, buildSchedule, computeClashReport } = await import(
-    './scheduler',
+    '../solver/scheduler',
   )
   throwIfAborted(signal)
 

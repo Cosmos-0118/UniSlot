@@ -1,7 +1,7 @@
 import { Droplet, Moon, Sun } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useTheme } from '@/contexts/useTheme'
+import { useTheme } from '@/contexts/theme/useTheme'
 import { cn } from '@/shared/utils/cn'
 
 type ThemeSwitcherProps = {

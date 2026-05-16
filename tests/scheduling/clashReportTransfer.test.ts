@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { slimClashReportForTransfer } from '../../src/modules/scheduling/clashReportTransfer'
+import { slimClashReportForTransfer } from '../../src/modules/scheduling/worker/clashReportTransfer'
 import type { ClashReport } from '../../src/modules/scheduling/types'
 
 describe('slimClashReportForTransfer', () => {

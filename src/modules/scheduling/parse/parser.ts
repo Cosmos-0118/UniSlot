@@ -3,7 +3,7 @@ import type {
   EnrollmentRow,
   Student,
   ValidationResult,
-} from './types'
+} from '../types'
 
 const COLUMN_MAPPINGS: Record<string, string> = {
   program: 'program',

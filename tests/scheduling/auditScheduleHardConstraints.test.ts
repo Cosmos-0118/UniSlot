@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { auditScheduleHardConstraints } from '../../src/modules/scheduling/engines/localSearchSolver'
+import { auditScheduleHardConstraints } from '../../src/modules/scheduling/solver/localSearchSolver'
 import type { Section } from '../../src/modules/scheduling/types'
 
 function makeSection(partial: Partial<Section> & Pick<Section, 'section_id' | 'course_code'>): Section {

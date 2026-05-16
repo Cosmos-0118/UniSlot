@@ -6,12 +6,12 @@ import type {
   ScheduleEntry,
   ValidationResult,
 } from '@/modules/scheduling/types'
-import type { SchedulingStats } from '@/modules/scheduling/engines/metrics'
-import type { PipelineProgressEvent, RunPipelineOptions } from '@/modules/scheduling/pipeline'
-import type { PipelineExportKind } from '@/modules/scheduling/pipelineExports'
-import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
-import { scheduleWithEntries } from '@/modules/scheduling/scheduleTransfer'
-import type { WorkerRequest, WorkerResponse } from '@/modules/scheduling/scheduling.worker'
+import type { SchedulingStats } from '@/modules/scheduling/solver/metrics'
+import type { PipelineProgressEvent, RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
+import type { PipelineExportKind } from '@/modules/scheduling/pipeline/exports'
+import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
+import { scheduleWithEntries } from '@/modules/scheduling/worker/scheduleTransfer'
+import type { WorkerRequest, WorkerResponse } from '@/modules/scheduling/worker/scheduling.worker'
 
 export interface PipelineOutput {
   validation: ValidationResult
@@ -35,7 +35,7 @@ export interface PipelineOutput {
 }
 
 function createWorker(): Worker {
-  return new Worker(new URL('../modules/scheduling/scheduling.worker.ts', import.meta.url), {
+  return new Worker(new URL('../../../modules/scheduling/worker/scheduling.worker.ts', import.meta.url), {
     type: 'module',
   })
 }
@@ -85,7 +85,7 @@ export function useUnislotWorker() {
   }, [])
 
   const warmupWorker = useCallback(() => {
-    void import('../modules/scheduling/pipeline').then(() => {
+    void import('@/modules/scheduling/pipeline/run').then(() => {
       ensureWorker()
     })
   }, [ensureWorker])

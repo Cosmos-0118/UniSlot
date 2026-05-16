@@ -1,19 +1,19 @@
-import type { ClashReport, EnrollmentRow, Schedule } from './types'
+import type { ClashReport, EnrollmentRow, Schedule } from '../types'
 
 export type PipelineExportKind = 'schedule' | 'clash' | 'courseEmails'
 
 export async function buildScheduleXlsxBuffer(schedule: Schedule): Promise<ArrayBuffer> {
-  const { scheduleToWorkbookBuffer } = await import('./io/excelScheduleWorkbook')
+  const { scheduleToWorkbookBuffer } = await import('../io/excelScheduleWorkbook')
   return scheduleToWorkbookBuffer(schedule)
 }
 
 export async function buildClashXlsxBuffer(clashReport: ClashReport): Promise<ArrayBuffer> {
-  const { clashReportToRichWorkbookBuffer } = await import('./io/excelClashReport')
+  const { clashReportToRichWorkbookBuffer } = await import('../io/excelClashReport')
   return clashReportToRichWorkbookBuffer(clashReport)
 }
 
 export async function buildCourseEmailsXlsxBuffer(rows: EnrollmentRow[]): Promise<ArrayBuffer> {
-  const { courseEmailsToWorkbookBuffer } = await import('./io/excelCourseEmails')
+  const { courseEmailsToWorkbookBuffer } = await import('../io/excelCourseEmails')
   return courseEmailsToWorkbookBuffer(rows)
 }
 

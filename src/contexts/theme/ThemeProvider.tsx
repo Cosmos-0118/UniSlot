@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ThemeContext, type Theme } from './theme-context'
+import { ThemeContext, type Theme } from './context'
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (updateCallback: () => void) => {

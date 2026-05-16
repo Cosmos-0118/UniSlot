@@ -1,17 +1,17 @@
-import { buildConflictGraph, extractFacultyConstraints } from './preprocessing'
-import { auditScheduleHardConstraints, parallelHardCap } from './scheduler'
-import { buildSchedule, computeClashReport } from './engines/scheduleOutput'
-import { computeSchedulingStats } from './engines/metrics'
-import { computeCourseEmailGroups, type PipelineResult, type RunPipelineOptions } from './pipeline'
-import { loadAndValidate, parseExcelRows, validateBusinessRules, buildCanonicalData } from './parser'
-import type { EnrollmentRow, Section, Student, ValidationResult } from './types'
-import { buildClashXlsxBuffer, buildScheduleXlsxBuffer } from './pipelineExports'
-import { readFirstSheetAsAoA } from './io/excelIo'
+import { buildConflictGraph, extractFacultyConstraints } from '../preprocess/preprocessing'
+import { auditScheduleHardConstraints, parallelHardCap } from '../solver/scheduler'
+import { buildSchedule, computeClashReport } from '../solver/scheduleOutput'
+import { computeSchedulingStats } from '../solver/metrics'
+import { computeCourseEmailGroups, type PipelineResult, type RunPipelineOptions } from '../pipeline/run'
+import { loadAndValidate, parseExcelRows, validateBusinessRules, buildCanonicalData } from '../parse/parser'
+import type { EnrollmentRow, Section, Student, ValidationResult } from '../types'
+import { buildClashXlsxBuffer, buildScheduleXlsxBuffer } from '../pipeline/exports'
+import { readFirstSheetAsAoA } from '../io/excelIo'
 import {
   cloneSchedulingSnapshot,
   deepCloneCourseSections,
   type SchedulingSnapshot,
-} from './schedulingSnapshot'
+} from './snapshot'
 
 function studentOtherCourses(students: Record<string, Student>, reg: string, currentCourse: string): string[] {
   const st = students[reg]

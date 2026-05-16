@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildConflictGraph } from '../../src/modules/scheduling/preprocessing'
-import { runScheduler } from '../../src/modules/scheduling/scheduler'
+import { buildConflictGraph } from '../../src/modules/scheduling/preprocess/preprocessing'
+import { runScheduler } from '../../src/modules/scheduling/solver/scheduler'
 import type { Section } from '../../src/modules/scheduling/types'
 
 function section(

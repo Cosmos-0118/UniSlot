@@ -1,4 +1,4 @@
-import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
+import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
 
 const STORAGE_KEY = 'unislot.savedRuns.v1'
 

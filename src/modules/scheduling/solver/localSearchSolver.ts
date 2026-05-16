@@ -1,4 +1,4 @@
-import { PipelineCancelledError } from '../cancellation'
+import { PipelineCancelledError } from '../worker/cancellation'
 import type { ConflictGraph, Section } from '../types'
 import {
   buildAdjacency,

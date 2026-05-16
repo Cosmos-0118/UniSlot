@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PipelineCancelledError, throwIfAborted } from '../../src/modules/scheduling/cancellation'
+import { PipelineCancelledError, throwIfAborted } from '../../src/modules/scheduling/worker/cancellation'
 
 describe('pipeline cancellation helpers', () => {
   it('throws PipelineCancelledError when signal is aborted', () => {

@@ -4,8 +4,8 @@ import {
   applyFacultyOverridesToSnapshot,
   isPlanningFacultyLabel,
   parseFacultyMappingTable,
-} from '../../src/modules/scheduling/facultyMapping'
-import type { SchedulingSnapshot } from '../../src/modules/scheduling/schedulingSnapshot'
+} from '../../src/modules/scheduling/merge/facultyMapping'
+import type { SchedulingSnapshot } from '../../src/modules/scheduling/merge/snapshot'
 import type { Section } from '../../src/modules/scheduling/types'
 
 function makeSnapshot(sections: Section[], slots: Record<string, number>): SchedulingSnapshot {

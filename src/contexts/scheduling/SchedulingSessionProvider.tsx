@@ -5,13 +5,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useSchedulingTerminalLog } from '@/hooks/useSchedulingTerminalLog'
-import { useUnislotWorker } from '@/hooks/useUnislotWorker'
+import { useSchedulingTerminalLog } from '@/features/scheduling/hooks/useSchedulingTerminalLog'
+import { useUnislotWorker } from '@/features/scheduling/hooks/useUnislotWorker'
 import {
   SchedulingSessionContext,
   type SchedulingSessionValue,
   type SchedulerViewMode,
-} from './schedulingSessionContext'
+} from './context'
 
 export function SchedulingSessionProvider({ children }: { children: ReactNode }) {
   const {

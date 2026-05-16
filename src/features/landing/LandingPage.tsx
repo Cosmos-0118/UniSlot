@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { CubesBackground } from '@/components/ui/CubesBackground'
 import { RetroBootOverlay } from '@/components/ui/RetroBootOverlay'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
-import { useTheme } from '@/contexts/useTheme'
+import { useTheme } from '@/contexts/theme/useTheme'
 import { cn } from '@/shared/utils/cn'
 
 /**

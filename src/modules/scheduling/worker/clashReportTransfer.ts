@@ -1,4 +1,4 @@
-import type { ClashReport } from './types'
+import type { ClashReport } from '../types'
 
 /** Reduces structured-clone cost while preserving UI preview needs (see ClashPreview). */
 export function slimClashReportForTransfer(report: ClashReport, maxRed = 80): ClashReport {

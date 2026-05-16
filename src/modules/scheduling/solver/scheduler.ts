@@ -1,6 +1,6 @@
 /**
- * Public scheduling API — implementation lives in `./engines/*`.
+ * Public scheduling API — implementation lives in sibling solver modules.
  */
-export { runScheduler, auditScheduleHardConstraints, localSearchSeedPlan, parallelHardCap } from './engines/localSearchSolver'
-export { buildSchedule, computeClashReport } from './engines/scheduleOutput'
-export { INDEX_TO_DAY, TOTAL_WEEKLY_SLOTS, SLOTS_PER_DAY } from './engines/timeModel'
+export { runScheduler, auditScheduleHardConstraints, localSearchSeedPlan, parallelHardCap } from './localSearchSolver'
+export { buildSchedule, computeClashReport } from './scheduleOutput'
+export { INDEX_TO_DAY, TOTAL_WEEKLY_SLOTS, SLOTS_PER_DAY } from './timeModel'

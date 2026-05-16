@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
-import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/facultyMapping'
-import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
-import { mergeLateEnrollmentIntoSnapshot, type MergeLateEnrollmentResult } from '@/modules/scheduling/lateEnrollmentMerge'
-import { buildCourseEmailsXlsxBuffer } from '@/modules/scheduling/pipelineExports'
-import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
+import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/merge/facultyMapping'
+import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
+import { mergeLateEnrollmentIntoSnapshot, type MergeLateEnrollmentResult } from '@/modules/scheduling/merge/lateEnrollment'
+import { buildCourseEmailsXlsxBuffer } from '@/modules/scheduling/pipeline/exports'
+import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
 import {
   deleteSavedRun,
   getSavedRun,
@@ -14,14 +14,14 @@ import {
   SAVED_RUNS_CHANGED_EVENT,
   updateSavedRunSnapshot,
   type SavedScheduleRun,
-} from '@/lib/savedRunsStorage'
-import { downloadArrayBuffer } from '@/lib/downloadArrayBuffer'
-import { FacultyMappingPanel } from '@/features/FacultyMappingPanel'
+} from '@/features/scheduling/storage/savedRunsStorage'
+import { downloadArrayBuffer } from '@/shared/lib/downloadArrayBuffer'
+import { FacultyMappingPanel } from '@/features/scheduling/FacultyMappingPanel'
 import {
   HardConstraintAuditNotice,
   ScheduleExportBlockedNotice,
   SchedulePreview,
-} from '@/features/schedulerResultUi'
+} from '@/features/scheduling/schedulerResultUi'
 import type { Schedule } from '@/modules/scheduling/types'
 
 function formatWhen(iso: string) {

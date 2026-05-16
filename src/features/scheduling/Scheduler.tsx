@@ -10,17 +10,17 @@ import {
   Users,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
-import { scheduleWithEntries } from '@/hooks/useUnislotWorker'
-import type { PipelineExportKind } from '@/modules/scheduling/pipelineExports'
+import { scheduleWithEntries } from '@/features/scheduling/hooks/useUnislotWorker'
+import type { PipelineExportKind } from '@/modules/scheduling/pipeline/exports'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/shared/utils/cn'
-import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
+import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
 import type { ValidationError } from '@/modules/scheduling/types'
-import { useSchedulingSession } from '../contexts/useSchedulingSession'
-import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
-import { createSavedRun } from '@/lib/savedRunsStorage'
-import { downloadArrayBuffer } from '@/lib/downloadArrayBuffer'
-import { FacultyMappingPanel } from '@/features/FacultyMappingPanel'
+import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
+import { ProcessingTerminal } from '@/components/ui/ProcessingTerminal'
+import { createSavedRun } from '@/features/scheduling/storage/savedRunsStorage'
+import { downloadArrayBuffer } from '@/shared/lib/downloadArrayBuffer'
+import { FacultyMappingPanel } from '@/features/scheduling/FacultyMappingPanel'
 import {
   ClashPreview,
   HardConstraintAuditNotice,

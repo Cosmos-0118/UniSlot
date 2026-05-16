@@ -6,8 +6,8 @@ import {
   facultyMappingTemplateCsv,
   listFacultyMappingRows,
   parseFacultyMappingTable,
-} from '@/modules/scheduling/facultyMapping'
-import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
+} from '@/modules/scheduling/merge/facultyMapping'
+import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
 import type { Schedule } from '@/modules/scheduling/types'
 
 type Props = {

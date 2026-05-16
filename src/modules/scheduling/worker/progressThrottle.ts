@@ -1,4 +1,4 @@
-import type { PipelineProgressEvent } from './pipeline'
+import type { PipelineProgressEvent } from '../pipeline/run'
 
 /** Limits worker→main progress posts (solver can emit hundreds per second). */
 export function createProgressThrottle(

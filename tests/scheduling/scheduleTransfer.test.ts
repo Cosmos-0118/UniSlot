@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scheduleWithEntries, slimScheduleForTransfer } from '../../src/modules/scheduling/scheduleTransfer'
+import { scheduleWithEntries, slimScheduleForTransfer } from '../../src/modules/scheduling/worker/scheduleTransfer'
 import type { Schedule, ScheduleEntry } from '../../src/modules/scheduling/types'
 
 const entry: ScheduleEntry = {

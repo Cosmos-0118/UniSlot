@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createRng } from '../../src/modules/scheduling/engines/rng'
+import { createRng } from '../../src/modules/scheduling/solver/rng'
 
 describe('createRng', () => {
   it('returns Math.random-compatible floats in [0,1) when unseeded', () => {
