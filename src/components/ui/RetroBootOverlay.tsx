@@ -45,16 +45,18 @@ export function RetroBootOverlay() {
           Promise.all([loadPromise, fontsPromise]),
           new Promise<void>((resolve) => setTimeout(resolve, capMs)),
         ])
-      } finally {
-        if (cancelled) return
-        await doubleRaf()
-        await waitMin()
-        if (cancelled) return
-        setPhase('fade')
-        window.setTimeout(() => {
-          if (!cancelled) setPhase('done')
-        }, 480)
+      } catch {
+        // Continue to fade phase even if fonts fail to load
       }
+
+      if (cancelled) return
+      await doubleRaf()
+      await waitMin()
+      if (cancelled) return
+      setPhase('fade')
+      window.setTimeout(() => {
+        if (!cancelled) setPhase('done')
+      }, 480)
     }
 
     void run()

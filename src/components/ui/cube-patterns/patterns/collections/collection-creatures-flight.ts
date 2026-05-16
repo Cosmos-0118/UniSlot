@@ -1,219 +1,337 @@
 import type { CubePattern, PatternContext } from '../../types'
-import { clamp01, fract01, hash2i, noise2D, softBlob, speed, wrapHue } from '../_shared'
+import {
+  clamp01, fbm, warpedFbm, ridgedFbm, voronoi,
+  smoothstep, lerp, speed, wrapHue, polar, hash2i, fract01
+} from '../_shared'
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COLLECTION: Creatures & Flight — 10 patterns
+// Organic motion, flocking, bioluminescence, and elemental creatures.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Murmuration flock — swirling, dense cloud of coordinated particles. */
 export const patternStarlingMurmuration: CubePattern = {
   id: 'starling-murmuration',
   title: 'Starling Murmuration',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const u = t * speed(reduced, 0.55, 0.15) + col * 0.008 - row * 0.005
-    const curl =
-      Math.sin(nx * 9 + u + Math.cos(ny * 7 + u * 0.5) * 2) +
-      Math.cos(ny * 11 - u * 0.8 + Math.sin(nx * 5) * 1.5)
-    const band = clamp01(1 - Math.abs(ny - 0.45 - Math.sin(nx * 4 + u) * 0.12) * 14)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.6, 0.18)
+
+    // Swirling flock shape — heavily domain-warped noise forms organic cloud
+    const flock = warpedFbm(nx * 4, ny * 3, T * 0.5, 2.2)
+    // Second warp layer for internal turbulence
+    const turbulence = warpedFbm(nx * 6 + flock, ny * 5 - flock * 0.5, T * 0.3, 1.5)
+
+    // Dense center, fading edges
+    const density = smoothstep(-0.1, 0.5, flock) * smoothstep(-0.3, 0.3, turbulence)
+
+    // Individual bird flicker
+    const flicker = hash2i(col, row) > 0.4 ? 1 : 0.7
+    const birdDot = clamp01(fbm(nx * 12 + T * 0.8, ny * 10, 2) + turbulence * 0.6) * density * flicker
+
+    // Sunset sky behind
+    const sky = smoothstep(1.0, 0.0, ny) * (1 - density * 0.8)
+
     return {
-      lift: ((curl + 2) * 0.7 + band) * (reduced ? 0.5 : 1),
-      hue: 230 + curl * 25,
-      sat: 35 + band * 45,
-      light: 18 + band * 35 + curl * 8,
+      lift: (density * 3.5 + birdDot * 2) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(20, 220, density) + sky * 15),
+      sat: lerp(60, 30, density),
+      light: lerp(55, 12, density),
     }
   },
 }
 
+/** Long migration arc with rippling wing motion along a curved path. */
 export const patternArcticTernArc: CubePattern = {
   id: 'arctic-tern-arc',
   title: 'Arctic Tern Migration',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const arc = Math.sin((nx + ny) * 4 - t * speed(reduced, 0.4, 0.12))
-    const coast = Math.sin(nx * 2.1 + t * speed(reduced, 0.08, 0.025)) * 0.06
-    const ribbon = clamp01(
-      1 -
-        Math.abs(nx * 0.72 + ny - 0.88 - Math.sin(t * speed(reduced, 0.25, 0.08) + nx * 1.5) * 0.08 - coast) *
-          9
-    )
-    const wing = Math.sin(nx * 60 - t * speed(reduced, 3.5, 0.9)) * ribbon * 0.5 + 0.5
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.12)
+
+    // Migration path — curved S-shape across screen
+    const pathY = 0.5 + Math.sin(nx * 3 + T * 0.3) * 0.15
+    const pathDist = Math.abs(ny - pathY)
+    const path = smoothstep(0.12, 0.0, pathDist)
+
+    // V-formation dots along path
+    const formationPhase = fract01(nx * 8 - T * 0.5)
+    const vShape = smoothstep(0.06, 0.0, pathDist - Math.abs(formationPhase - 0.5) * 0.08)
+
+    // Wing beat ripple
+
+
+    // Open sky
+    const mist = fbm(nx * 6 + T * 0.1, ny * 3, 4) * 0.6 + 0.25
+    const clouds = clamp01(fbm(nx * 5 + T * 0.1, ny * 3, 4) - 0.2)
+
     return {
-      lift: ((arc + 1) * 1.05 + ribbon * 2.4 + wing * 0.35) * (reduced ? 0.5 : 1),
-      hue: wrapHue(202 + arc * 18 + ribbon * 12),
-      sat: 48 + ribbon * 38 + wing * 12,
-      light: 68 + ribbon * 25 - arc * 8 + wing * 10,
+      lift: (path * 3 + vShape * 2 + clouds) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(200, 215, mist) + path * 10),
+      sat: lerp(40, 65, clamp01(path + clouds)),
+      light: lerp(65, 85, mist) * (1 - path * 0.6),
     }
   },
 }
 
+/** Rapid iridescent shimmer with rainbow color cycling — jewel-like. */
 export const patternHummingbirdJewel: CubePattern = {
   id: 'hummingbird-jewel',
   title: 'Hummingbird Iridescence',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const core = softBlob(nx, ny, 0.5 + Math.sin(t * speed(reduced, 2.5, 0.6)) * 0.2, 0.48, 0.08, 0.4)
-    const irid = Math.sin(nx * 30 + ny * 25 + t * speed(reduced, 6, 1.5))
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 1.0, 0.3)
+
+    // Iridescent surface — angle-dependent color shift
+    const { angle, radius } = polar(nx, ny)
+    const iridescentWave = ridgedFbm(angle * 2 / Math.PI + T * 0.5, radius * 5, 3)
+
+    // Feather texture — fine layered structure
+    const featherTex = fbm(nx * 10 + T * 0.5, ny * 10, 3) * 0.2
+    const feather = smoothstep(-0.2, 0.5, featherTex)
+
+    // Rapid color cycling like real iridescence
+    const colorShift = (iridescentWave + nx * 2 + ny + T * 0.8) * 2
+
+    // Central jewel glow
+    const jewel = smoothstep(0.4, 0.0, radius) * 0.5
+
     return {
-      lift: (core * 3.5 + (irid + 1) * 0.5) * (reduced ? 0.45 : 1),
-      hue: wrapHue(280 + irid * 120 + t * speed(reduced, 40, 8)),
-      sat: 75 + core * 20,
-      light: 40 + core * 35 + irid * 15,
+      lift: (feather * 3 + iridescentWave * 2 + jewel * 2) * (reduced ? 0.45 : 1),
+      hue: wrapHue(140 + Math.sin(colorShift) * 60),
+      sat: lerp(70, 100, clamp01(feather + iridescentWave * 0.5)),
+      light: lerp(20, 65, clamp01(feather + jewel)),
     }
   },
 }
 
+/** Flowing stream of warm orange bodies with wing patterns. */
 export const patternMonarchRiver: CubePattern = {
   id: 'monarch-river',
   title: 'Monarch River',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const flow = ny - t * speed(reduced, 0.14, 0.048) + Math.sin(nx * 8 + col * 0.02) * 0.045
-    const fract = fract01(flow)
-    const wing = Math.sin(fract * 50 + nx * 22) * 0.5 + 0.5
-    const vein = Math.sin(nx * 90 + fract * 30) * 0.08
-    const sky = clamp01(1 - ny * 1.15)
-    const breeze = noise2D(nx * 1.5, ny, t * speed(reduced, 0.25, 0.08), 1.4)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.5, 0.15)
+
+    // River-like flow with domain warping
+    const flow = warpedFbm(nx * 3, ny * 5 - T * 0.4, T * 0.3, 1.8)
+    const stream = smoothstep(-0.1, 0.4, flow)
+
+    // Wing patterns — Voronoi with warm veins
+    const v = voronoi(nx * 8 + T * 0.05, ny * 8 - T * 0.02)
+    const wingVeins = smoothstep(0.12, 0.03, v.dist2 - v.dist1) * stream
+    const wingCell = smoothstep(0.25, 0.08, v.dist1) * stream
+
+    // Green canopy background
+
+
     return {
-      lift: (wing * 2.1 + 0.75 + sky * 0.35 + Math.abs(vein) * 2) * (reduced ? 0.5 : 1),
-      hue: wrapHue(24 + wing * 14 + breeze * 8 + sky * 8),
-      sat: 72 + wing * 18 + sky * 10,
-      light: 36 + wing * 28 + sky * 22 + breeze * 6,
+      lift: (stream * 3.5 + wingVeins * 2 + wingCell) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(120, 25, stream) + wingVeins * 10),
+      sat: lerp(45, 90, stream),
+      light: lerp(18, 60, clamp01(stream + wingCell * 0.3)),
     }
   },
 }
 
+/** Twinkling fireflies emerging from dark grass — scattered bright points. */
 export const patternFireflyMeadow: CubePattern = {
   id: 'firefly-meadow',
   title: 'Firefly Meadow',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const h = hash2i(col, row)
-    const blink = Math.sin(t * speed(reduced, 3 + h * 2, 0.8 + h * 0.3) + h * 6)
-    const grass = noise2D(nx, ny, t * speed(reduced, 0.15, 0.05), 1.8)
-    const meadow = clamp01(0.35 + grass * 0.4)
-    const fly = blink > 0.88 && meadow > 0.25 && meadow < 0.82
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 1.0, 0.3)
+
+    // Meadow ground — dark grass texture
+    const grass = fbm(nx * 10, ny * 8 + T * 0.05, 4)
+    const meadow = lerp(0.08, 0.18, clamp01(grass * 0.5 + 0.5))
+
+    // Firefly positions — Voronoi cell centers as potential fireflies
+    const v = voronoi(nx * 12 + Math.sin(T * 0.3) * 0.5, ny * 10 - Math.cos(T * 0.25) * 0.3)
+    const flyDot = smoothstep(0.06, 0.0, v.dist1)
+
+    // Only some cells have active fireflies (filtered by hash)
+    const cellId = hash2i(Math.floor((nx + Math.sin(T * 0.3) * 0.5) * 12), Math.floor((ny - Math.cos(T * 0.25) * 0.3) * 10))
+    const isActive = cellId > 0.55
+
+    // Blink pattern — each firefly blinks at its own rate
+    const blink = Math.sin(T * (2 + cellId * 3) + cellId * 10)
+    const glowing = blink > 0.3 && isActive
+
+    const firefly = flyDot * (glowing ? 1 : 0)
+    const glow = firefly * 0.3 * smoothstep(0.15, 0.0, v.dist1)  // soft halo
+
     return {
-      lift: fly ? 3.2 * (reduced ? 0.55 : 1) : (grass + 1) * 0.7,
-      hue: fly ? 58 : 125,
-      sat: fly ? 100 : 45,
-      light: fly ? 88 : 12 + grass * 20,
+      lift: (firefly * 4 + glow * 2 + grass * 0.3) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(130, 55, firefly) + grass * 10),
+      sat: lerp(40, 100, firefly),
+      light: lerp(meadow * 100, 90, clamp01(firefly + glow)),
     }
   },
 }
 
+/** Rising phoenix — upward flowing embers and wing-shaped heat distortion. */
 export const patternPhoenixEmber: CubePattern = {
   id: 'phoenix-ember',
   title: 'Phoenix Ember Rise',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const rise = Math.sin(nx * 14 + t * speed(reduced, 1.8, 0.45)) * (1 - ny)
-    const heat = Math.exp(-((nx - 0.5) ** 2 + (ny - 0.85) ** 2) * 30)
-    const ash = noise2D(nx, ny * 2, t * speed(reduced, 0.5, 0.15), 2)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.7, 0.2)
+
+    // Rising heat distortion — domain warped upward
+    const heat = warpedFbm(nx * 4, ny * 2 + T * 0.6, T * 0.4, 2.0)
+
+    // Wing shape — mirrored ridged noise
+    const mirrorX = Math.abs(nx - 0.5) * 2
+    const wing = ridgedFbm(mirrorX * 3 + T * 0.2, ny * 4 - T * 0.5, 3)
+    const wingShape = smoothstep(-0.2, 0.6, wing) * smoothstep(0.9, 0.3, ny)
+
+    // Ember particles rising
+    const embers = clamp01(fbm(nx * 15 - T * 0.3, ny * 10 + T * 2, 2) - 0.55) * 2
+    const emberGlow = embers * smoothstep(0.8, 0.1, ny)
+
+    const fire = clamp01(wingShape * 0.6 + heat * 0.3 + emberGlow * 0.4)
+
     return {
-      lift: (rise * 1.5 + heat * 3 + (ash + 1) * 0.4) * (reduced ? 0.5 : 1),
-      hue: wrapHue(12 + rise * 25 + heat * 20),
-      sat: 80 + heat * 15,
-      light: 15 + rise * 30 + heat * 55,
+      lift: (fire * 5 + emberGlow * 3) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(0, 50, fire)),
+      sat: lerp(80, 100, fire),
+      light: lerp(5, 70, fire),
     }
   },
 }
 
+/** Dragonfly wings with iridescent sheen over a wetland surface. */
 export const patternDragonflyWetland: CubePattern = {
   id: 'dragonfly-wetland',
   title: 'Dragonfly Wetland',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const surface = 0.58 + Math.sin(nx * 4 + t * speed(reduced, 0.28, 0.09)) * 0.04
-    const underwater = ny > surface
-    const shoreBand = clamp01(1 - Math.abs(ny - surface) * 55)
-    const reed = Math.sin(nx * 35 + t * speed(reduced, 0.42, 0.12)) * shoreBand * (underwater ? 0 : 1)
-    const caust = underwater ? Math.sin(nx * 32 + ny * 28 - t * speed(reduced, 0.65, 0.18)) * 0.5 + 0.5 : 0
-    const body = softBlob(nx, ny, 0.48 + Math.sin(t * speed(reduced, 0.9, 0.25)) * 0.12, surface - 0.08, 0.06, 0.42)
-    const uWater = underwater ? 1 : 0
-    const wing = Math.abs(Math.sin(nx * 62 + ny * 52 - t * speed(reduced, 8, 2))) * (1 - uWater * 0.35)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.5, 0.15)
+
+    // Water surface
+    const surface = 0.55
+    const isWater = ny > surface
+
+    // Reeds and lily pads (above water)
+    const reeds = ridgedFbm(nx * 8 + T * 0.1, ny * 2, 2) * smoothstep(surface + 0.05, surface - 0.1, ny)
+
+    // Water caustics and ripples
+    const caustics = ridgedFbm(nx * 8 + T * 0.3, ny * 6 - T * 0.2, 3) * (isWater ? 1 : 0)
+
+    // Dragonfly wing shimmer — Voronoi veined wings
+    const v = voronoi(nx * 14 + Math.sin(T * 2) * 0.3, ny * 12)
+    const wingVein = smoothstep(0.08, 0.02, v.dist2 - v.dist1)
+    const wingArea = smoothstep(0.45, 0.35, ny) * smoothstep(0.25, 0.45, ny)
+    const wing = wingVein * wingArea
+
+    // Iridescent wing color
+    const iriPhase = nx * 5 + ny * 3 + T * 2
+
     return {
-      lift: (reed * 1.4 + wing * 2.1 + body * 2.2 + caust * 0.9 + 0.55) * (reduced ? 0.5 : 1),
-      hue: wrapHue(168 + wing * 45 + caust * 25 + uWater * 15),
-      sat: 42 + reed * 28 + body * 25,
-      light: underwater ? 22 + caust * 35 : 48 + wing * 28 + reed * 12,
+      lift: (wing * 3 + reeds * 2 + caustics * 1.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(wing > 0.1 ? iriPhase * 60 + 120 : lerp(140, 200, isWater ? 1 : 0)),
+      sat: lerp(35, 80, clamp01(wing + caustics * 0.3)),
+      light: lerp(isWater ? 15 : 30, 65, clamp01(wing + reeds * 0.3 + caustics * 0.4)),
     }
   },
 }
 
+/** Peaceful misty lake with soft reflections — low contrast, dreamy. */
 export const patternSwanLakeMist: CubePattern = {
   id: 'swan-lake-mist',
   title: 'Swan Lake Mist',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const mist = noise2D(nx * 2, ny, t * speed(reduced, 0.12, 0.04), 1.0)
-    const swan = softBlob(nx, ny, 0.5, 0.52 + Math.sin(t * speed(reduced, 0.2, 0.06)) * 0.05, 0.2, 0.55)
-    const reflect = softBlob(nx, ny, 0.5, 0.58 - Math.sin(t * speed(reduced, 0.2, 0.06)) * 0.04, 0.16, 0.5) * 0.55
-    const ripple = Math.sin(nx * 30 + t * speed(reduced, 1.1, 0.3)) * (1 - ny) * 0.15
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.25, 0.08)
+
+    // Mist layers — multiple fBm at different scales
+    const clouds = fbm(nx * 12 + T * 0.1, ny * 6, 4)
+    const smoke = fbm(nx * 8 - T * 0.2, ny * 8 - T * 0.4, 3)
+    const mist = clamp01(clouds * 0.6 + smoke * 0.4 + 0.4)
+
+    // Water surface with gentle ripples
+    const waterLine = 0.55
+    const isWater = ny > waterLine
+    const ripple = fbm(nx * 12 + T * 0.2, (ny - waterLine) * 20, 2) * (isWater ? 0.1 : 0)
+
+    // Reflection (mirror of mist, dimmer)
+    const reflectNy = waterLine - (ny - waterLine)
+    const reflection = isWater ? fbm(nx * 3 + T * 0.1, reflectNy * 2, 3) * 0.3 + 0.3 : 0
+
     return {
-      lift: ((mist + 1) * 0.6 + swan * 2 + reflect * 0.9 + ripple) * (reduced ? 0.45 : 1),
-      hue: wrapHue(208 + mist * 18 + reflect * 25),
-      sat: 14 + swan * 28 + reflect * 12,
-      light: 76 + mist * 14 - swan * 8 + reflect * 8,
+      lift: (mist * 2 + ripple * 1.5 + reflection) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(205, 220, mist) + ripple * 15),
+      sat: lerp(10, 30, mist),
+      light: lerp(60, 88, mist),
     }
   },
 }
 
+/** Colorful kites scattered across a bright sky — Voronoi cells with varied hues. */
 export const patternKiteFestival: CubePattern = {
   id: 'kite-festival',
   title: 'Kite Festival',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const h = hash2i(col + 3, row + 7)
-    const h2 = hash2i(col + 11, row - 5)
-    const drift = fract01(nx * 0.22 + ny * 0.18 + t * speed(reduced, 0.1, 0.032) + h * 0.37)
-    const lane = Math.floor(h2 * 4)
-    const cx = 0.06 + fract01(lane * 0.17 + drift * 0.73 + h * 0.19) * 0.78
-    const cy = fract01(0.08 + lane * 0.22 + drift * 0.55 + h * 0.11)
-    const kite = softBlob(nx, ny, cx, cy, 0.07 + h * 0.04, 0.38)
-    const tail = Math.sin(nx * 25 - ny * 18 + t * speed(reduced, 1.8, 0.45)) * kite * 0.4
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.35, 0.1)
+
+    // Kites as Voronoi cells, each with unique color
+    const drift = Math.sin(T * 0.4) * 0.15
+    const v = voronoi(nx * 5 + drift, ny * 4 - T * 0.1)
+    const kiteBody = smoothstep(0.2, 0.05, v.dist1)
+
+    // Kite tail — trailing ribbon from each cell
+    const tailPhase = fract01(ny * 6 + nx * 2 - T * 0.8)
+    const tail = smoothstep(0.08, 0.0, Math.abs(tailPhase - 0.5) - 0.3) * (1 - kiteBody) * smoothstep(0.3, 0.7, ny)
+
+    // Each kite gets a unique vibrant color
+    const kiteColor = hash2i(Math.floor((nx + drift) * 5), Math.floor((ny - T * 0.1) * 4))
+
+    // Blue sky behind
+    const sky = smoothstep(1.0, 0.0, ny) * 0.4
+
+    // Wind effect
+    const wind = fbm(nx * 3 + T * 0.3, ny * 2, 2) * 0.1
+
     return {
-      lift: (kite * 3.2 + tail + 0.45) * (reduced ? 0.5 : 1),
-      hue: wrapHue(h * 280 + lane * 22 + t * speed(reduced, 22, 5.5)),
-      sat: 65 + kite * 30,
-      light: 48 + kite * 32 + tail * 15,
+      lift: (kiteBody * 4 + tail * 2 + wind) * (reduced ? 0.5 : 1),
+      hue: wrapHue(340 + kiteColor * 80),
+      sat: lerp(50, 95, clamp01(kiteBody + tail)),
+      light: lerp(65, 75, sky) * (1 - kiteBody * 0.15) + kiteBody * 20 + tail * 10,
     }
   },
 }
 
+/** Dark storm with dramatic lightning bolt flashes and brooding clouds. */
 export const patternRavenStorm: CubePattern = {
   id: 'raven-storm',
   title: 'Raven Storm',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const jitter = hash2i(col, row) * 0.04
-    const bolt =
-      Math.sin(nx * 88 + ny * 11 + t * speed(reduced, 12, 3)) > 0.97 - jitter ? 1 : 0
-    const cloud = noise2D(nx, ny, t * speed(reduced, 0.35, 0.1), 1.4)
-    const flock = Math.sin(nx * 22 + ny * 18 - t * speed(reduced, 1.2, 0.3))
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.6, 0.18)
+
+    // Storm clouds — dark, turbulent fBm
+    const clouds = warpedFbm(nx * 3, ny * 2, T * 0.3, 1.8)
+    const stormDark = smoothstep(0.3, -0.3, clouds)
+
+    // Lightning bolt — ridged noise concentrated in vertical bands
+    const boltPhase = Math.sin(T * 0.8) * 0.3
+    const boltX = 0.5 + boltPhase
+    const bolt = ridgedFbm((nx - boltX) * 15 + T * 5, ny * 8, 3)
+    const boltVisible = smoothstep(0.6, 0.95, bolt) * smoothstep(0.1, 0.0, Math.abs(nx - boltX) - 0.15)
+
+    // Lightning flash — illuminates clouds periodically
+    const flash = smoothstep(0.8, 1.0, Math.sin(T * 3 + Math.sin(T * 7) * 2)) * 0.4
+
+    // Rain texture
+    const rain = clamp01(fbm(nx * 12, ny * 5 + T * 6, 2) - 0.6) * 0.3
+
     return {
-      lift: (bolt * 4 + (flock + 1) * 0.9 + (cloud + 1) * 0.35) * (reduced ? 0.5 : 1),
-      hue: 265 + bolt * 40,
-      sat: 25 + bolt * 70 + flock * 15,
-      light: 12 + bolt * 80 + cloud * 10,
+      lift: (boltVisible * 5 + stormDark * 2 + rain) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(240, 280, clouds * 0.5 + 0.5) + boltVisible * 40),
+      sat: lerp(25, 70, clamp01(boltVisible + flash)),
+      light: lerp(6, 90, clamp01(boltVisible + flash + rain * 0.2)),
     }
   },
 }
-
-export const CREATURES_FLIGHT_PATTERNS: readonly CubePattern[] = [
-  patternStarlingMurmuration,
-  patternArcticTernArc,
-  patternHummingbirdJewel,
-  patternMonarchRiver,
-  patternFireflyMeadow,
-  patternPhoenixEmber,
-  patternDragonflyWetland,
-  patternSwanLakeMist,
-  patternKiteFestival,
-  patternRavenStorm,
-]

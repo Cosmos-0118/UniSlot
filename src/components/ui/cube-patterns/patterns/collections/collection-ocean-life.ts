@@ -1,211 +1,315 @@
 import type { CubePattern, PatternContext } from '../../types'
-import { clamp01, fract01, noise2D, softBlob, speed, wrapHue } from '../_shared'
+import {
+  clamp01, fbm, warpedFbm, ridgedFbm, voronoi,
+  smoothstep, lerp, speed, wrapHue, polar, hash2i, fract01
+} from '../_shared'
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COLLECTION: Ocean Life — 10 patterns
+// Undersea environments: currents, bioluminescence, Voronoi coral, caustics.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Deep ocean with a slow-moving pressure wave and distant whale song pulses. */
 export const patternWhaleSongDepth: CubePattern = {
   id: 'whale-song-depth',
   title: 'Whale Song Depth',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const slow = t * speed(reduced, 0.12, 0.04)
-    const body = softBlob(nx, ny, 0.5 + Math.sin(slow) * 0.15, 0.45 + Math.cos(slow * 0.7) * 0.08, 0.22, 0.5)
-    const fluke = Math.sin(nx * 20 + ny * 3 - slow * 2) * 0.15
-    const ripple = Math.sin(nx * 14 + ny * 2.5 - slow * 3 + col * 0.04) * 0.08
-    const deep = noise2D(nx, ny, slow, 0.8)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.35, 0.1)
+
+    // Deep pressure waves
+    const pressure = warpedFbm(nx * 2.5, ny * 2 + T * 0.1, T * 0.4, 1.8)
+    // Sound wave ripples — concentric expanding rings
+    const cx = 0.5 + Math.sin(T * 0.3) * 0.2, cy = 0.5
+    const dist = Math.sqrt((nx - cx) ** 2 + (ny - cy) ** 2)
+    const songPulse = smoothstep(0.02, 0.0, Math.abs(fract01(dist * 8 - T * 0.6) - 0.5) - 0.4)
+
+    // Depth gradient
+    const depth = smoothstep(0.0, 1.0, ny)
+    const intensity = clamp01(pressure * 0.4 + songPulse * 0.6 + 0.1)
+
     return {
-      lift: (body * 3.2 + (deep + 1) * 0.6 + fluke + ripple + 1) * (reduced ? 0.55 : 1),
-      hue: 215 + body * 25,
-      sat: 55 + body * 35,
-      light: 8 + body * 35 + deep * 8,
+      lift: (intensity * 3.5 + songPulse * 2) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(220, 195, depth) - pressure * 15),
+      sat: lerp(45, 75, intensity),
+      light: lerp(6, 40, intensity),
     }
   },
 }
 
+/** Translucent jellyfish bells pulsing with Voronoi-based body structure. */
 export const patternJellyfishBloom: CubePattern = {
   id: 'jellyfish-bloom',
   title: 'Jellyfish Bloom',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const cx = 0.5 + Math.sin(t * speed(reduced, 0.35, 0.1)) * 0.25
-    const bell = softBlob(nx, ny, cx, 0.25, 0.18, 0.55)
-    const pulse = Math.sin(t * speed(reduced, 2.2, 0.6) + ny * 10) * 0.5 + 0.5
-    const tent = Math.abs(Math.sin(nx * Math.min(48, cols * 0.35) + t * speed(reduced, 1.5, 0.4))) * (1 - ny) * pulse
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.6, 0.18)
+
+    // Multiple jellyfish as Voronoi cells
+    const v = voronoi(nx * 4 + Math.sin(T * 0.3) * 0.3, ny * 3 - T * 0.15)
+    const bell = smoothstep(0.35, 0.08, v.dist1)
+    // Inner bell translucency
+    const inner = smoothstep(0.2, 0.05, v.dist1)
+
+    // Pulsing motion
+    const pulse = Math.sin(T * 2.5 + v.dist1 * 10) * 0.5 + 0.5
+    // Tentacle trails below each bell
+    const tentacle = clamp01(fbm(nx * 8 + T * 0.4, ny * 8 - T * 0.6, 3)) * (1 - bell) * smoothstep(0.2, 0.5, ny)
+
+    const glow = clamp01(bell * pulse + inner * 0.3 + tentacle * 0.5)
+
     return {
-      lift: (bell * 3 + tent * 2) * (reduced ? 0.5 : 1),
-      hue: 285 + bell * 40,
-      sat: 70 + tent * 25,
-      light: 35 + bell * 40 + tent * 15,
+      lift: (glow * 4 + tentacle * 2) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(270, 310, bell) + pulse * 15),
+      sat: lerp(50, 85, glow),
+      light: lerp(15, 65, glow),
     }
   },
 }
 
+/** Tall kelp forest swaying in current with vertical light shafts. */
 export const patternKelpCathedral: CubePattern = {
   id: 'kelp-cathedral',
   title: 'Kelp Cathedral',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const sway = Math.sin(nx * 8 + t * speed(reduced, 0.9, 0.25)) * (1 - ny)
-    const strand = Math.sin(nx * 25 + ny * 6 - t * speed(reduced, 0.5, 0.15))
-    const lightShaft = Math.exp(-Math.abs(nx - 0.52) * 18) * (1 - ny * 0.3)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.5, 0.15)
+
+    // Kelp strands — vertical ridged noise swaying
+    const sway = Math.sin(T * 0.8 + nx * 4) * 0.06
+    const kelpBody = smoothstep(0.12, 0.0, Math.abs(ridgedFbm((nx + sway) * 8, ny * 4, 3)))
+
+    // Light shafts from above
+    const lightShaft = smoothstep(0.3, 0.9, fbm(nx * 10 - T * 0.3, ny * 2 + T * 0.1, 2)) * smoothstep(1.0, 0.0, ny)
+
+    // Particulate in water
+    const particles = clamp01(fbm(nx * 10 + T * 0.3, ny * 10 - T * 0.5, 2) - 0.5) * 0.5
+
     return {
-      lift: ((sway + strand) * 0.5 + 1) * 2.2 * (reduced ? 0.45 : 1),
-      hue: 145 + strand * 15,
-      sat: 50 + lightShaft * 30,
-      light: 18 + lightShaft * 45 + ny * 25,
+      lift: (kelpBody * 3 + lightShaft * 2 + particles) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(120, 150, kelpBody) + lightShaft * 30),
+      sat: lerp(40, 70, kelpBody),
+      light: lerp(12, 55, clamp01(kelpBody * 0.4 + lightShaft * 0.6 + particles * 0.2)),
     }
   },
 }
 
+/** Bioluminescent wave breaking on shore — bright crests, dark troughs. */
 export const patternBiolumTide: CubePattern = {
   id: 'biolum-tide',
   title: 'Bioluminescent Tide',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const wave = Math.sin(nx * 6 - t * speed(reduced, 0.8, 0.25))
-    const shore = clamp01(1 - ny * 1.4 + wave * 0.15)
-    const spark = noise2D(nx * 3, ny * 3, t * speed(reduced, 2.5, 0.7), 2.2)
-    const bloom = shore * clamp01((spark + 0.35) * 1.1) * 1.65
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.7, 0.2)
+
+    // Shore waves
+    const wavePhase = nx * 6 - T * 0.8 + fbm(ny * 4, T * 0.1, 2) * 0.5
+    const wave = smoothstep(-0.1, 0.3, Math.sin(wavePhase))
+    // Foam/crest line
+    const crest = smoothstep(0.85, 0.95, Math.sin(wavePhase))
+
+    // Bioluminescent plankton — concentrated near shore
+    const shoreProx = smoothstep(0.8, 0.3, ny)
+    const ocean = fbm(nx * 8 + T * 0.1, ny * 8 - T * 0.2, 3)
+    const glow = clamp01(ocean + 0.2) * shoreProx * wave
+
     return {
-      lift: (1 + bloom) * 2.4 * (reduced ? 0.5 : 1),
-      hue: 175 + spark * 60,
-      sat: 75 + bloom * 20,
-      light: 12 + bloom * 55 + shore * 15,
+      lift: (glow * 4 + crest * 3 + wave) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(180, 150, glow) + crest * 30),
+      sat: lerp(60, 100, glow),
+      light: lerp(5, 65, clamp01(glow + crest * 0.5)),
     }
   },
 }
 
+/** Graceful manta rays gliding — domain warped wing shapes. */
 export const patternMantaBallet: CubePattern = {
   id: 'manta-ballet',
   title: 'Manta Ray Ballet',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const u = t * speed(reduced, 0.45, 0.12)
-    const wingL = softBlob(nx, ny, 0.35 + Math.sin(u) * 0.1, 0.5, 0.2, 0.45)
-    const wingR = softBlob(nx, ny, 0.65 - Math.sin(u * 1.1) * 0.1, 0.5, 0.2, 0.45)
-    const spots = Math.sin(nx * 50 + ny * 40 + u * 3) > 0.85 ? 1 : 0
-    const m = Math.max(wingL, wingR)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.12)
+
+    // Ocean background
+    const ocean = warpedFbm(nx * 3, ny * 2.5, T * 0.2, 1.2) * 0.3
+
+    // Two manta silhouettes as warped blobs
+    const m1x = 0.35 + Math.sin(T * 0.5) * 0.15
+    const m1y = 0.45 + Math.cos(T * 0.35) * 0.1
+    const m2x = 0.65 - Math.sin(T * 0.4) * 0.12
+    const m2y = 0.55 + Math.sin(T * 0.45) * 0.08
+
+    // Wing-like warp — stretch horizontally and compress vertically
+    const warp1 = fbm((nx - m1x) * 8 + T * 0.3, (ny - m1y) * 16, 2)
+    const body1 = smoothstep(0.25, 0.0, Math.sqrt(((nx - m1x + warp1 * 0.03) * 2.5) ** 2 + ((ny - m1y) * 5) ** 2))
+
+    const warp2 = fbm((nx - m2x) * 8 - T * 0.2, (ny - m2y) * 16, 2)
+    const body2 = smoothstep(0.25, 0.0, Math.sqrt(((nx - m2x + warp2 * 0.03) * 2.5) ** 2 + ((ny - m2y) * 5) ** 2))
+
+    const manta = Math.max(body1, body2)
+    const intensity = clamp01(manta + ocean)
+
     return {
-      lift: (m * 2.8 + spots * 1.2 + 0.4) * (reduced ? 0.55 : 1),
-      hue: 200 + spots * 25,
-      sat: 35 + m * 40,
-      light: 22 + m * 35,
+      lift: (manta * 4 + ocean * 1.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(210, 190, manta) + ocean * 15),
+      sat: lerp(40, 70, intensity),
+      light: lerp(15, 50, intensity),
     }
   },
 }
 
+/** Spiral tentacle garden with shifting colors — Voronoi + polar coords. */
 export const patternOctopusGarden: CubePattern = {
   id: 'octopus-garden',
   title: 'Octopus Garden',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const cx = 0.5
-    const cy = 0.5
-    const ang = Math.atan2(ny - cy, nx - cx)
-    const rad = Math.sqrt((nx - cx) ** 2 + (ny - cy) ** 2)
-    const spiral = Math.sin(ang * 5 + rad * 22 - t * speed(reduced, 1.1, 0.3))
-    const ink = noise2D(nx, ny, t * speed(reduced, 0.25, 0.08), 1.2)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.5, 0.15)
+
+    const { angle, radius } = polar(nx, ny)
+
+    // Spiral arms with ridged noise
+    const spiral = ridgedFbm(
+      angle * 2 / Math.PI + radius * 6 - T * 0.4,
+      radius * 4,
+      3
+    )
+    const arms = smoothstep(-0.3, 0.6, spiral) * smoothstep(0.6, 0.1, radius)
+
+    // Color-shifting chromatophores
+    const chromo = warpedFbm(nx * 6, ny * 6, T * 0.6, 1.5)
+    // Suction cups — small Voronoi dots
+    const v = voronoi(nx * 8 + T * 0.1, ny * 8 + T * 0.05)
+    const cups = smoothstep(0.08, 0.02, v.dist1) * arms
+
     return {
-      lift: ((spiral + 1) * 1.2 + (ink + 1) * 0.8) * (reduced ? 0.5 : 1),
-      hue: 265 + spiral * 30,
-      sat: 45 + Math.abs(spiral) * 40,
-      light: 15 + (spiral + 1) * 18 + ink * 10,
+      lift: (arms * 3.5 + cups * 2 + chromo * 0.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(260, 320, clamp01(chromo + 0.5)) + arms * 20),
+      sat: lerp(45, 85, arms),
+      light: lerp(12, 55, clamp01(arms + cups * 0.3)),
     }
   },
 }
 
+/** Sea turtle gliding through caustic-dappled water. */
 export const patternSeaTurtleGlide: CubePattern = {
   id: 'sea-turtle-glide',
   title: 'Sea Turtle Glide',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const swim = fract01(t * speed(reduced, 0.045, 0.015))
-    const cx = 0.1 + swim * 0.72
-    const path = ny - Math.sin(nx * 3 + t * speed(reduced, 0.35, 0.1)) * 0.1 - 0.02 * Math.sin(swim * Math.PI * 2)
-    const shell = softBlob(nx, ny, cx, path, 0.13, 0.48)
-    const flip = Math.sin(nx * 40 - t * speed(reduced, 2, 0.5)) * 0.12 * shell
-    const caust = Math.sin(nx * 22 + ny * 18 - t * speed(reduced, 0.55, 0.15)) * 0.5 + 0.5
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.35, 0.1)
+
+    // Caustic light pattern — the iconic underwater dappled light
+    const caustic = ridgedFbm(nx * 8 + T * 0.3, ny * 6 - T * 0.2, 3)
+    const causticGlow = smoothstep(-0.3, 0.5, caustic) * 0.5
+
+    // Turtle shell — hexagonal Voronoi pattern on a moving blob
+    const tx = 0.5 + Math.sin(T * 0.3) * 0.2
+    const ty = 0.5 + Math.cos(T * 0.25) * 0.1
+    const shellDist = Math.sqrt(((nx - tx) * 2) ** 2 + ((ny - ty) * 3) ** 2)
+    const shell = smoothstep(0.3, 0.0, shellDist)
+
+    const v = voronoi((nx - tx) * 8 + 0.5, (ny - ty) * 8 + 0.5)
+    const scutes = smoothstep(0.12, 0.04, v.dist2 - v.dist1) * shell
+
     return {
-      lift: (shell * 2.8 + flip + 0.85 + caust * shell * 0.35) * (reduced ? 0.5 : 1),
-      hue: wrapHue(148 + shell * 35 + caust * 12),
-      sat: 38 + shell * 42 + caust * 15,
-      light: 22 + shell * 38 + caust * 22,
+      lift: (shell * 3.5 + causticGlow * 2 + scutes) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(160, 130, shell) + caustic * 15),
+      sat: lerp(35, 65, clamp01(shell + causticGlow)),
+      light: lerp(20, 55, clamp01(causticGlow + shell * 0.5 + scutes * 0.3)),
     }
   },
 }
 
+/** Hydrothermal vent — rising hot plume with mineral-rich particles. */
 export const patternHydrothermalShimmer: CubePattern = {
   id: 'hydrothermal-shimmer',
   title: 'Hydrothermal Shimmer',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const plume = Math.exp(-((nx - 0.48) ** 2 + (ny - 0.75) ** 2) * 80)
-    const rise = Math.sin(nx * 15 + t * speed(reduced, 1.4, 0.35)) * plume
-    const mineral = noise2D(nx, ny * 2, t * speed(reduced, 0.2, 0.06), 2)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.6, 0.18)
+
+    // Rising plume — domain warped upward-biased noise
+    const plumeX = nx - 0.5
+    const plumeY = ny - 0.8
+    const plumeDist = Math.sqrt(plumeX * plumeX * 4 + plumeY * plumeY)
+    const plumeShape = smoothstep(0.4, 0.0, plumeDist) * smoothstep(0.9, 0.2, ny)
+
+    // Turbulent upward motion
+    const turbulence = warpedFbm(nx * 5 + T * 0.2, ny * 3 + T * 0.8, T * 0.5, 2.0) * plumeShape
+
+    // Mineral particles
+    const minerals = clamp01(fbm(nx * 10, ny * 10 + T * 3, 2) - 0.6) * 2 * smoothstep(0.8, 0.2, Math.abs(nx - 0.5))
+    const heat = clamp01(turbulence + minerals * 0.3)
+
     return {
-      lift: (plume * 3 + (mineral + 1)) * (reduced ? 0.45 : 1),
-      hue: 15 + rise * 25 + mineral * 20,
-      sat: 60 + plume * 35,
-      light: 10 + plume * 50 + mineral * 12,
+      lift: (heat * 5 + plumeShape * 2) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(15, 50, heat) - plumeShape * 10),
+      sat: lerp(50, 95, heat),
+      light: lerp(6, 60, heat),
     }
   },
 }
 
+/** Golden treasure gleams scattered across dark seabed. */
 export const patternSunkenTreasure: CubePattern = {
   id: 'sunken-treasure',
   title: 'Sunken Treasure Gleam',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const drift = t * speed(reduced, 0.04, 0.012)
-    const chest = softBlob(nx, ny, 0.62 + Math.sin(drift) * 0.03, 0.55, 0.12, 0.35)
-    const glint = Math.sin(nx * 80 + ny * 80 + t * speed(reduced, 4, 1)) > 0.92 ? 1 : 0
-    const sand = noise2D(nx + drift * 0.08, ny + drift * 0.05, drift * 0.3, 1.5)
-    const partic = noise2D(nx * 2, ny * 2, t * speed(reduced, 0.6, 0.18), 2.5)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.12)
+
+    // Sandy seabed
+    const sand = fbm(nx * 8, ny * 8 + T * 0.05, 4) * 0.3 + 0.5
+
+    // Treasure glint points — Voronoi cell centers
+    const v = voronoi(nx * 8 - T * 0.05, ny * 8)
+    const glint = smoothstep(0.06, 0.0, v.dist1)
+    // Only some cells glint (use hash to filter)
+    const isGold = hash2i(Math.floor(nx * 12 + T * 0.05), Math.floor(ny * 10)) > 0.65
+    const goldGlint = glint * (isGold ? 1 : 0)
+
+    // Twinkle animation
+    const sparkle = (Math.sin(T * 5 + v.dist1 * 50) * 0.5 + 0.5) * goldGlint
+
+    // Slow current
+    const current = fbm(nx * 3 + T * 0.15, ny * 2, 3) * 0.2
+
     return {
-      lift: (chest * 2.1 + glint * 2.6 + (sand + 1) * 0.45 + partic * 0.25) * (reduced ? 0.5 : 1),
-      hue: wrapHue(42 + glint * 18 + chest * 8 + partic * 25),
-      sat: 50 + chest * 32 + glint * 42,
-      light: 16 + chest * 38 + glint * 55 + sand * 10 + ny * 6,
+      lift: (sparkle * 4 + sand + current * 0.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(200, 45, sparkle) + sand * 10),
+      sat: lerp(30, 85, sparkle),
+      light: lerp(15, 80, clamp01(sparkle * 0.7 + sand * 0.3)),
     }
   },
 }
 
+/** Icy fjord water with floating ice plates and deep blue depth. */
 export const patternNarwhalIcefjord: CubePattern = {
   id: 'narwhal-icefjord',
   title: 'Narwhal Icefjord',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const ice = Math.cos(nx * 12 + ny * 8 + t * speed(reduced, 0.15, 0.05))
-    const slot = Math.exp(-((ny - 0.55) ** 2) * 40)
-    const hornX = 0.28 + fract01(t * speed(reduced, 0.055, 0.018)) * 0.44
-    const horn = Math.exp(-((nx - hornX) ** 2 * 900 + (ny - 0.52) ** 2 * 220))
-    const blow = Math.exp(-((nx - hornX - 0.04) ** 2 + (ny - 0.42) ** 2) * 200) * Math.sin(t * speed(reduced, 2.2, 0.5)) * 0.5 + 0.5
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.3, 0.09)
+
+    // Ice floes — Voronoi plates
+    const v = voronoi(nx * 5 + T * 0.08, ny * 4)
+    const icePlate = smoothstep(0.35, 0.1, v.dist1)
+    const iceEdge = smoothstep(0.12, 0.03, v.dist2 - v.dist1)
+
+    // Deep cold water underneath
+    const deepWater = warpedFbm(nx * 3, ny * 2, T * 0.2, 1.3) * 0.3
+
+    // Surface frost shimmer
+    const frost = fbm(nx * 10 + T * 0.2, ny * 10, 3) * 0.3 * icePlate * 0.3
+
+    const icy = clamp01(icePlate + iceEdge * 0.5 + frost)
+
     return {
-      lift: ((ice + 1) * 0.85 + slot * 1.15 + horn * 2.8 + blow * 0.6) * (reduced ? 0.5 : 1),
-      hue: wrapHue(198 + ice * 14 + horn * 12),
-      sat: 22 + horn * 58 + slot * 22 + blow * 25,
-      light: 52 + ice * 22 + horn * 28 + blow * 18,
+      lift: (icy * 3 + deepWater + iceEdge * 1.5) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(210, 195, icy) + deepWater * 10),
+      sat: lerp(35, 55, clamp01(1 - icy)),
+      light: lerp(20, 88, icy),
     }
   },
 }
-
-export const OCEAN_LIFE_PATTERNS: readonly CubePattern[] = [
-  patternWhaleSongDepth,
-  patternJellyfishBloom,
-  patternKelpCathedral,
-  patternBiolumTide,
-  patternMantaBallet,
-  patternOctopusGarden,
-  patternSeaTurtleGlide,
-  patternHydrothermalShimmer,
-  patternSunkenTreasure,
-  patternNarwhalIcefjord,
-]

@@ -1,19 +1,35 @@
 import type { CubePattern, PatternContext } from '../../types'
-import { clamp01, hash2i, noise2D, speed, wrapHue } from '../_shared'
+import {
+  clamp01, fbm, warpedFbm, ridgedFbm, voronoi,
+  smoothstep, lerp, speed, wrapHue, hash2i
+} from '../_shared'
 
-/** Earth, weather, and open sky — ten cohesive “places”. */
+// ═══════════════════════════════════════════════════════════════════════════
+// COLLECTION: Nature — Land & Sky (10 patterns)
+// Earth, weather, open sky, and elemental forces.
+// ═══════════════════════════════════════════════════════════════════════════
+
 export const patternAurora: CubePattern = {
   id: 'aurora',
   title: 'Aurora Borealis',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const noise = noise2D(nx, ny, t * speed(reduced, 1.0, 0.4), 1.2)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.12)
+
+    // Domain-warped vertical curtains
+    const curtain = warpedFbm(nx * 3, ny * 1.5 + T * 0.08, T * 0.6, 2.0)
+    // Fine shimmer detail
+    const shimmer = fbm(nx * 8 + T * 0.3, ny * 4 - T * 0.15, 3) * 0.3
+
+    // Vertical fade — aurora is strongest at top
+    const vertFade = smoothstep(0.9, 0.15, ny)
+    const intensity = clamp01((curtain + shimmer + 0.3) * vertFade)
+
     return {
-      lift: (noise + 1) * 2.5 * (reduced ? 0.4 : 1),
-      hue: 210 + noise * 70,
-      sat: 85 + Math.sin(t * 0.5 + nx) * 15,
-      light: 25 + (noise + 1) * 20,
+      lift: intensity * 4.5 * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(280, 140, clamp01(curtain * 0.8 + 0.5)) + shimmer * 30),
+      sat: lerp(30, 88, intensity),
+      light: lerp(8, 65, intensity),
     }
   },
 }
@@ -22,17 +38,27 @@ export const patternGoldenHour: CubePattern = {
   id: 'golden-hour',
   title: 'Golden Hour',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const dx = (col - cols / 2) / cols
-    const dy = (row - rows / 2) / rows
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    const ripple = Math.sin(dist * 12 - t * speed(reduced, 0.7, 0.3))
-    const sweep = Math.cos(dx * 5 + t * speed(reduced, 0.4, 0.2))
-    const noise = ripple * 0.6 + sweep * 0.4
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.3, 0.1)
+
+    // Sun disk
+    const sunX = 0.5, sunY = 0.6
+    const radius = Math.sqrt((nx - sunX) ** 2 + ((ny - sunY) * 1.5) ** 2)
+    const sunGlow = smoothstep(0.6, 0.0, radius)
+
+    // Layered cloud bands
+    const cloud1 = fbm(nx * 5 + T * 0.2, ny * 2 + T * 0.05, 4) * 0.5 + 0.5
+    const cloud2 = fbm(nx * 3 - T * 0.15, ny * 3.5, 3) * 0.4 + 0.5
+
+    // Warm-to-cool gradient (sky is cooler at top)
+    const warmth = clamp01(sunGlow * 0.7 + cloud1 * 0.3)
+    const skyGrad = smoothstep(0.0, 0.8, ny)
+
     return {
-      lift: (noise + 1) * 2.0 * (reduced ? 0.5 : 1),
-      hue: 20 + noise * 20,
-      sat: 85,
-      light: 40 + (noise + 1) * 15,
+      lift: (sunGlow * 3 + cloud1 * 2 + cloud2) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(15, 45, warmth) + skyGrad * 20),
+      sat: lerp(70, 95, warmth),
+      light: lerp(20, 70, clamp01(sunGlow + cloud1 * 0.4)),
     }
   },
 }
@@ -41,19 +67,22 @@ export const patternAbyssalGlow: CubePattern = {
   id: 'abyssal-glow',
   title: 'Abyssal Glow',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const depth = ny * 0.85
-    const wave1 = Math.sin(nx * 3 + ny * 3 + t * speed(reduced, 0.3, 0.1))
-    const wave2 = Math.cos(nx * -2 + ny * 4 - t * speed(reduced, 0.25, 0.15))
-    const noise = (wave1 + wave2) / 2
-    const bio = Math.sin(nx * 31 + row * 0.9 + t * speed(reduced, 0.55, 0.15)) * Math.sin(ny * 24 - t * speed(reduced, 0.4, 0.12))
-    const pin = bio > 0.82 ? 1 : 0
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.5, 0.15)
+
+    // Deep water pressure
+    const deep = ny * 0.85
+    const flow = warpedFbm(nx * 4, ny * 4, T * 0.4, 1.5)
+
+    // Bioluminescent sparkles (Voronoi)
+    const v = voronoi(nx * 10 + T * 0.1, ny * 10 - T * 0.05)
+    const sparkle = smoothstep(0.08, 0.01, v.dist1) * clamp01(flow + 0.2)
+
     return {
-      lift: ((noise + 1) * 1.35 + pin * 0.9 + depth * 0.25) * (reduced ? 0.35 : 1),
-      hue: wrapHue(198 - noise * 22 - depth * 12 + pin * 25),
-      sat: 55 + depth * 25 + noise * 12 + pin * 30,
-      light: 6 + (1 - depth) * 14 + (noise + 1) * 9 + pin * 28,
+      lift: (flow * 2.5 + sparkle * 3 + deep * 0.5) * (reduced ? 0.4 : 1),
+      hue: wrapHue(lerp(200, 170, sparkle) - deep * 15),
+      sat: lerp(30, 95, sparkle),
+      light: lerp(5, 75, clamp01(sparkle + flow * 0.3)),
     }
   },
 }
@@ -62,19 +91,22 @@ export const patternCherryBlossom: CubePattern = {
   id: 'cherry-blossom',
   title: 'Cherry Blossom',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const wind = t * speed(reduced, 0.35, 0.12)
-    const branch = Math.sin(nx * 3.2 + wind * 0.4) * 0.12 + 0.38
-    const along = Math.abs(ny - branch)
-    const wood = clamp01(1 - along * 55)
-    const petal = noise2D(nx * 1.2, ny * 1.2, t * speed(reduced, 0.85, 0.28), 2.4)
-    const bloom = clamp01(petal * 0.55 + 0.45) * (1 - wood * 0.85)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.15)
+
+    // Branch structure
+    const branch = Math.sin(nx * 3.2 + T * 0.2) * 0.12 + 0.38
+    const wood = smoothstep(0.08, 0.0, Math.abs(ny - branch))
+
+    // Wind-blown petals
+    const wind = warpedFbm(nx * 5 + T * 0.5, ny * 5, T * 0.2, 1.2)
+    const bloom = clamp01(wind * 0.6 + 0.4) * (1 - wood)
+
     return {
-      lift: (wood * 1.8 + bloom * 2.8) * (reduced ? 0.5 : 1),
-      hue: wrapHue(32 + wood * 18 + bloom * 310),
-      sat: 22 + wood * 35 + bloom * 55,
-      light: 38 + wood * 25 + bloom * 38,
+      lift: (wood * 2 + bloom * 3) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(340, 355, bloom) + wind * 8),
+      sat: lerp(10, 80, bloom),
+      light: wood > 0.1 ? 25 : lerp(20, 85, bloom),
     }
   },
 }
@@ -83,17 +115,24 @@ export const patternForestCanopy: CubePattern = {
   id: 'forest-canopy',
   title: 'Forest Canopy',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const canopy = Math.exp(-((nx - 0.5 + Math.sin(t * speed(reduced, 0.12, 0.04)) * 0.08) ** 2) * 14) * (1 - ny * 0.35)
-    const dapple = noise2D(nx, ny, t * speed(reduced, 0.45, 0.16), 1.6)
-    const trunk = Math.exp(-Math.abs(nx - (0.28 + (row % 5) * 0.09)) * 120) * ny
-    const noise = noise2D(ny, nx, t * speed(reduced, 0.5, 0.2), 1.5)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.4, 0.12)
+
+    // Dense canopy — domain warped
+    const canopy = warpedFbm(nx * 6, ny * 4, T * 0.3, 1.5)
+    // Dappled sunlight breaking through (ridged noise)
+    const dapple = clamp01(ridgedFbm(nx * 8 + T * 0.2, ny * 6, 3) * 0.7 + 0.3)
+    const lightShaft = smoothstep(-0.2, 0.5, canopy) * dapple
+
+    // Trunk silhouettes
+    const trunkPhase = Math.abs(nx - (0.3 + (row % 5) * 0.08))
+    const trunk = smoothstep(0.05, 0.01, trunkPhase) * ny
+
     return {
-      lift: ((noise + 1) * 1.45 + canopy * 0.9 + trunk * 1.2) * (reduced ? 0.42 : 1),
-      hue: wrapHue(118 + noise * 28 + dapple * 12),
-      sat: 48 + noise * 18 + canopy * 22,
-      light: 12 + dapple * 22 + canopy * 35 + ny * 18,
+      lift: (canopy * 2 + lightShaft * 3 + trunk * 1.5) * (reduced ? 0.45 : 1),
+      hue: wrapHue(lerp(100, 140, clamp01(canopy * 0.5 + 0.5)) + lightShaft * 20),
+      sat: lerp(35, 85, clamp01(canopy + lightShaft)),
+      light: lerp(12, 75, clamp01(lightShaft + trunk * 0.2)),
     }
   },
 }
@@ -102,16 +141,24 @@ export const patternDesertDunes: CubePattern = {
   id: 'desert-dunes',
   title: 'Desert Dunes',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const wave = Math.sin(nx * 10 + ny * 2 - t * speed(reduced, 0.6, 0.2))
-    const sub = Math.cos(ny * 8 + t * speed(reduced, 0.3, 0.1))
-    const noise = wave * 0.7 + sub * 0.3
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.2, 0.05)
+
+    // Sharp dune crests using ridged noise
+    const ridge = ridgedFbm(nx * 3 + T * 0.1, ny * 4, 3)
+    const dune = smoothstep(-0.4, 0.6, ridge)
+
+    // Fine sand ripples across the surface
+    const sand = fbm(nx * 10 + Math.sin(ny * 5) * 0.1, ny * 8 + T * 0.05, 3) * 0.5 + 0.5
+    
+    // Heat shimmer
+    const shimmer = Math.sin(nx * 20 + ny * 15 - T * 2) * 0.05
+
     return {
-      lift: (noise + 1) * 2.8 * (reduced ? 0.5 : 1),
-      hue: 35 + noise * 10,
-      sat: 70,
-      light: 50 + noise * 20,
+      lift: (dune * 4 + sand * 1.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(30, 45, ridge) + shimmer * 15),
+      sat: lerp(55, 80, dune),
+      light: lerp(20, 68, clamp01(dune + sand * 0.3)),
     }
   },
 }
@@ -120,16 +167,24 @@ export const patternCoralReef: CubePattern = {
   id: 'coral-reef',
   title: 'Coral Reef',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const noise = noise2D(nx, ny, t * speed(reduced, 0.9, 0.3), 3.0)
-    const caustic = Math.sin(nx * 28 + ny * 22 - t * speed(reduced, 0.7, 0.2)) * 0.5 + 0.5
-    const depth = clamp01(0.35 + ny * 0.5)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.3, 0.1)
+
+    // Coral structures — Voronoi cells
+    const v = voronoi(nx * 7, ny * 5 - T * 0.05)
+    const coral = smoothstep(0.4, 0.0, v.dist1)
+    
+    // Water caustics above the coral
+    const caustic = clamp01(ridgedFbm(nx * 10 + T * 0.4, ny * 8 - T * 0.2, 3) + 0.2)
+
+    // Each cell gets a slight color variation
+    const cellColor = hash2i(Math.floor(nx * 7), Math.floor(ny * 5 - T * 0.05))
+
     return {
-      lift: (Math.abs(noise) * 3.6 + caustic * 0.6) * (reduced ? 0.5 : 1),
-      hue: wrapHue(348 + Math.sin(t * speed(reduced, 0.4, 0.12) + nx * 5) * 42 + ny * 8),
-      sat: clamp01(0.72 + Math.abs(noise) * 0.22) * 100,
-      light: clamp01(0.42 + noise * 0.22 + caustic * 0.12 - depth * 0.08) * 100,
+      lift: (coral * 3 + caustic * 1.5) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(330, 30, cellColor) + caustic * 20 + coral * 15),
+      sat: lerp(45, 95, coral),
+      light: lerp(15, 75, clamp01(coral + caustic * 0.5)),
     }
   },
 }
@@ -138,18 +193,26 @@ export const patternVolcanicEmber: CubePattern = {
   id: 'volcanic-ember',
   title: 'Volcanic Ember',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const noise = noise2D(nx, ny, t * speed(reduced, 1.2, 0.4), 2.5)
-    const lava = noise2D(nx * 0.7, ny * 0.7, t * speed(reduced, 0.18, 0.06), 1.2)
-    const ridge = Math.sin(nx * 9 + ny * 4 - t * speed(reduced, 0.22, 0.07)) * 0.5 + 0.5
-    const ember = noise > 0.52
-    const heat = clamp01((noise - 0.2) * 1.8) * (lava * 0.5 + 0.5)
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.7, 0.22)
+
+    // Voronoi cracks in cooled lava
+    const v = voronoi(nx * 12 + T * 0.02, ny * 12 - T * 0.01)
+    const cracks = smoothstep(0.12, 0.02, v.dist2 - v.dist1)
+
+    // Lava glow beneath — domain warped for organic flow
+    const lava = warpedFbm(nx * 4, ny * 4, T * 0.5, 1.8)
+    const hotSpot = smoothstep(-0.2, 0.4, lava)
+
+    // Ember particles floating upward
+    const sparkle = clamp01(fbm(nx * 10 - T * 0.5, ny * 10 - T * 0.4, 2) - 0.55) * 2 * smoothstep(1.0, 0.4, ny)
+    const heat = clamp01(cracks * 0.7 + hotSpot * 0.5 + sparkle * 0.3)
+
     return {
-      lift: (ember ? 3.6 : 0.85) * (reduced ? 0.55 : 1) + ridge * 0.5 + heat * 0.4,
-      hue: wrapHue(ember ? 18 + noise * 15 : 12 + lava * 25 + ridge * 8),
-      sat: ember ? 96 : 18 + heat * 45 + ridge * 20,
-      light: ember ? 58 + noise * 12 : 8 + heat * 28 + ridge * 15 + lava * 10,
+      lift: (heat * 5 + cracks * 2) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(0, 40, heat)),
+      sat: lerp(75, 100, heat),
+      light: lerp(5, 65, heat),
     }
   },
 }
@@ -158,16 +221,25 @@ export const patternArcticIce: CubePattern = {
   id: 'arctic-ice',
   title: 'Arctic Ice',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const crack = Math.cos(nx * 15 - ny * 15 + t * speed(reduced, 0.3, 0.1))
-    const drift = Math.sin(nx * 3 + t * speed(reduced, 0.5, 0.2))
-    const noise = crack * 0.4 + drift * 0.6
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.2, 0.05)
+
+    // Large jagged ice plates
+    const v = voronoi(nx * 4 - T * 0.05, ny * 3)
+    const fracture = smoothstep(0.04, 0.01, v.dist2 - v.dist1)
+    const plate = smoothstep(0.4, 0.1, v.dist1)
+
+    // Sub-surface frozen texture
+    const iceSubTex = fbm(nx * 18 + T * 0.05, ny * 18, 3) * 0.5 + 0.5
+
+    // Deep blue glow from within
+    const underGlow = clamp01(plate * 0.6 + iceSubTex * 0.4)
+
     return {
-      lift: (noise + 1) * 2.0 * (reduced ? 0.4 : 1),
-      hue: 190 + noise * 10,
-      sat: 30,
-      light: 85 + noise * 10,
+      lift: (plate * 2.5 + fracture * 1.5 + iceSubTex) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(195, 210, underGlow) + fracture * 10),
+      sat: lerp(15, 45, clamp01(underGlow + fracture)),
+      light: lerp(30, 95, clamp01(underGlow + fracture * 0.8)),
     }
   },
 }
@@ -176,32 +248,30 @@ export const patternMidnightSky: CubePattern = {
   id: 'midnight-sky',
   title: 'Midnight Sky',
   sample({ col, row, cols, rows, t, reduced }: PatternContext) {
-    const nx = col / cols
-    const ny = row / rows
-    const scale = Math.max(18, Math.min(48, (cols + rows) * 0.02))
-    const starPhase = hash2i(col, row)
-    const twinkle = Math.sin(nx * scale * 8 + ny * scale * 10 + t * speed(reduced, 5, 1.2) + starPhase * 6)
-    const cloud = noise2D(nx, ny, t * speed(reduced, 0.12, 0.04), 1.0)
-    const milky = Math.sin(nx * 2.5 + ny * 1.2 + t * speed(reduced, 0.08, 0.025)) * 0.15
-    const isStar = twinkle > 0.93 && cloud < 0.15 && starPhase > 0.72
+    const nx = col / cols, ny = row / rows
+    const T = t * speed(reduced, 0.15, 0.05)
+
+    // Nebula dust — domain warped
+    const nebula = warpedFbm(nx * 4 + T * 0.1, ny * 3, T * 0.05, 1.5)
+    
+    // Milky way band across the middle
+    const band = smoothstep(0.4, 0.0, Math.abs(ny - 0.5 + Math.sin(nx * 3) * 0.2)) * 0.5
+
+    // Stars — Voronoi points
+    const v = voronoi(nx * 12 + T * 0.02, ny * 12)
+    const starDist = v.dist1
+    // Filter stars randomly so they aren't perfectly uniform
+    const isStar = hash2i(Math.floor((nx + T * 0.02) * 12), Math.floor(ny * 12)) > 0.7
+    const star = isStar ? smoothstep(0.05, 0.0, starDist) : 0
+
+    // Twinkle effect
+    const twinkle = star > 0 ? Math.sin(T * 5 + nx * 100) * 0.5 + 0.5 : 0
+
     return {
-      lift: isStar ? 3 * (reduced ? 0.5 : 1) : (cloud + 1) * 0.55 + milky * 0.8,
-      hue: wrapHue(238 + milky * 25 + (isStar ? starPhase * 40 : cloud * 8)),
-      sat: isStar ? 35 : 38 + cloud * 15,
-      light: isStar ? 88 : 10 + cloud * 8 + milky * 25,
+      lift: (nebula * 2 + band * 2 + star * 3) * (reduced ? 0.5 : 1),
+      hue: wrapHue(lerp(230, 270, nebula + 0.5) + twinkle * 40),
+      sat: lerp(40, 85, clamp01(nebula + band)),
+      light: lerp(5, 80, clamp01((nebula + 0.2) * 0.5 + band + star * twinkle)),
     }
   },
 }
-
-export const NATURE_LAND_SKY_PATTERNS: readonly CubePattern[] = [
-  patternAurora,
-  patternGoldenHour,
-  patternAbyssalGlow,
-  patternCherryBlossom,
-  patternForestCanopy,
-  patternDesertDunes,
-  patternCoralReef,
-  patternVolcanicEmber,
-  patternArcticIce,
-  patternMidnightSky,
-]

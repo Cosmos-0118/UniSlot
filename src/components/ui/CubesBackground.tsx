@@ -34,6 +34,10 @@ export function CubesBackground() {
 
   useEffect(() => {
     mountRef.current = performance.now()
+    // Randomize initial simulation time so patterns are different on every refresh
+    if (timeAccRef.current.simTime === 0) {
+      timeAccRef.current.simTime = Math.random() * 10000000
+    }
   }, [])
 
   useEffect(() => {
@@ -116,7 +120,10 @@ export function CubesBackground() {
 
       const age = (frameTime - mountRef.current) * 0.001
       const intro = Math.min(1, age * 0.85)
-      const radius = Math.max(0.6, Math.min(cell * 0.2, 2.4))
+      // Optimization: when intro animation finishes, pop is always 1
+      const isIntroDone = intro > 1.5
+      const halfCols = cols / 2
+      const halfRows = rows / 2
 
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
@@ -125,26 +132,30 @@ export function CubesBackground() {
 
           const s = sampleCubePatterns(col, row, cols, rows, timeSec, reduced)
 
-          const dCenter = Math.hypot(col - cols / 2, row - rows / 2)
-          const stagger = Math.min(1, Math.max(0, intro * 1.15 - dCenter * 0.008))
-          const pop = 0.82 + 0.18 * (1 - Math.pow(1 - stagger, 2))
+          let cellDraw = cell
+          let off = 0
 
-          const cellDraw = cell * pop
-          const off = (cell - cellDraw) / 2
+          if (!isIntroDone) {
+            // Only compute staggering during initial load
+            const dCenter = Math.hypot(col - halfCols, row - halfRows)
+            const stagger = Math.min(1, Math.max(0, intro * 1.15 - dCenter * 0.008))
+            const pop = 0.82 + 0.18 * (1 - Math.pow(1 - stagger, 2))
+            cellDraw = cell * pop
+            off = (cell - cellDraw) / 2
+          }
 
-          const hue = ((s.hue % 360) + 360) % 360
-          const sat = Math.min(88, Math.max(8, s.sat))
-          const light = Math.min(72, Math.max(16, s.light))
+          // Integer casting via bitwise OR is significantly faster than toFixed()
+          const hue = (((s.hue % 360) + 360) % 360) | 0
+          const sat = Math.min(95, Math.max(8, s.sat)) | 0
+          const light = Math.min(85, Math.max(6, s.light)) | 0
 
-          const fill = `hsl(${hue.toFixed(1)},${sat.toFixed(1)}%,${light.toFixed(1)}%)`
           const liftY = ty - s.lift * 1.12
 
-          ctx.fillStyle = fill
-          const x0 = tx + off
-          const y0 = liftY + off
-          ctx.beginPath()
-          ctx.roundRect(x0, y0, cellDraw, cellDraw, radius)
-          ctx.fill()
+          ctx.fillStyle = `hsl(${hue},${sat}%,${light}%)`
+          
+          // fillRect is hardware accelerated and heavily optimized compared to roundRect path generation.
+          // It also gives the exact "pixel animation" aesthetic requested by the user.
+          ctx.fillRect(tx + off, liftY + off, cellDraw, cellDraw)
         }
       }
 
