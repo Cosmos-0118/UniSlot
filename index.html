@@ -29,9 +29,9 @@
     <title>UniSlot — Evening scheduling in your browser</title>
     <script>
       ;(function () {
+        var theme = 'dark'
         try {
           var stored = localStorage.getItem('unislot-theme')
-          var theme = 'dark'
           if (stored) {
             try {
               theme = JSON.parse(stored)
@@ -44,6 +44,12 @@
           }
         } catch (_) {
           document.documentElement.setAttribute('data-theme', 'dark')
+        }
+
+        var path = window.location.pathname
+        if (path === '/' || path === '') {
+          var bootBg = { dark: '#070a14', light: '#f7fbf9', crimson: '#11070d' }
+          document.documentElement.style.backgroundColor = bootBg[theme] || bootBg.dark
         }
       })()
     </script>

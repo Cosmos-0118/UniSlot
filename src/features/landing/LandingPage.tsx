@@ -5,8 +5,8 @@ import type { Variants } from 'framer-motion'
 import { useLayoutEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CubesBackground } from '@/components/ui/CubesBackground'
-import { RetroBootOverlay } from '@/components/ui/RetroBootOverlay'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
+import { useBootGate } from '@/contexts/boot/useBootGate'
 import { useTheme } from '@/contexts/theme/useTheme'
 import { cn } from '@/shared/utils/cn'
 
@@ -23,6 +23,16 @@ const glassHoverClass =
 
 const hoverSpring = { type: 'spring' as const, stiffness: 420, damping: 26, mass: 0.85 }
 
+const navRevealVariants: Variants = {
+  hidden: { opacity: 0, x: -20 },
+  shown: { opacity: 1, x: 0 },
+}
+
+const navRevealRightVariants: Variants = {
+  hidden: { opacity: 0, x: 20 },
+  shown: { opacity: 1, x: 0 },
+}
+
 /** Fluid size: stays readable, fits typical card widths; vmin helps short viewports. */
 const heroTitleSize =
   'text-[clamp(1.05rem,calc(0.72rem+3.2vmin),2.35rem)] sm:text-[clamp(1.1rem,calc(0.7rem+2.8vw),2.5rem)] md:text-[clamp(1.2rem,calc(0.65rem+2.4vw),2.75rem)]'
@@ -30,7 +40,9 @@ const heroTitleSize =
 export function LandingPage() {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
+  const { isBooting, signalLandingReady } = useBootGate()
   const reduceMotion = useReducedMotion()
+  const showContent = !isBooting
 
   const cardHover = reduceMotion
     ? undefined
@@ -56,6 +68,11 @@ export function LandingPage() {
       setTheme('dark')
     }
   }, [theme, setTheme])
+
+  useLayoutEffect(() => {
+    signalLandingReady()
+  }, [signalLandingReady])
+
   const containerVariants: Variants = {
     hidden: {},
     visible: {
@@ -64,27 +81,40 @@ export function LandingPage() {
   }
 
   const itemVariants: Variants = {
-    hidden: { y: 22 },
+    hidden: { opacity: 0, y: 22 },
     visible: {
+      opacity: 1,
       y: 0,
       transition: { type: 'spring', stiffness: 95, damping: 20, mass: 0.85 },
     },
   }
 
   return (
-    <div
+    <motion.div
       className="app-shell relative flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto text-text select-none touch-callout-none"
       onCopy={(e) => e.preventDefault()}
       onCut={(e) => e.preventDefault()}
+      initial={false}
+      animate={showContent ? 'shown' : 'hidden'}
+      variants={{
+        hidden: { opacity: 1 },
+        shown: { opacity: 1 },
+      }}
     >
-      <RetroBootOverlay />
       <CubesBackground />
 
       <nav className="relative z-30 flex w-full justify-center px-6 py-6">
-        <div className="flex w-full max-w-5xl items-center justify-between gap-4">
+        <motion.div
+          className="flex w-full max-w-5xl items-center justify-between gap-4"
+          initial={false}
+          animate={showContent ? 'shown' : 'hidden'}
+          variants={{
+            hidden: {},
+            shown: { transition: { staggerChildren: 0.08 } },
+          }}
+        >
           <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
+            variants={navRevealVariants}
             transition={{ duration: 0.6 }}
             className="flex min-w-0 items-center gap-3 text-2xl font-bold tracking-wide"
           >
@@ -92,8 +122,7 @@ export function LandingPage() {
             <span className="text-text">UniSlot</span>
           </motion.div>
           <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
+            variants={navRevealRightVariants}
             transition={{ duration: 0.6 }}
             className="flex shrink-0 items-center gap-3 sm:gap-4"
           >
@@ -107,14 +136,14 @@ export function LandingPage() {
               Get Started
             </motion.button>
           </motion.div>
-        </div>
+        </motion.div>
       </nav>
 
       <main className="pointer-events-none relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 pb-20 pt-4 md:px-8 md:pb-28 md:pt-8">
         <motion.div
           variants={containerVariants}
           initial="hidden"
-          animate="visible"
+          animate={showContent ? 'visible' : 'hidden'}
           className="pointer-events-auto flex w-full min-w-0 max-w-5xl flex-col items-center justify-center text-center"
         >
           <motion.div variants={itemVariants} className="w-full min-w-0 max-w-full [perspective:1200px]">
@@ -123,17 +152,17 @@ export function LandingPage() {
               style={{ transformStyle: 'preserve-3d' }}
               className={cn('group', glassPanelSurface, glassHoverClass)}
             >
-              <div
+              <motion.div
                 className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]"
                 aria-hidden
               >
                 <div className="absolute -left-[40%] top-0 h-full w-[45%] skew-x-[-18deg] bg-gradient-to-r from-transparent via-white/18 to-transparent opacity-0 transition duration-700 ease-out group-hover:translate-x-[280%] group-hover:opacity-100" />
-              </div>
+              </motion.div>
               <div className="relative z-10 w-full min-w-0 px-5 py-7 md:px-9 md:py-9">
                 <h1
                   className={cn(
                     'mx-auto flex w-full min-w-0 max-w-full flex-wrap items-baseline justify-center gap-x-2 gap-y-2 text-center font-extrabold leading-snug tracking-tight',
-                    heroTitleSize
+                    heroTitleSize,
                   )}
                 >
                   <span className="max-w-full whitespace-nowrap text-text [text-shadow:0_1px_2px_rgba(0,0,0,0.88),0_4px_28px_rgba(0,0,0,0.42)]">
@@ -156,15 +185,15 @@ export function LandingPage() {
                 'group mx-auto mt-8 md:mt-10',
                 glassPanelSurface,
                 glassHoverClass,
-                'rounded-2xl border-white/[0.1] md:rounded-2xl'
+                'rounded-2xl border-white/[0.1] md:rounded-2xl',
               )}
             >
-              <div
+              <motion.div
                 className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]"
                 aria-hidden
               >
                 <div className="absolute -left-[40%] top-0 h-full w-[45%] skew-x-[-18deg] bg-gradient-to-r from-transparent via-white/14 to-transparent opacity-0 transition duration-700 ease-out group-hover:translate-x-[280%] group-hover:opacity-100" />
-              </div>
+              </motion.div>
               <p className="relative z-10 px-5 py-5 text-balance text-lg leading-relaxed text-text md:px-7 md:py-6 md:text-xl">
                 Process large enrollment workbooks, surface clashes quickly, and build high-quality evening timetables
                 locally in your browser with transparent exports.
@@ -184,6 +213,6 @@ export function LandingPage() {
           </motion.div>
         </motion.div>
       </main>
-    </div>
+    </motion.div>
   )
 }

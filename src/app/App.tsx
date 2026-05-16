@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { RouteChunkFallback } from '@/components/ui/RouteChunkFallback'
+import { LandingRouteFallback } from '@/components/ui/LandingRouteFallback'
+import { BootGateProvider } from '@/contexts/boot/BootGateProvider'
 import { AppDialogProvider } from '@/contexts/appDialog/AppDialogProvider'
 import { ThemeProvider } from '@/contexts/theme/ThemeProvider'
 import { SchedulingSessionProvider } from '@/contexts/scheduling/SchedulingSessionProvider'
@@ -31,13 +32,14 @@ export default function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
+        <BootGateProvider>
         <SchedulingSessionProvider>
           <AppDialogProvider>
             <Routes>
           <Route
             path="/"
             element={
-              <Suspense fallback={<RouteChunkFallback />}>
+              <Suspense fallback={<LandingRouteFallback />}>
                 <LandingPage />
               </Suspense>
             }
@@ -74,6 +76,7 @@ export default function App() {
             </Routes>
           </AppDialogProvider>
         </SchedulingSessionProvider>
+        </BootGateProvider>
       </BrowserRouter>
     </ThemeProvider>
   )
