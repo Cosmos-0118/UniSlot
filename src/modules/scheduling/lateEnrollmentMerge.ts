@@ -5,10 +5,8 @@ import { computeSchedulingStats } from './engines/metrics'
 import { computeCourseEmailGroups, type PipelineResult, type RunPipelineOptions } from './pipeline'
 import { loadAndValidate, parseExcelRows, validateBusinessRules, buildCanonicalData } from './parser'
 import type { EnrollmentRow, Section, Student, ValidationResult } from './types'
-import { clashReportToRichWorkbookBuffer } from './io/excelClashReport'
-import { courseEmailsToWorkbookBuffer } from './io/excelCourseEmails'
+import { buildClashXlsxBuffer, buildScheduleXlsxBuffer } from './pipelineExports'
 import { readFirstSheetAsAoA } from './io/excelIo'
-import { scheduleToWorkbookBuffer } from './io/excelScheduleWorkbook'
 import {
   cloneSchedulingSnapshot,
   deepCloneCourseSections,
@@ -265,11 +263,9 @@ export async function mergeLateEnrollmentIntoSnapshot(
     ? 'Hard-constraint audit did not pass after merging. Enable “Allow provisional schedule export” if you need the schedule workbook anyway.'
     : null
 
-  const [scheduleXlsx, clashXlsx, courseEmailsXlsx] = await Promise.all([
-    allowScheduleXlsx ? scheduleToWorkbookBuffer(schedule) : Promise.resolve(null),
-    clashReportToRichWorkbookBuffer(clashReport),
-    courseEmailsToWorkbookBuffer(mergedDeduped),
-  ])
+  const scheduleXlsx = allowScheduleXlsx ? await buildScheduleXlsxBuffer(schedule) : null
+  const clashXlsx = await buildClashXlsxBuffer(clashReport)
+  const courseEmailsXlsx = null
 
   const schedulingStats = computeSchedulingStats(flatSections, snap.slot_assignments, conflictGraph)
 

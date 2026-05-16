@@ -1,3 +1,4 @@
+import { PipelineCancelledError } from '../cancellation'
 import type { ConflictGraph, Section } from '../types'
 import {
   buildAdjacency,
@@ -333,7 +334,7 @@ function hybridSATabuImprove(
   courseAdj: Map<string, Map<string, number>>,
   sectionCountByCourse: Map<string, number>,
   parallelCap: number,
-  options?: { maxIterFactor?: number },
+  options?: { maxIterFactor?: number; shouldAbort?: () => boolean },
   rng: Rng = Math.random,
 ): Record<string, number> {
   const slotByCourse: Record<string, number> = { ...initialSlotByCourse }
@@ -572,7 +573,11 @@ function hybridSATabuImprove(
     tabuUntil.set(tabuAttrKey(course, fromSlot), iter + tenure)
   }
 
+    const abortStride = 2048
   for (let iter = 0; iter < maxIter; iter++) {
+    if (iter > 0 && iter % abortStride === 0 && options?.shouldAbort?.()) {
+      throw new PipelineCancelledError()
+    }
     if (iter > 0 && iter % coolPeriod === 0) temperature *= 0.992
 
     const tenure = baseTenure + (iter % 5)
@@ -830,7 +835,7 @@ export function runScheduler(
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
   onProgress?: (evt: SchedulerProgressEvent) => void,
-  options?: { randomSeed?: number },
+  options?: { randomSeed?: number; shouldAbort?: () => boolean },
 ): {
   slot_assignments: Record<string, number>
   solver_used: string
@@ -878,8 +883,10 @@ export function runScheduler(
     solverFraction: 0,
   })
 
+  const shouldAbort = options?.shouldAbort
   const progressStep = Math.max(1, Math.floor(runCount / 10))
   for (let i = 0; i < runCount; i++) {
+    if (shouldAbort?.()) throw new PipelineCancelledError()
     const r = solveGreedySeed(
       courseCodes,
       sections,
@@ -934,6 +941,7 @@ export function runScheduler(
 
     const tPhase2 = performance.now()
     for (let p = 1; p < pool; p++) {
+      if (shouldAbort?.()) throw new PipelineCancelledError()
       const seed = runs[p]
       if (!seed) continue
       const elapsed = (performance.now() - tPhase2) / 1000
@@ -958,7 +966,7 @@ export function runScheduler(
         courseAdj,
         sectionCountByCourse,
         parallelCap,
-        { maxIterFactor: 1.85 },
+        { maxIterFactor: 1.85, shouldAbort },
         rng,
       )
       const slotMap = sectionSlotsFromBundle(sections, refined)

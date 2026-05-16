@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
-import {
-  auditScheduleHardConstraints,
-  buildSchedule,
-  parallelHardCap,
-} from '@/modules/scheduling/scheduler'
-import { extractFacultyConstraints } from '@/modules/scheduling/preprocessing'
+import { buildScheduleFromSnapshot, countPlanningFacultySections } from '@/modules/scheduling/facultyMapping'
+import type { SchedulingSnapshot } from '@/modules/scheduling/schedulingSnapshot'
 import { mergeLateEnrollmentIntoSnapshot, type MergeLateEnrollmentResult } from '@/modules/scheduling/lateEnrollmentMerge'
+import { buildCourseEmailsXlsxBuffer } from '@/modules/scheduling/pipelineExports'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
 import {
   deleteSavedRun,
@@ -19,11 +16,13 @@ import {
   type SavedScheduleRun,
 } from '@/lib/savedRunsStorage'
 import { downloadArrayBuffer } from '@/lib/downloadArrayBuffer'
+import { FacultyMappingPanel } from '@/features/FacultyMappingPanel'
 import {
   HardConstraintAuditNotice,
   ScheduleExportBlockedNotice,
   SchedulePreview,
 } from '@/features/schedulerResultUi'
+import type { Schedule } from '@/modules/scheduling/types'
 
 function formatWhen(iso: string) {
   try {
@@ -148,24 +147,19 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
   const [lastMergeMessage, setLastMergeMessage] = useState<string | null>(null)
   const [postMerge, setPostMerge] = useState<MergeLateEnrollmentResult | null>(null)
+  const [courseEmailsExportBusy, setCourseEmailsExportBusy] = useState(false)
 
-  const schedule = useMemo(() => {
-    const flatSections = Object.values(snapshot.courseSections).flat()
-    const facultyConstraints = extractFacultyConstraints(snapshot.courseSections)
-    const audit = auditScheduleHardConstraints(
-      snapshot.courseSections,
-      snapshot.slot_assignments,
-      parallelHardCap(flatSections.length),
-      facultyConstraints,
-    )
-    return buildSchedule(snapshot.courseSections, snapshot.slot_assignments, {
-      solver_used: 'saved-run',
-      solver_time_seconds: 0,
-      hard_constraints_feasible: audit.feasible,
-      hard_constraint_violations: audit.violations,
-      solver_primary_metrics_zero: false,
-    })
-  }, [snapshot])
+  const [schedule, setSchedule] = useState<Schedule>(() => buildScheduleFromSnapshot(snapshot).schedule)
+
+  const handleFacultyApplied = useCallback(
+    (next: { snapshot: SchedulingSnapshot; schedule: Schedule }) => {
+      setSnapshot(next.snapshot)
+      setSchedule(next.schedule)
+      updateSavedRunSnapshot(run.id, next.snapshot)
+      setPostMerge(null)
+    },
+    [run.id],
+  )
 
   const persistTitle = useCallback(() => {
     const t = title.trim() || run.title
@@ -196,6 +190,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
           return
         }
         setSnapshot(out.schedulingSnapshot)
+        setSchedule(out.schedule!)
         updateSavedRunSnapshot(run.id, out.schedulingSnapshot)
         setPostMerge(out)
         const s = out.mergeSummary
@@ -371,22 +366,46 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
                   Clash report
                 </button>
               )}
-              {postMerge.courseEmailsXlsx && (
+              {postMerge.schedulingSnapshot?.enrollmentRows?.length ? (
                 <button
                   type="button"
-                  onClick={() =>
-                    downloadArrayBuffer(postMerge.courseEmailsXlsx!, 'unislot-course-emails-after-merge.xlsx')
-                  }
+                  disabled={courseEmailsExportBusy}
+                  onClick={() => {
+                    void (async () => {
+                      setCourseEmailsExportBusy(true)
+                      try {
+                        const buf = await buildCourseEmailsXlsxBuffer(
+                          postMerge.schedulingSnapshot!.enrollmentRows,
+                        )
+                        downloadArrayBuffer(buf, 'unislot-course-emails-after-merge.xlsx')
+                      } catch (e) {
+                        alert(e instanceof Error ? e.message : 'Export failed')
+                      } finally {
+                        setCourseEmailsExportBusy(false)
+                      }
+                    })()
+                  }}
                   className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
                 >
                   <Download className="size-4" aria-hidden />
-                  Course emails
+                  {courseEmailsExportBusy ? 'Preparing…' : 'Course emails'}
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         )}
       </section>
+
+      <FacultyMappingPanel
+        key={`faculty-${run.id}-${countPlanningFacultySections(snapshot.courseSections)}`}
+        snapshot={snapshot}
+        schedule={schedule}
+        onApplied={handleFacultyApplied}
+        alwaysShow={
+          countPlanningFacultySections(snapshot.courseSections) === 0 &&
+          Boolean(snapshot.facultyOverrides && Object.keys(snapshot.facultyOverrides).length > 0)
+        }
+      />
 
       <section className="space-y-4">
         <h2 className="text-xl font-semibold text-text">Timetable (frozen slots)</h2>

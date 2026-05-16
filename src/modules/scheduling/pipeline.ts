@@ -6,7 +6,6 @@ import {
   computeSectionSplits,
   extractFacultyConstraints,
 } from './preprocessing'
-import { buildSchedule, computeClashReport, localSearchSeedPlan, runScheduler } from './scheduler'
 import { computeSchedulingStats, type SchedulingStats } from './engines/metrics'
 import { sumConflictGraphWeights } from './engines/conflictGraph'
 import { TOTAL_WEEKLY_SLOTS } from './engines/timeModel'
@@ -17,10 +16,14 @@ import {
   deepCloneCourseSections,
   type SchedulingSnapshot,
 } from './schedulingSnapshot'
-import { clashReportToRichWorkbookBuffer } from './io/excelClashReport'
-import { courseEmailsToWorkbookBuffer } from './io/excelCourseEmails'
+import { throwIfAborted } from './cancellation'
+import {
+  buildClashXlsxBuffer,
+  buildCourseEmailsXlsxBuffer,
+  buildScheduleXlsxBuffer,
+  type PipelineExportKind,
+} from './pipelineExports'
 import { readFirstSheetAsAoA } from './io/excelIo'
-import { scheduleToWorkbookBuffer } from './io/excelScheduleWorkbook'
 
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
   const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
@@ -81,6 +84,14 @@ function mapSolverFraction(solverFraction: number | undefined): number | undefin
 export type RunPipelineOptions = {
   randomSeed?: number
   allowProvisionalScheduleExport?: boolean
+  /**
+   * When true, build .xlsx buffers during the run (higher memory, slower time-to-done).
+   * Default false: exports are generated on demand in the worker after the solve completes.
+   */
+  eagerExports?: boolean
+  /** Which workbooks to build when {@link eagerExports} is true (ignored otherwise). */
+  eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
+  signal?: AbortSignal
 }
 
 export interface PipelineResult {
@@ -103,14 +114,46 @@ export interface PipelineResult {
   schedulingSnapshot: SchedulingSnapshot | null
 }
 
+async function buildEagerExportsSequential(
+  kinds: Partial<Record<PipelineExportKind, boolean>>,
+  artifacts: {
+    schedule: Schedule | null
+    clashReport: ClashReport | null
+    enrollmentRows: EnrollmentRow[]
+    allowScheduleXlsx: boolean
+  },
+): Promise<{
+  scheduleXlsx: ArrayBuffer | null
+  clashXlsx: ArrayBuffer | null
+  courseEmailsXlsx: ArrayBuffer | null
+}> {
+  let scheduleXlsx: ArrayBuffer | null = null
+  let clashXlsx: ArrayBuffer | null = null
+  let courseEmailsXlsx: ArrayBuffer | null = null
+
+  if (kinds.schedule && artifacts.allowScheduleXlsx && artifacts.schedule) {
+    scheduleXlsx = await buildScheduleXlsxBuffer(artifacts.schedule)
+  }
+  if (kinds.clash && artifacts.clashReport) {
+    clashXlsx = await buildClashXlsxBuffer(artifacts.clashReport)
+  }
+  if (kinds.courseEmails && artifacts.enrollmentRows.length > 0) {
+    courseEmailsXlsx = await buildCourseEmailsXlsxBuffer(artifacts.enrollmentRows)
+  }
+
+  return { scheduleXlsx, clashXlsx, courseEmailsXlsx }
+}
+
 export async function runPipeline(
   arrayBuffer: ArrayBuffer,
   onProgress: (event: PipelineProgressEvent) => void,
   options?: RunPipelineOptions,
 ): Promise<PipelineResult> {
   const emit = onProgress
+  const signal = options?.signal
 
   emit({ stage: 'read', message: 'Reading first worksheet from workbook…', fraction: 0.02 })
+  throwIfAborted(signal)
   const aoa = await readFirstSheetAsAoA(arrayBuffer)
   if (!aoa) {
     emit({
@@ -144,6 +187,7 @@ export async function runPipeline(
   })
 
   emit({ stage: 'parse', message: 'Parsing cells into enrollment rows…', fraction: 0.09 })
+  throwIfAborted(signal)
   const { rows, validation: parseValidation } = parseExcelRows(aoa)
   const { students, courses, enrollmentRows, validation } = loadAndValidate(rows, parseValidation)
 
@@ -179,6 +223,7 @@ export async function runPipeline(
     message: 'Splitting sections, assigning enrollments, extracting faculty labels…',
     fraction: 0.15,
   })
+  throwIfAborted(signal)
   let courseSections = computeSectionSplits(courses)
   applyDistinctFacultyPerSection(courses, courseSections)
   courseSections = assignStudentsToSections(students, courseSections, enrollmentRows)
@@ -192,6 +237,11 @@ export async function runPipeline(
     message: `${sectionCount.toLocaleString()} sections · ${conflictGraph.edges.length.toLocaleString()} conflict edges (weighted sum ${edgeWeight.toLocaleString()})`,
     fraction: PRE_END,
   })
+
+  const { localSearchSeedPlan, runScheduler, buildSchedule, computeClashReport } = await import(
+    './scheduler',
+  )
+  throwIfAborted(signal)
 
   const seedPlan = localSearchSeedPlan(courseCount)
   emit({
@@ -213,8 +263,9 @@ export async function runPipeline(
         etaSeconds: evt.etaSeconds,
       })
     },
-    { randomSeed: options?.randomSeed },
+    { randomSeed: options?.randomSeed, shouldAbort: () => signal?.aborted === true },
   )
+  throwIfAborted(signal)
   let schedule = buildSchedule(courseSections, sched.slot_assignments, {
     solver_used: sched.solver_used,
     solver_time_seconds: sched.solver_time_seconds,
@@ -232,17 +283,40 @@ export async function runPipeline(
     ? 'Hard-constraint audit did not pass. The schedule workbook was not generated. Enable “Allow provisional schedule export” and re-run with the same file, or fix the underlying data and re-run.'
     : null
 
-  emit({
-    stage: 'export',
-    message: 'Serialising schedule, clash report, and course-email workbooks…',
-    fraction: 0.9,
-    etaSeconds: null,
-  })
-  const [scheduleXlsx, clashXlsx, courseEmailsXlsx] = await Promise.all([
-    allowScheduleXlsx ? scheduleToWorkbookBuffer(schedule) : Promise.resolve(null),
-    clashReportToRichWorkbookBuffer(clashReport),
-    courseEmailsToWorkbookBuffer(enrollmentRows),
-  ])
+  const eagerKinds = options?.eagerExportKinds ?? {
+    schedule: true,
+    clash: true,
+    courseEmails: false,
+  }
+  let scheduleXlsx: ArrayBuffer | null = null
+  let clashXlsx: ArrayBuffer | null = null
+  let courseEmailsXlsx: ArrayBuffer | null = null
+
+  if (options?.eagerExports) {
+    emit({
+      stage: 'export',
+      message: 'Serialising requested workbooks (one at a time)…',
+      fraction: 0.9,
+      etaSeconds: null,
+    })
+    throwIfAborted(signal)
+    const built = await buildEagerExportsSequential(eagerKinds, {
+      schedule,
+      clashReport,
+      enrollmentRows,
+      allowScheduleXlsx,
+    })
+    scheduleXlsx = built.scheduleXlsx
+    clashXlsx = built.clashXlsx
+    courseEmailsXlsx = built.courseEmailsXlsx
+  } else {
+    emit({
+      stage: 'done',
+      message: 'Solve complete — workbook exports are available on demand when you download.',
+      fraction: 0.98,
+      etaSeconds: null,
+    })
+  }
 
   const sectionCountForStats = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
   const flatSections = Object.values(courseSections).flat()

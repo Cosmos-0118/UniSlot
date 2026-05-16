@@ -6,6 +6,8 @@ export type SchedulingSnapshot = {
   courseSections: Record<string, Section[]>
   students: Record<string, Student>
   enrollmentRows: EnrollmentRow[]
+  /** Real faculty names keyed by section_id (applied onto sections after solve). */
+  facultyOverrides?: Record<string, string>
 }
 
 export function cloneStudents(students: Record<string, Student>): Record<string, Student> {
@@ -34,5 +36,6 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     courseSections: deepCloneCourseSections(s.courseSections),
     students: cloneStudents(s.students),
     enrollmentRows: s.enrollmentRows.map((r) => ({ ...r })),
+    facultyOverrides: s.facultyOverrides ? { ...s.facultyOverrides } : undefined,
   }
 }

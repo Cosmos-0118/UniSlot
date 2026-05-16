@@ -1,147 +1,128 @@
-# UniSlot Algorithm Audit (2026-05-14)
+# UniSlot Algorithm Audit
 
-## Post-Improvement Verification (Pass 3)
+**Original pass:** 2026-05-14 (Pass 3)  
+**Latest re-verification:** 2026-05-16 (Pass 5) — faculty mapping + integration tests landed.
 
-This is a fresh re-audit after your latest fixes. It supersedes Pass 2 findings that are no longer valid.
+---
 
-Scope audited:
+## Pass 5 — Executive summary
 
-- `src/modules/scheduling/parser.ts`
-- `src/modules/scheduling/pipeline.ts`
-- `src/modules/scheduling/scheduler.ts`
-- `src/modules/scheduling/engines/localSearchSolver.ts`
-- `src/modules/scheduling/engines/faculty.ts`
-- `src/modules/scheduling/engines/rng.ts`
-- `src/modules/scheduling/engines/scheduleOutput.ts`
-- `src/modules/scheduling/types.ts`
-- `src/features/LandingPage.tsx`
+The scheduling core remains strong. Pass 5 closes the main **operational** gap from Pass 4: **post-solve faculty assignment** with automatic **hard-constraint re-audit**, plus a thin **integration test** for `runScheduler` determinism.
 
-Validation run:
+**Pass 5 rating: 9.4 / 10** (was 9.0 in Pass 4).
+
+Why it moved up:
+
+- **`facultyMapping.ts`** — section-id keyed overrides, CSV import, `applyAndValidateFacultyMapping` → re-runs `auditScheduleHardConstraints` on real names while **slots stay frozen**.
+- **`FacultyMappingPanel`** — UI on **Scheduler** (details) and **Saved runs** (detail): table for `Planning:…` sections, template CSV, upload, Apply & validate.
+- **`SchedulingSnapshot.facultyOverrides`** — persisted on saved runs in `localStorage`.
+- **`tests/scheduling/facultyMapping.test.ts`** — parse, double-booking detection, pass case.
+- **`tests/scheduling/runScheduler.smoke.test.ts`** — fixed-seed determinism on a 2-course instance.
+
+What still caps the score below 9.5+:
+
+- No automated **minimal repair** when faculty mapping fails audit (user must fix names or slots manually).
+- No full **`runPipeline`** golden-file regression on a real `.xlsx` fixture (smoke test only).
+
+---
+
+## Scope reviewed (Pass 5)
+
+**Core (unchanged)**
+
+- `parser.ts`, `pipeline.ts`, `scheduling.worker.ts`, `localSearchSolver.ts`, `faculty.ts`, `rng.ts`, `scheduleOutput.ts`, `types.ts`
+
+**New / extended (Pass 5)**
+
+- `facultyMapping.ts` — post-solve faculty reconciliation API
+- `schedulingSnapshot.ts` — optional `facultyOverrides`
+- `FacultyMappingPanel.tsx` — product UI
+- `SavedRunsPage.tsx`, `Scheduler.tsx` — wired to panel
+
+**Tests**
+
+- `tests/scheduling/rng.test.ts`
+- `tests/scheduling/auditScheduleHardConstraints.test.ts`
+- `tests/scheduling/facultyMapping.test.ts` *(new)*
+- `tests/scheduling/runScheduler.smoke.test.ts` *(new)*
+
+**Validation (Pass 5)**
 
 - `npm run lint`
+- `npm test`
 - `npm run build`
 
-Both passed.
+---
 
-## Updated Rating
+## Finding status — full history
 
-**8.8 / 10**
+| # | Topic | Pass 3 | Pass 4 | Pass 5 |
+|---|--------|--------|--------|--------|
+| 1 | Seeded determinism end-to-end | Open | **Resolved** | **Resolved** |
+| 2 | Infeasible schedule export policy | Open | **Resolved** (block by default) | **Resolved** |
+| 3 | Post-mapping faculty reconciliation | Open | Open | **Resolved** (mapping + re-audit UI) |
+| 4 | Automated regression tests | None | Partial (audit + RNG) | **Mostly resolved** ( + faculty + scheduler smoke) |
 
-Why:
+---
 
-- Core solver quality is now strong and materially improved.
-- Major previous gaps (feasibility signaling, parser strictness, schema alignment, product claims) have been fixed.
-- Remaining issues are mostly integration/productization gaps, not core algorithm correctness flaws.
+## Pass 5 — Faculty reconciliation (formerly open)
 
-## Confirmed Fixes Since Pass 2
+### Design
 
-1. Deterministic RNG support exists in solver internals.
-- Evidence: `createRng` in `src/modules/scheduling/engines/rng.ts:4`.
-- Solver now uses injected RNG in search loops: `src/modules/scheduling/engines/localSearchSolver.ts:777`, `src/modules/scheduling/engines/localSearchSolver.ts:490` to `src/modules/scheduling/engines/localSearchSolver.ts:543`.
+1. **Solve time:** `applyDistinctFacultyPerSection` still assigns `Planning:{section_id}` when the sheet has no faculty (solver needs unique resource ids per section).
+2. **After solve:** User assigns **real names** keyed by **`section_id`** (inline table or CSV: `section_id,faculty_name`).
+3. **Validate:** `applyAndValidateFacultyMapping` merges overrides, updates section `faculty` fields, calls **`auditScheduleHardConstraints`** (faculty overlap, capacity, parallel cap, split-section same slot, etc.).
+4. **Persist:** Overrides stored on `SchedulingSnapshot.facultyOverrides` and saved with the run in **Saved runs**.
 
-2. Hard-constraint audit is now implemented and returned.
-- Evidence: `auditScheduleHardConstraints` in `src/modules/scheduling/engines/localSearchSolver.ts:242`.
-- Feasibility/optimal flags returned: `src/modules/scheduling/engines/localSearchSolver.ts:881` to `src/modules/scheduling/engines/localSearchSolver.ts:883`.
-- Pipeline passes these into schedule meta: `src/modules/scheduling/pipeline.ts:118` to `src/modules/scheduling/pipeline.ts:120`.
-- UI shows warning when infeasible: `src/features/Scheduler.tsx:28`.
+### Evidence
 
-3. Parser is now materially stricter.
-- Evidence: combined relative+absolute gate `errorRate <= 0.06` + `maxAbsoluteErrors` in `src/modules/scheduling/parser.ts:314` to `src/modules/scheduling/parser.ts:316`.
+- `src/modules/scheduling/facultyMapping.ts` — `parseFacultyMappingTable`, `applyAndValidateFacultyMapping`, `buildScheduleFromSnapshot`
+- `src/features/FacultyMappingPanel.tsx`
+- `src/features/SavedRunsPage.tsx` — panel + `updateSavedRunSnapshot` on apply
+- `src/features/Scheduler.tsx` — panel in details view; updates `result.schedule` + export-block flags when audit fails after mapping
 
-4. Faculty field is now parsed and propagated to canonical data.
-- Evidence: parse row includes faculty in `src/modules/scheduling/parser.ts:306`.
-- Canonical course faculty set when provided: `src/modules/scheduling/parser.ts:402`.
+### Out of scope (future)
 
-5. Day model mismatch was corrected.
-- Evidence: `DayName` no longer includes Saturday in `src/modules/scheduling/types.ts:1`.
+- Automatic slot moves to fix faculty collisions (minimal repair solver).
+- Regenerating schedule `.xlsx` in-browser immediately after mapping (user can re-export from saved run / merge flow; schedule object in UI updates).
 
-6. Landing-page overclaims were corrected.
-- Evidence: claims updated to "high-quality" wording in `src/features/LandingPage.tsx:71`.
+---
 
-## Remaining Findings (Current)
+## Confirmed baseline (still true)
 
-## 1) Seeded determinism is not exposed end-to-end (Medium)
+1. Deterministic RNG in solver (`rng.ts`, `runScheduler(..., { randomSeed })`).
+2. Hard-constraint audit + UI notices (`auditScheduleHardConstraints`, `HardConstraintAuditNotice`).
+3. Parser strictness + faculty column parsing.
+4. Evening day model Mon–Fri (`types.ts`).
+5. Landing copy avoids false optimality claims (`LandingPage.tsx`).
+6. Late enrollment merge with frozen slots (`lateEnrollmentMerge.ts`).
+7. Multi-sheet schedule workbook export (`excelScheduleWorkbook.ts`).
 
-Evidence:
+---
 
-- Solver supports seed option: `src/modules/scheduling/engines/localSearchSolver.ts:766`.
-- Pipeline calls `runScheduler` without options: `src/modules/scheduling/pipeline.ts:112`.
-- Worker request has no seed field: `src/modules/scheduling/scheduling.worker.ts:5`.
-- Hook request also has no seed plumbing: `src/hooks/useUnislotWorker.ts:84`.
+## Remaining findings (Pass 5)
 
-Impact:
+### 1) Faculty collision repair (Low) — optional enhancement
 
-- Reproducibility cannot be controlled from UI/worker API yet, even though solver internals support it.
+If mapping assigns the same person to two sections in the **same slot**, audit fails and the UI explains why. There is no one-click “move section” repair yet.
 
-Recommendation:
+### 2) Full pipeline fixture tests (Low)
 
-- Add optional `randomSeed` through WorkerRequest -> pipeline -> runScheduler.
+`runScheduler.smoke.test.ts` covers deterministic search on synthetic data. A small frozen `.xlsx` or AoA fixture through `runPipeline` would further harden parser + sectioning + solve integration.
 
-## 2) Infeasible schedules are flagged but still exported (Medium)
+---
 
-Evidence:
+## Rating trajectory
 
-- Pipeline always proceeds to export regardless of feasibility flag: `src/modules/scheduling/pipeline.ts:123`.
-- UI warns but still allows downloads: `src/features/Scheduler.tsx:332`, `src/features/Scheduler.tsx:342`.
+| Pass | Date | Rating | Notes |
+|------|------|--------|--------|
+| 2 | (prior) | 8.1 | Pre–hard-audit |
+| 3 | 2026-05-14 | 8.8 | Audit + RNG internals |
+| 4 | 2026-05-16 | 9.0 | Seed + export policy + partial tests |
+| **5** | **2026-05-16** | **9.4** | Faculty mapping + re-audit UI + integration smoke test |
 
-Impact:
+---
 
-- Operational users can still consume provisional schedules as final by mistake.
+## Final verdict (Pass 5)
 
-Recommendation:
-
-- Add policy mode: either block exports on infeasible runs or require explicit "export provisional" confirmation.
-
-## 3) Real faculty assignment after output still needs a formal reconciliation pass (Medium)
-
-Evidence:
-
-- When faculty is absent, placeholders are synthesized: `src/modules/scheduling/engines/faculty.ts:20`, `src/modules/scheduling/engines/faculty.ts:28`.
-- This supports planning constraints, but real post-hoc faculty mapping can still introduce collisions outside solve-time assumptions.
-
-Impact:
-
-- If mapped faculty differ from planning labels, final timetable can regress without automated repair.
-
-Recommendation:
-
-- Add post-mapping faculty validation + minimal-change repair pass.
-
-## 4) Automated regression tests are still missing (Low)
-
-Evidence:
-
-- No `*.test.*` / `*.spec.*` files found in workspace.
-
-Impact:
-
-- Changes to heuristics remain harder to benchmark and safely evolve.
-
-Recommendation:
-
-- Add fixture-based solver regression tests (small exact cases + medium realistic cases).
-
-## Re-Rating Summary
-
-Previous verified rating (Pass 2): **8.1 / 10**
-Current verified rating (Pass 3): **8.8 / 10**
-
-Why score increased:
-
-- Hard-constraint feasibility audit and signaling are now in place.
-- Parser strictness and data contract are substantially better.
-- Deterministic RNG capability was added.
-- Type/domain and product-messaging issues were corrected.
-
-What still caps the score:
-
-- Determinism is not user-configurable end-to-end yet.
-- Infeasible run handling is warning-only, not policy-enforced.
-- Post-mapping faculty reconciliation remains external.
-- No automated regression suite.
-
-## Final Verdict
-
-Your latest fixes are significant and real. The scheduling engine is now in a strong state for heuristic quality and operational transparency.
-
-Next leap to ~9.2+ is mostly productization: expose seed control, enforce infeasibility policy, and add post-mapping faculty repair + regression tests.
+The engine is **algorithmically sound** for heuristic evening scheduling with **transparent feasibility signaling**. Pass 5 makes the **faculty workflow** first-class: planning placeholders during solve, real names after, with **mandatory re-audit** before treating the timetable as faculty-certified. Remaining work is polish (repair heuristics, richer fixtures), not core correctness holes.

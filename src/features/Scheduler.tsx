@@ -9,7 +9,9 @@ import {
   Library,
   Users,
 } from 'lucide-react'
-import { useCallback, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { scheduleWithEntries } from '@/hooks/useUnislotWorker'
+import type { PipelineExportKind } from '@/modules/scheduling/pipelineExports'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/shared/utils/cn'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline'
@@ -18,6 +20,7 @@ import { useSchedulingSession } from '../contexts/useSchedulingSession'
 import { ProcessingTerminal } from '../components/ui/ProcessingTerminal'
 import { createSavedRun } from '@/lib/savedRunsStorage'
 import { downloadArrayBuffer } from '@/lib/downloadArrayBuffer'
+import { FacultyMappingPanel } from '@/features/FacultyMappingPanel'
 import {
   ClashPreview,
   HardConstraintAuditNotice,
@@ -65,6 +68,12 @@ export function Scheduler() {
     viewMode,
     setViewMode,
     run,
+    cancelRun,
+    exportXlsx,
+    fetchSchedulingSnapshot,
+    fetchScheduleEntries,
+    syncWorkerArtifacts,
+    warmupWorker,
     running,
     progress,
     resetTerminalLog,
@@ -76,6 +85,110 @@ export function Scheduler() {
   const [drag, setDrag] = useState(false)
   const [runSeedInput, setRunSeedInput] = useState('')
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
+  const [exportBusy, setExportBusy] = useState<PipelineExportKind | null>(null)
+  const [snapshotBusy, setSnapshotBusy] = useState(false)
+  const [entriesBusy, setEntriesBusy] = useState(false)
+
+  const ensureSnapshot = useCallback(async () => {
+    if (!result) return null
+    if (result.schedulingSnapshot) return result.schedulingSnapshot
+    if (!result.hasDeferredSnapshot) return null
+    setSnapshotBusy(true)
+    try {
+      const snapshot = await fetchSchedulingSnapshot()
+      setResult({ ...result, schedulingSnapshot: snapshot, hasDeferredSnapshot: false })
+      return snapshot
+    } finally {
+      setSnapshotBusy(false)
+    }
+  }, [result, fetchSchedulingSnapshot, setResult])
+
+  const saveRunForLateRegistrations = useCallback(async () => {
+    const snapshot = await ensureSnapshot()
+    if (!snapshot) return
+    const stem = (fileName ?? 'schedule').replace(/\.xlsx$/i, '')
+    const saved = createSavedRun({
+      title: `${stem} (${new Date().toLocaleDateString()})`,
+      sourceFileName: fileName,
+      snapshot,
+    })
+    navigate(`/app/runs/${saved.id}`)
+  }, [ensureSnapshot, fileName, navigate])
+
+  useEffect(() => {
+    if (viewMode !== 'idle') return
+    let cancelled = false
+    const runWarmup = () => {
+      if (!cancelled) warmupWorker()
+    }
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(runWarmup, { timeout: 2500 })
+      return () => {
+        cancelled = true
+        cancelIdleCallback(id)
+      }
+    }
+    const t = window.setTimeout(runWarmup, 500)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [viewMode, warmupWorker])
+
+  useEffect(() => {
+    if (!result?.hasDeferredSnapshot || result.schedulingSnapshot) return
+    if (viewMode !== 'actions' && viewMode !== 'details') return
+    void ensureSnapshot()
+  }, [viewMode, result?.hasDeferredSnapshot, result?.schedulingSnapshot, ensureSnapshot])
+
+  useEffect(() => {
+    if (viewMode !== 'details' || !result?.schedule) return
+    if (result.schedule.entries.length > 0 || !result.hasDeferredScheduleEntries) return
+    let cancelled = false
+    setEntriesBusy(true)
+    void fetchScheduleEntries()
+      .then((entries) => {
+        if (cancelled || !result.schedule) return
+        setResult({
+          ...result,
+          schedule: scheduleWithEntries(result.schedule, entries),
+          hasDeferredScheduleEntries: false,
+        })
+      })
+      .catch((e) => console.error(e))
+      .finally(() => {
+        if (!cancelled) setEntriesBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [viewMode, result, fetchScheduleEntries, setResult])
+
+  const downloadXlsx = useCallback(
+    async (
+      kind: PipelineExportKind,
+      filename: string,
+      bufferKey: 'scheduleXlsx' | 'clashXlsx' | 'courseEmailsXlsx',
+    ) => {
+      if (!result) return
+      const cached = result[bufferKey]
+      if (cached) {
+        downloadArrayBuffer(cached, filename)
+        return
+      }
+      setExportBusy(kind)
+      try {
+        const buf = await exportXlsx(kind)
+        setResult({ ...result, [bufferKey]: buf })
+        downloadArrayBuffer(buf, filename)
+      } catch (e) {
+        alert(e instanceof Error ? e.message : 'Export failed')
+      } finally {
+        setExportBusy(null)
+      }
+    },
+    [result, exportXlsx, setResult],
+  )
 
   const handleFile = useCallback(
     async (file: File | null) => {
@@ -105,10 +218,12 @@ export function Scheduler() {
           setViewMode('details')
         }
       } catch (e) {
-        console.error(e)
+        const msg = e instanceof Error ? e.message : 'Something went wrong'
         resetTerminalLog()
         setViewMode('idle')
-        alert(e instanceof Error ? e.message : 'Something went wrong')
+        if (msg.toLowerCase().includes('cancelled')) return
+        console.error(e)
+        alert(msg)
       }
     },
     [run, setResult, setFileName, setViewMode, resetTerminalLog, runSeedInput, allowProvisionalExport],
@@ -245,6 +360,20 @@ export function Scheduler() {
       {/* ── Terminal (processing view) ───────────────────── */}
       {showTerminal && (
         <section className="flex-1 flex flex-col min-h-0 mb-4">
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                cancelRun()
+                resetTerminalLog()
+                setViewMode('idle')
+              }}
+              disabled={!running}
+              className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Cancel run
+            </button>
+          </div>
           <ProcessingTerminal
             lines={terminalLines}
             typingIdx={terminalTypingIdx}
@@ -290,16 +419,7 @@ export function Scheduler() {
 
             {/* Three action buttons */}
             <div className="results-actions">
-              {result.scheduleXlsx ? (
-                <button
-                  type="button"
-                  onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
-                  className="btn-download btn-download-primary"
-                >
-                  <Download className="size-4" aria-hidden />
-                  Download Schedule
-                </button>
-              ) : (
+              {result.schedule_export_blocked ? (
                 <button
                   type="button"
                   disabled
@@ -312,17 +432,26 @@ export function Scheduler() {
                   <Download className="size-4" aria-hidden />
                   Schedule export blocked
                 </button>
-              )}
-              {result.clashXlsx && (
+              ) : (
                 <button
                   type="button"
-                  onClick={() => downloadArrayBuffer(result.clashXlsx!, 'unislot-clash-report.xlsx')}
-                  className="btn-download btn-download-secondary"
+                  disabled={exportBusy === 'schedule'}
+                  onClick={() => void downloadXlsx('schedule', 'unislot-schedule.xlsx', 'scheduleXlsx')}
+                  className="btn-download btn-download-primary"
                 >
                   <Download className="size-4" aria-hidden />
-                  Download Clash Report
+                  {exportBusy === 'schedule' ? 'Preparing schedule…' : 'Download Schedule'}
                 </button>
               )}
+              <button
+                type="button"
+                disabled={exportBusy === 'clash' || !result.clashReport}
+                onClick={() => void downloadXlsx('clash', 'unislot-clash-report.xlsx', 'clashXlsx')}
+                className="btn-download btn-download-secondary"
+              >
+                <Download className="size-4" aria-hidden />
+                {exportBusy === 'clash' ? 'Preparing clash report…' : 'Download Clash Report'}
+              </button>
             </div>
 
             <button
@@ -334,22 +463,15 @@ export function Scheduler() {
               View Outcome
             </button>
 
-            {result.schedulingSnapshot && (
+            {(result.schedulingSnapshot || result.hasDeferredSnapshot) && (
               <button
                 type="button"
-                onClick={() => {
-                  const stem = (fileName ?? 'schedule').replace(/\.xlsx$/i, '')
-                  const run = createSavedRun({
-                    title: `${stem} (${new Date().toLocaleDateString()})`,
-                    sourceFileName: fileName,
-                    snapshot: result.schedulingSnapshot!,
-                  })
-                  navigate(`/app/runs/${run.id}`)
-                }}
-                className="theme-btn-secondary theme-focusable mx-auto mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+                disabled={snapshotBusy}
+                onClick={() => void saveRunForLateRegistrations()}
+                className="theme-btn-secondary theme-focusable mx-auto mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-60"
               >
                 <Library className="size-4" aria-hidden />
-                Save run for late registrations
+                {snapshotBusy ? 'Preparing saved run…' : 'Save run for late registrations'}
               </button>
             )}
           </div>
@@ -418,16 +540,7 @@ export function Scheduler() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {result.scheduleXlsx ? (
-                    <button
-                      type="button"
-                      onClick={() => downloadArrayBuffer(result.scheduleXlsx!, 'unislot-schedule.xlsx')}
-                      className="theme-btn-primary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
-                    >
-                      <Download className="size-4" aria-hidden />
-                      Schedule
-                    </button>
-                  ) : (
+                  {result.schedule_export_blocked ? (
                     <button
                       type="button"
                       disabled
@@ -440,21 +553,55 @@ export function Scheduler() {
                       <Download className="size-4" aria-hidden />
                       Schedule (blocked)
                     </button>
-                  )}
-                  {result.clashXlsx && (
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => downloadArrayBuffer(result.clashXlsx!, 'unislot-clash-report.xlsx')}
-                      className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+                      disabled={exportBusy === 'schedule'}
+                      onClick={() => void downloadXlsx('schedule', 'unislot-schedule.xlsx', 'scheduleXlsx')}
+                      className="theme-btn-primary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
                     >
                       <Download className="size-4" aria-hidden />
-                      Clash report
+                      {exportBusy === 'schedule' ? 'Preparing…' : 'Schedule'}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    disabled={exportBusy === 'clash' || !result.clashReport}
+                    onClick={() => void downloadXlsx('clash', 'unislot-clash-report.xlsx', 'clashXlsx')}
+                    className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+                  >
+                    <Download className="size-4" aria-hidden />
+                    {exportBusy === 'clash' ? 'Preparing…' : 'Clash report'}
+                  </button>
                 </div>
               </div>
 
-              {result.schedulingSnapshot && (
+              {(result.schedulingSnapshot || result.hasDeferredSnapshot) &&
+                (result.schedulingSnapshot ? (
+                  <FacultyMappingPanel
+                    snapshot={result.schedulingSnapshot}
+                    schedule={result.schedule}
+                    onApplied={({ snapshot, schedule, auditFeasible }) => {
+                      syncWorkerArtifacts({ schedule, snapshot })
+                      setResult({
+                        ...result,
+                        schedulingSnapshot: snapshot,
+                        schedule,
+                        scheduleXlsx: null,
+                        schedule_export_blocked: auditFeasible
+                          ? result.schedule_export_blocked
+                          : true,
+                        schedule_export_block_reason: auditFeasible
+                          ? result.schedule_export_block_reason
+                          : 'Hard-constraint audit failed after faculty mapping. Fix faculty double-booking or re-run with provisional export enabled.',
+                      })
+                    }}
+                  />
+                ) : (
+                  <p className="text-sm text-text-muted">Loading faculty mapping tools…</p>
+                ))}
+
+              {(result.schedulingSnapshot || result.hasDeferredSnapshot) && (
                 <div className="theme-card rounded-2xl p-5">
                   <h2 className="text-lg font-semibold text-text">Late registrations</h2>
                   <p className="mt-1 max-w-lg text-sm text-text-muted">
@@ -463,24 +610,21 @@ export function Scheduler() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => {
-                      const stem = (fileName ?? 'schedule').replace(/\.xlsx$/i, '')
-                      const run = createSavedRun({
-                        title: `${stem} (${new Date().toLocaleDateString()})`,
-                        sourceFileName: fileName,
-                        snapshot: result.schedulingSnapshot!,
-                      })
-                      navigate(`/app/runs/${run.id}`)
-                    }}
-                    className="theme-btn-secondary theme-focusable mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+                    disabled={snapshotBusy}
+                    onClick={() => void saveRunForLateRegistrations()}
+                    className="theme-btn-secondary theme-focusable mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-60"
                   >
                     <Library className="size-4" aria-hidden />
-                    Save run for late registrations
+                    {snapshotBusy ? 'Preparing…' : 'Save run for late registrations'}
                   </button>
                 </div>
               )}
 
-              <SchedulePreview entries={result.schedule.entries} />
+              {entriesBusy ? (
+                <p className="text-sm text-text-muted">Loading timetable preview…</p>
+              ) : (
+                <SchedulePreview entries={result.schedule.entries} />
+              )}
 
               <div>
                 <h2 className="mb-3 text-xl font-semibold text-text">Clash overview</h2>

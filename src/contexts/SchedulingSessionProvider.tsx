@@ -14,7 +14,17 @@ import {
 } from './schedulingSessionContext'
 
 export function SchedulingSessionProvider({ children }: { children: ReactNode }) {
-  const { run, running, progress } = useUnislotWorker()
+  const {
+    run,
+    cancel,
+    exportXlsx,
+    fetchSchedulingSnapshot,
+    fetchScheduleEntries,
+    syncWorkerArtifacts,
+    warmupWorker,
+    running,
+    progress,
+  } = useUnislotWorker()
   const [result, setResult] = useState<SchedulingSessionValue['result']>(null)
   const [fileName, setFileName] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<SchedulerViewMode>('idle')
@@ -37,11 +47,12 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
   }, [running])
 
   const resetSession = useCallback(() => {
+    cancel()
     setResult(null)
     setFileName(null)
     setViewMode('idle')
     resetTerminalLog()
-  }, [resetTerminalLog])
+  }, [cancel, resetTerminalLog])
 
   const value = useMemo<SchedulingSessionValue>(
     () => ({
@@ -52,6 +63,12 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
       viewMode,
       setViewMode,
       run,
+      cancelRun: cancel,
+      exportXlsx,
+      fetchSchedulingSnapshot,
+      fetchScheduleEntries,
+      syncWorkerArtifacts,
+      warmupWorker,
       running,
       progress,
       resetSession,
@@ -65,6 +82,12 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
       fileName,
       viewMode,
       run,
+      cancel,
+      exportXlsx,
+      fetchSchedulingSnapshot,
+      fetchScheduleEntries,
+      syncWorkerArtifacts,
+      warmupWorker,
       running,
       progress,
       resetSession,

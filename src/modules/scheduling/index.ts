@@ -31,4 +31,15 @@ export {
 } from './lateEnrollmentMerge'
 export { parseExcelRows, loadAndValidate } from './parser'
 export { runScheduler, auditScheduleHardConstraints } from './scheduler'
+export {
+  applyAndValidateFacultyMapping,
+  applyFacultyOverridesToSnapshot,
+  buildScheduleFromSnapshot,
+  countPlanningFacultySections,
+  facultyMappingTemplateCsv,
+  isPlanningFacultyLabel,
+  listFacultyMappingRows,
+  parseFacultyMappingTable,
+  type ParseFacultyMappingResult,
+} from './facultyMapping'
 export type { ScheduleWorkbookBranding } from './io/excelScheduleWorkbook'
