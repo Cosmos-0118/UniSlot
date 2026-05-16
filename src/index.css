@@ -293,56 +293,7 @@
   }
   
   body {
-    @apply min-h-dvh bg-bg text-text font-sans transition-[background-color,color,background-image] duration-500;
-  }
-
-  html.theme-changing,
-  html.theme-changing *,
-  html.theme-changing *::before,
-  html.theme-changing *::after {
-    transition-property: color, background-color, border-color, box-shadow, outline-color, text-decoration-color, fill, stroke, backdrop-filter;
-    transition-duration: 360ms;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    html.theme-changing,
-    html.theme-changing *,
-    html.theme-changing *::before,
-    html.theme-changing *::after {
-      transition-duration: 1ms !important;
-    }
-  }
-
-  @supports (view-transition-name: root) {
-    :root {
-      view-transition-name: root;
-    }
-
-    ::view-transition-old(root),
-    ::view-transition-new(root) {
-      animation-duration: 320ms;
-      animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-      mix-blend-mode: normal;
-    }
-
-    ::view-transition-old(root) {
-      animation-name: theme-old-fade;
-    }
-
-    ::view-transition-new(root) {
-      animation-name: theme-new-fade;
-    }
-
-    @keyframes theme-old-fade {
-      from { opacity: 1; filter: blur(0); }
-      to { opacity: 0.9; filter: blur(1px); }
-    }
-
-    @keyframes theme-new-fade {
-      from { opacity: 0.92; filter: blur(1.5px); }
-      to { opacity: 1; filter: blur(0); }
-    }
+    @apply min-h-dvh bg-bg text-text font-sans;
   }
 
   ::selection {
@@ -1229,4 +1180,104 @@
   background: color-mix(in srgb, var(--btn-outline-bg) 100%, var(--btn-outline-border) 40%);
   border-color: var(--btn-outline-text);
   transform: translateY(-2px);
+}
+
+/* Theme curtain — swap behind overlay, then fade out (no View Transitions snapshots) */
+.theme-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  background-color: var(--theme-curtain-from, var(--bg));
+  contain: strict;
+}
+
+.theme-curtain--cover {
+  opacity: 1;
+  transition: opacity 90ms ease-out;
+}
+
+.theme-curtain--reveal {
+  opacity: 0;
+  background-color: var(--theme-curtain-to, var(--bg));
+  transition:
+    opacity 340ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 1ms linear;
+}
+
+.theme-curtain__panel {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow:
+    0 16px 40px -24px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  transition:
+    opacity 120ms ease-out,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.theme-curtain--cover .theme-curtain__panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.theme-curtain--reveal .theme-curtain__panel {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transition-duration: 180ms;
+}
+
+.theme-curtain__spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-top-color: var(--brand-500);
+  animation: theme-curtain-spin 0.65s linear infinite;
+}
+
+@keyframes theme-curtain-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+html[data-theme-switching] {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-curtain {
+    display: none;
+  }
+}
+
+.theme-popover-in {
+  animation: theme-popover-in 200ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes theme-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, Download, FileSpreadsheet, Trash2, UserPlus, Users } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CalendarDays,
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  Mail,
+  Trash2,
+  UserPlus,
+  Users,
+} from 'lucide-react'
+import { applySavedRunEmailsToSession } from '@/features/scheduling/courseEmailsFromSnapshot'
+import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
 import { SavedRunListCard, SavedRunsEmptyState } from '@/features/scheduling/SavedRunListCard'
 import { formatSavedAt, snapshotStats, sourceFileLabel } from '@/features/scheduling/savedRunDisplay'
 import { cn } from '@/shared/utils/cn'
@@ -102,6 +115,8 @@ export function SavedRunsPage() {
 }
 
 function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: () => void }) {
+  const navigate = useNavigate()
+  const { setResult, setFileName } = useSchedulingSession()
   const { alert: showAlert, confirm: showConfirm } = useAppDialog()
   const [title, setTitle] = useState(run.title)
   const [snapshot, setSnapshot] = useState(run.snapshot)
@@ -448,6 +463,25 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
             {exportBusy === 'clash' ? 'Preparing…' : 'Clash report'}
           </button>
           {snapshot.enrollmentRows.length > 0 ? (
+            <>
+            <button
+              type="button"
+              onClick={() => {
+                if (!applySavedRunEmailsToSession(run, setResult, setFileName)) {
+                  void showAlert({
+                    title: 'No enrollment data',
+                    message: 'This saved run has no enrollment rows to build course emails from.',
+                    tone: 'warning',
+                  })
+                  return
+                }
+                navigate('/app/emails')
+              }}
+              className="theme-btn-secondary theme-focusable inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+            >
+              <Mail className="size-4" aria-hidden />
+              Open in Emails
+            </button>
             <button
               type="button"
               disabled={exportBusy === 'courseEmails'}
@@ -473,6 +507,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
               <Download className="size-4" aria-hidden />
               {exportBusy === 'courseEmails' ? 'Preparing…' : 'Course emails'}
             </button>
+            </>
           ) : null}
         </div>
       </section>

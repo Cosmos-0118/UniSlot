@@ -27,6 +27,26 @@
       content="UniSlot — evening course scheduling in your browser. Private, client-side workers."
     />
     <title>UniSlot — Evening scheduling in your browser</title>
+    <script>
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('unislot-theme')
+          var theme = 'dark'
+          if (stored) {
+            try {
+              theme = JSON.parse(stored)
+            } catch (_) {
+              theme = stored
+            }
+          }
+          if (theme === 'light' || theme === 'dark' || theme === 'crimson') {
+            document.documentElement.setAttribute('data-theme', theme)
+          }
+        } catch (_) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

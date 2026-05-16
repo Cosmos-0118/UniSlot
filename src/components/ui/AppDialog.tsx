@@ -57,15 +57,29 @@ export function AppDialog({ request, onClose }: Props) {
   const size = options.size ?? 'md'
   const { icon: Icon, iconWrap, iconColor } = toneStyles(tone)
   const body = normalizeDialogBody(options)
-  const layout = dialogLayoutMode(body, size)
+  const layout = kind === 'content' ? (size === 'lg' ? 'wide' : dialogLayoutMode(body, size)) : dialogLayoutMode(body, size)
+  const contentNode = request.kind === 'content' ? request.options.content : null
 
   const title =
     options.title ??
-    (kind === 'confirm' && tone === 'danger' ? 'Confirm action' : kind === 'alert' ? 'Notice' : 'Confirm')
+    (kind === 'confirm' && tone === 'danger'
+      ? 'Confirm action'
+      : kind === 'alert'
+        ? 'Notice'
+        : kind === 'content'
+          ? 'Dialog'
+          : 'Confirm')
 
   const confirmLabel =
-    options.confirmLabel ?? (kind === 'confirm' && tone === 'danger' ? 'Delete' : 'OK')
-  const cancelLabel = kind === 'confirm' ? (options.cancelLabel ?? 'Cancel') : undefined
+    kind === 'content'
+      ? 'OK'
+      : (options.confirmLabel ?? (kind === 'confirm' && tone === 'danger' ? 'Delete' : 'OK'))
+  const cancelLabel =
+    kind === 'confirm'
+      ? (options.cancelLabel ?? 'Cancel')
+      : kind === 'content'
+        ? (options.cancelLabel ?? 'Close')
+        : undefined
 
   const dismissAlert = useCallback(() => onClose(true), [onClose])
   const dismissCancel = useCallback(() => onClose(false), [onClose])
@@ -95,7 +109,7 @@ export function AppDialog({ request, onClose }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose(kind === 'alert')
+        onClose(kind === 'alert' || kind === 'content')
         return
       }
       if (e.key === 'Enter' && kind === 'alert' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
@@ -152,14 +166,14 @@ export function AppDialog({ request, onClose }: Props) {
         type="button"
         aria-label="Close dialog"
         className="app-dialog-backdrop absolute inset-0 bg-[color-mix(in_srgb,var(--bg)_55%,transparent)] backdrop-blur-[6px]"
-        onClick={() => onClose(kind === 'alert')}
+        onClick={() => onClose(kind === 'alert' || kind === 'content')}
       />
       <div
         ref={panelRef}
-        role="alertdialog"
+        role={kind === 'content' ? 'dialog' : 'alertdialog'}
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={body.kind === 'empty' ? undefined : descId}
+        aria-describedby={body.kind === 'empty' && !contentNode ? undefined : descId}
         className={cn(
           'app-dialog-panel theme-card relative z-10 flex max-h-[min(90dvh,calc(100dvh-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border/80 shadow-2xl',
           PANEL_LAYOUT_CLASS[layout],
@@ -204,7 +218,7 @@ export function AppDialog({ request, onClose }: Props) {
             ) : null}
             <button
               type="button"
-              onClick={() => onClose(kind === 'alert')}
+              onClick={() => onClose(kind === 'alert' || kind === 'content')}
               className="theme-focusable rounded-lg p-1.5 text-text-muted transition-colors hover:bg-bg-tertiary/80 hover:text-text"
               aria-label="Close"
             >
@@ -214,14 +228,19 @@ export function AppDialog({ request, onClose }: Props) {
         </header>
 
         <div className="app-dialog-body min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
-          <DialogBodyContent body={body} descId={descId} />
+          {body.kind !== 'empty' ? <DialogBodyContent body={body} descId={descId} /> : null}
+          {contentNode ? (
+            <div className={cn('w-full', body.kind !== 'empty' && 'mt-4')}>{contentNode}</div>
+          ) : null}
         </div>
 
         <footer
           className={cn(
             'shrink-0 border-t border-border/60 bg-bg-secondary/30 px-4 py-3.5 sm:px-5 sm:py-4',
             'pb-[max(0.875rem,env(safe-area-inset-bottom))]',
-            kind === 'confirm' ? 'flex flex-col-reverse gap-2 sm:flex-row sm:justify-end' : '',
+            kind === 'confirm' || kind === 'content'
+              ? 'flex flex-col-reverse gap-2 sm:flex-row sm:justify-end'
+              : '',
           )}
         >
           {kind === 'confirm' ? (
@@ -233,19 +252,30 @@ export function AppDialog({ request, onClose }: Props) {
               {cancelLabel}
             </button>
           ) : null}
-          <button
-            ref={confirmRef}
-            type="button"
-            onClick={dismissAlert}
-            className={cn(
-              'theme-focusable rounded-xl px-4 py-2.5 text-sm font-medium',
-              kind === 'alert' ? 'theme-btn-primary w-full' : 'theme-btn-primary sm:w-auto',
-              tone === 'danger' &&
-                'border-red-500/40 bg-[var(--accent-danger)] hover:brightness-110',
-            )}
-          >
-            {confirmLabel}
-          </button>
+          {kind === 'content' ? (
+            <button
+              ref={confirmRef}
+              type="button"
+              onClick={dismissAlert}
+              className="theme-btn-secondary theme-focusable w-full rounded-xl px-4 py-2.5 text-sm font-medium sm:w-auto"
+            >
+              {cancelLabel}
+            </button>
+          ) : (
+            <button
+              ref={confirmRef}
+              type="button"
+              onClick={dismissAlert}
+              className={cn(
+                'theme-focusable rounded-xl px-4 py-2.5 text-sm font-medium',
+                kind === 'alert' ? 'theme-btn-primary w-full' : 'theme-btn-primary sm:w-auto',
+                tone === 'danger' &&
+                  'border-red-500/40 bg-[var(--accent-danger)] hover:brightness-110',
+              )}
+            >
+              {confirmLabel}
+            </button>
+          )}
         </footer>
       </div>
     </div>,

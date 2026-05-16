@@ -5,14 +5,17 @@ import { useTheme } from '@/contexts/theme/useTheme'
 import { cn } from '@/shared/utils/cn'
 
 type ThemeSwitcherProps = {
-  /** `toolbar` — compact horizontal row for marketing nav. `sidebar` — grid like app sidebar. */
   layout?: 'toolbar' | 'sidebar'
-  /** Landing: one icon button; panel opens on press until dismissed. */
   variant?: 'open' | 'popover'
-  /** Omit Light (e.g. marketing page where light theme is unsupported visually). */
   hideLight?: boolean
   className?: string
 }
+
+const themeOptions = [
+  { id: 'light' as const, icon: Sun, label: 'Light' },
+  { id: 'dark' as const, icon: Moon, label: 'Dark' },
+  { id: 'crimson' as const, icon: Droplet, label: 'Crimson' },
+]
 
 export function ThemeSwitcher({
   layout = 'sidebar',
@@ -26,9 +29,12 @@ export function ThemeSwitcher({
 
   const close = useCallback(() => setPopoverOpen(false), [])
 
+  const visibleOptions = hideLight ? themeOptions.filter((o) => o.id !== 'light') : themeOptions
+  const activeOption = themeOptions.find((o) => o.id === theme) ?? themeOptions[1]
+  const TriggerIcon = activeOption.icon
+
   useEffect(() => {
     if (!popoverOpen || variant !== 'popover') return
-    /** Use `click` so theme buttons receive full mousedown→click before we evaluate outside. */
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) close()
     }
@@ -43,54 +49,37 @@ export function ThemeSwitcher({
     }
   }, [popoverOpen, variant, close])
 
+  const pickTheme = (id: (typeof themeOptions)[number]['id'], e: React.MouseEvent) => {
+    setTheme(id, { clientX: e.clientX, clientY: e.clientY })
+    if (variant === 'popover') close()
+  }
+
   const panel = (
     <div
       className={cn(
+        'theme-theme-toggle relative',
         layout === 'toolbar'
-          ? 'theme-theme-toggle flex flex-row gap-1 rounded-2xl p-1.5'
+          ? 'flex flex-row gap-1 rounded-2xl p-1.5'
           : cn(
-              'theme-theme-toggle grid gap-1.5 rounded-2xl p-1.5',
+              'grid gap-1.5 rounded-2xl p-1.5',
               hideLight ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 md:grid-cols-3'
             )
       )}
     >
-      {!hideLight ? (
+      {visibleOptions.map((option) => (
         <ThemeButton
-          icon={Sun}
-          label="Light"
-          isActive={theme === 'light'}
-          onClick={() => {
-            setTheme('light')
-            if (variant === 'popover') close()
-          }}
+          key={option.id}
+          icon={option.icon}
+          label={option.label}
+          isActive={theme === option.id}
+          onClick={(e) => pickTheme(option.id, e)}
           compact={layout === 'toolbar'}
         />
-      ) : null}
-      <ThemeButton
-        icon={Moon}
-        label="Dark"
-        isActive={theme === 'dark'}
-        onClick={() => {
-          setTheme('dark')
-          if (variant === 'popover') close()
-        }}
-        compact={layout === 'toolbar'}
-      />
-      <ThemeButton
-        icon={Droplet}
-        label="Crimson"
-        isActive={theme === 'crimson'}
-        onClick={() => {
-          setTheme('crimson')
-          if (variant === 'popover') close()
-        }}
-        compact={layout === 'toolbar'}
-      />
+      ))}
     </div>
   )
 
   if (variant === 'popover') {
-    const TriggerIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Droplet
     return (
       <div ref={rootRef} className={cn('relative', className)}>
         <button
@@ -99,17 +88,19 @@ export function ThemeSwitcher({
           aria-expanded={popoverOpen}
           aria-haspopup="dialog"
           aria-label="Choose theme"
-          className="theme-theme-button theme-focusable flex size-10 items-center justify-center rounded-xl border border-border/60 bg-[color-mix(in_srgb,var(--bg-tertiary)_70%,transparent)] shadow-sm backdrop-blur-md transition-colors hover:bg-[color-mix(in_srgb,var(--bg-tertiary)_88%,var(--brand-500)_8%)]"
+          className="theme-theme-button theme-focusable flex size-10 items-center justify-center rounded-xl border border-border/60 bg-[color-mix(in_srgb,var(--bg-tertiary)_70%,transparent)] shadow-sm backdrop-blur-md transition-[background-color,color] duration-200 hover:bg-[color-mix(in_srgb,var(--bg-tertiary)_88%,var(--brand-500)_8%)]"
         >
-          <TriggerIcon className="size-[18px]" />
+          <TriggerIcon key={theme} className="size-[18px]" />
         </button>
         {popoverOpen ? (
           <div
             role="dialog"
             aria-label="Theme"
-            className="theme-muted-surface absolute right-0 top-[calc(100%+10px)] z-[120] min-w-[220px] rounded-2xl p-2 shadow-xl ring-1 ring-border/50"
+            className="theme-muted-surface theme-popover-in absolute right-0 top-[calc(100%+10px)] z-[120] min-w-[220px] rounded-2xl p-2 shadow-xl ring-1 ring-border/50"
           >
-            <div className="mb-2 px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-text-muted">Theme</div>
+            <div className="mb-2 px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-text-muted">
+              Theme
+            </div>
             {panel}
           </div>
         ) : null}
@@ -122,7 +113,7 @@ export function ThemeSwitcher({
       <div
         className={cn(
           'mb-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-text-muted',
-          layout === 'toolbar' ? 'hidden sm:block px-0.5' : 'mb-2 hidden px-2 md:block'
+          layout === 'toolbar' ? 'hidden px-0.5 sm:block' : 'mb-2 hidden px-2 md:block'
         )}
       >
         Theme
@@ -142,7 +133,7 @@ function ThemeButton({
   icon: LucideIcon
   label: string
   isActive: boolean
-  onClick: () => void
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
   compact?: boolean
 }) {
   return (
@@ -151,7 +142,7 @@ function ThemeButton({
       onClick={onClick}
       title={label}
       className={cn(
-        'theme-theme-button theme-focusable flex items-center justify-center gap-2 rounded-xl px-2 py-2.5',
+        'theme-theme-button theme-focusable relative flex items-center justify-center gap-2 rounded-xl px-2 py-2.5 transition-[color,transform] duration-200 active:scale-[0.97]',
         compact
           ? 'min-h-9 flex-1 flex-col gap-0.5 py-2 sm:min-h-[40px] sm:flex-row sm:gap-2 sm:py-2.5'
           : 'md:flex-col md:gap-1',

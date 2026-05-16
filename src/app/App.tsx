@@ -30,9 +30,10 @@ const EmailsView = lazy(async () => {
 export default function App() {
   return (
     <ThemeProvider>
-      <AppDialogProvider>
-        <BrowserRouter>
-          <Routes>
+      <BrowserRouter>
+        <SchedulingSessionProvider>
+          <AppDialogProvider>
+            <Routes>
           <Route
             path="/"
             element={
@@ -41,14 +42,7 @@ export default function App() {
               </Suspense>
             }
           />
-          <Route
-            path="/app"
-            element={
-              <SchedulingSessionProvider>
-                <DashboardLayout />
-              </SchedulingSessionProvider>
-            }
-          >
+          <Route path="/app" element={<DashboardLayout />}>
             <Route index element={<Navigate to="scheduler" replace />} />
             <Route path="scheduler" element={<Scheduler />} />
             <Route path="runs/:runId?" element={<SavedRunsPage />} />
@@ -77,9 +71,10 @@ export default function App() {
             />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            </Routes>
+          </AppDialogProvider>
+        </SchedulingSessionProvider>
       </BrowserRouter>
-      </AppDialogProvider>
     </ThemeProvider>
   )
 }

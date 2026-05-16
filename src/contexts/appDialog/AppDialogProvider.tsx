@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { AppDialog } from '@/components/ui/AppDialog'
 import { AppDialogContext } from './AppDialogContext'
+import type { AppContentDialogRender } from './AppDialogContext'
 import type { AppAlertOptions, AppConfirmOptions, AppDialogRequest } from './types'
 
 function normalizeAlert(options: string | AppAlertOptions): AppAlertOptions {
@@ -28,12 +29,22 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const openContent = useCallback((render: AppContentDialogRender) => {
+    return new Promise<void>((resolve) => {
+      const close = () => {
+        setRequest(null)
+        resolve()
+      }
+      setRequest({ kind: 'content', options: render({ close }), resolve: close })
+    })
+  }, [])
+
   const handleClose = useCallback(
     (confirmed: boolean) => {
       if (!request) return
       const current = request
       setRequest(null)
-      if (current.kind === 'alert') {
+      if (current.kind === 'alert' || current.kind === 'content') {
         current.resolve()
       } else {
         current.resolve(confirmed)
@@ -42,7 +53,7 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
     [request],
   )
 
-  const value = useMemo(() => ({ alert, confirm }), [alert, confirm])
+  const value = useMemo(() => ({ alert, confirm, openContent }), [alert, confirm, openContent])
 
   return (
     <AppDialogContext.Provider value={value}>

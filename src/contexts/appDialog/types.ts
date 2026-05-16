@@ -21,6 +21,12 @@ export type AppConfirmOptions = AppDialogOptionsBase & {
   cancelLabel?: string
 }
 
+export type AppContentDialogOptions = AppDialogOptionsBase & {
+  content: import('react').ReactNode
+  cancelLabel?: string
+}
+
 export type AppDialogRequest =
   | { kind: 'alert'; options: AppAlertOptions; resolve: () => void }
   | { kind: 'confirm'; options: AppConfirmOptions; resolve: (value: boolean) => void }
+  | { kind: 'content'; options: AppContentDialogOptions; resolve: () => void }
