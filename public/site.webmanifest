@@ -4,8 +4,8 @@
   "description": "Evening course scheduling in your browser.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#241c57",
-  "theme_color": "#241c57",
+  "background_color": "#7575F8",
+  "theme_color": "#7575F8",
   "icons": [
     {
       "src": "/brand/icon-192.png",
