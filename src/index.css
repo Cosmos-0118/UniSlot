@@ -337,9 +337,15 @@
   background: var(--bg);
 }
 
-/* UI logos ship with transparent corners — no extra box shadow needed */
+/* Dark mark on light chrome — subtle edge without CSS radius (PNGs are pre-squirled) */
 .app-logo {
-  display: block;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+[data-theme='light'] .app-logo {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(28, 27, 25, 0.1);
 }
 
 .theme-card {
