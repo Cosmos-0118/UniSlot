@@ -1,7 +1,7 @@
 import { AppLogo } from '@/components/brand/AppLogo'
 import { cn } from '@/shared/utils/cn'
 import { Calendar, Library, Settings, Zap, Mail } from 'lucide-react'
-import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
+
 
 interface SidebarProps {
   activeFeature: string;
@@ -21,14 +21,14 @@ export function Sidebar({ activeFeature, setActiveFeature, onLogoClick }: Sideba
 
   return (
     <aside className="theme-sidebar flex w-20 flex-shrink-0 flex-col transition-colors duration-500 md:w-80">
-      <div className="px-3 pb-4 pt-5 md:px-5 md:pt-6">
+      <div className="flex h-16 shrink-0 items-center border-b border-border/60 px-3 md:px-5">
         <button
           type="button"
           onClick={onLogoClick}
           title="Back to UniSlot home"
-          className="theme-sidebar-brand theme-focusable group flex w-full cursor-pointer items-center justify-center gap-3 rounded-2xl px-2.5 py-3 text-left transition-[transform,box-shadow] duration-200 hover:brightness-[1.03] active:scale-[0.99] md:justify-start md:px-3.5"
+          className="theme-focusable group flex w-full cursor-pointer items-center justify-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-200 hover:bg-[color-mix(in_srgb,var(--bg-tertiary)_40%,transparent)] md:justify-start"
         >
-          <AppLogo size="nav" className="ring-1 ring-border/70 shadow-sm transition-shadow duration-200 group-hover:ring-brand-400/35" />
+          <AppLogo size="nav" className="transition-transform duration-200 group-active:scale-95" />
           <div className="hidden md:block">
             <div className="text-lg font-semibold tracking-wide text-text">UniSlot</div>
             <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-muted">
@@ -38,7 +38,7 @@ export function Sidebar({ activeFeature, setActiveFeature, onLogoClick }: Sideba
         </button>
       </div>
 
-      <div className="hidden px-5 pb-1 md:block">
+      <div className="hidden px-5 pb-1 pt-4 md:block">
         <p className="theme-sidebar-section-label">Workspace</p>
       </div>
 
@@ -72,9 +72,6 @@ export function Sidebar({ activeFeature, setActiveFeature, onLogoClick }: Sideba
         })}
       </nav>
 
-      <div className="border-t border-border/60 px-3 pb-4 pt-4 md:px-4 md:pt-5">
-        <ThemeSwitcher layout="sidebar" />
-      </div>
     </aside>
   );
 }

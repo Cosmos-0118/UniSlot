@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
+import { TopBar } from './TopBar';
 
 interface LayoutProps {
   children: ReactNode;
@@ -12,7 +13,7 @@ export function Layout({ children, activeFeature, setActiveFeature, onLogoClick 
   return (
     <div className="app-shell flex h-screen overflow-hidden text-text">
       <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={onLogoClick} />
-      <main className="relative flex-1 overflow-y-auto">
+      <main className="relative flex flex-1 flex-col overflow-hidden">
         <div
           className="pointer-events-none absolute inset-0 transition-opacity duration-700"
           style={{
@@ -20,7 +21,8 @@ export function Layout({ children, activeFeature, setActiveFeature, onLogoClick 
             opacity: 0.36,
           }}
         />
-        <div className="relative z-10 h-full w-full">{children}</div>
+        <TopBar />
+        <div className="relative z-10 flex-1 overflow-y-auto w-full">{children}</div>
       </main>
     </div>
   );

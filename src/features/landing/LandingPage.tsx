@@ -103,9 +103,9 @@ export function LandingPage() {
     >
       <CubesBackground />
 
-      <nav className="relative z-30 flex w-full justify-center px-6 py-6">
+      <nav className="fixed left-0 top-0 z-50 flex w-full justify-center border-b border-white/10 bg-[color-mix(in_srgb,var(--bg)_60%,transparent)] backdrop-blur-2xl px-6 py-3">
         <motion.div
-          className="flex w-full max-w-5xl items-center justify-between gap-4"
+          className="flex w-full items-center justify-between gap-4"
           initial={false}
           animate={showContent ? 'shown' : 'hidden'}
           variants={{
@@ -116,10 +116,10 @@ export function LandingPage() {
           <motion.div
             variants={navRevealVariants}
             transition={{ duration: 0.6 }}
-            className="flex min-w-0 items-center gap-3 text-2xl font-bold tracking-wide"
+            className="flex min-w-0 items-center gap-2.5 text-lg font-bold tracking-wide"
           >
-            <AppLogo size="hero" />
-            <span className="text-text">UniSlot</span>
+            <AppLogo size="nav" />
+            <span className="text-text mt-0.5">UniSlot</span>
           </motion.div>
           <motion.div
             variants={navRevealRightVariants}
@@ -139,7 +139,7 @@ export function LandingPage() {
         </motion.div>
       </nav>
 
-      <main className="pointer-events-none relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 pb-20 pt-4 md:px-8 md:pb-28 md:pt-8">
+      <main className="pointer-events-none relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 pb-20 pt-24 md:px-8 md:pb-28 md:pt-32">
         <motion.div
           variants={containerVariants}
           initial="hidden"
