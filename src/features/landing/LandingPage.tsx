@@ -103,7 +103,7 @@ export function LandingPage() {
     >
       <CubesBackground />
 
-      <nav className="fixed left-0 top-0 z-50 flex w-full justify-center border-b border-white/10 bg-[color-mix(in_srgb,var(--bg)_60%,transparent)] backdrop-blur-2xl px-6 py-3">
+      <nav className="fixed left-0 top-0 z-50 flex w-full justify-center border-b border-white/[0.05] bg-[color-mix(in_srgb,var(--bg)_8%,transparent)] backdrop-blur-md px-6 py-3">
         <motion.div
           className="flex w-full items-center justify-between gap-4"
           initial={false}
@@ -126,7 +126,12 @@ export function LandingPage() {
             transition={{ duration: 0.6 }}
             className="flex shrink-0 items-center gap-3 sm:gap-4"
           >
-            <ThemeSwitcher layout="toolbar" variant="popover" hideLight />
+            <ThemeSwitcher
+              layout="toolbar"
+              variant="popover"
+              hideLight
+              className="[&>button]:border-white/10 [&>button]:bg-white/[0.06] [&>button]:shadow-none [&>button]:backdrop-blur-sm [&>button]:hover:bg-white/[0.12]"
+            />
             <motion.button
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.98 }}

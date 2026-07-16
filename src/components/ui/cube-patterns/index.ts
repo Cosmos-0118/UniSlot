@@ -1,108 +1,39 @@
 import { blendSamples, easeInOutCubic } from './blend'
 import {
-  patternStarlingMurmuration,
-  patternArcticTernArc,
-  patternHummingbirdJewel,
-  patternMonarchRiver,
-  patternFireflyMeadow,
-  patternPhoenixEmber,
-  patternDragonflyWetland,
-  patternSwanLakeMist,
-  patternKiteFestival,
-  patternRavenStorm,
-  patternAurora,
-  patternGoldenHour,
-  patternAbyssalGlow,
-  patternCherryBlossom,
-  patternForestCanopy,
-  patternDesertDunes,
-  patternCoralReef,
-  patternVolcanicEmber,
-  patternArcticIce,
   patternMidnightSky,
-  patternWhaleSongDepth,
-  patternJellyfishBloom,
-  patternKelpCathedral,
-  patternBiolumTide,
-  patternMantaBallet,
-  patternOctopusGarden,
-  patternSeaTurtleGlide,
-  patternHydrothermalShimmer,
-  patternSunkenTreasure,
-  patternNarwhalIcefjord,
-  patternCyberNeon,
-  patternEtherealGlass,
-  patternSynthwaveSunset,
-  patternHoloFracture,
-  patternMatrixCascade,
-  patternNeonNoirRain,
-  patternAcidChrome,
-  patternLaserArena,
+  patternAurora,
   patternQuartzCavern,
-  patternDatamoshTide,
+  patternEtherealGlass,
+  patternAbyssalGlow,
+  patternWhaleSongDepth,
+  patternSwanLakeMist,
+  patternArcticIce,
+  patternJellyfishBloom,
+  patternCherryBlossom,
 } from './patterns'
 import type { CubePattern, PatternContext, PatternSample } from './types'
 
 /**
- * Curated sequence of 40 patterns. Alternating collections for maximum visual variety.
+ * Curated sequence of 10 calm, cohesive patterns.
+ * Dark cool → purple/magenta → soft pink — matches the landing nebula look.
  */
 export const CUBE_PATTERNS: readonly CubePattern[] = [
-  // Block 1
-  patternAurora,
-  patternCyberNeon,
-  patternWhaleSongDepth,
-  patternStarlingMurmuration,
-  // Block 2
-  patternGoldenHour,
-  patternEtherealGlass,
-  patternJellyfishBloom,
-  patternArcticTernArc,
-  // Block 3
-  patternAbyssalGlow,
-  patternSynthwaveSunset,
-  patternKelpCathedral,
-  patternHummingbirdJewel,
-  // Block 4
-  patternCherryBlossom,
-  patternHoloFracture,
-  patternBiolumTide,
-  patternMonarchRiver,
-  // Block 5
-  patternForestCanopy,
-  patternMatrixCascade,
-  patternMantaBallet,
-  patternFireflyMeadow,
-  // Block 6
-  patternDesertDunes,
-  patternNeonNoirRain,
-  patternOctopusGarden,
-  patternPhoenixEmber,
-  // Block 7
-  patternCoralReef,
-  patternAcidChrome,
-  patternSeaTurtleGlide,
-  patternDragonflyWetland,
-  // Block 8
-  patternVolcanicEmber,
-  patternLaserArena,
-  patternHydrothermalShimmer,
-  patternSwanLakeMist,
-  // Block 9
-  patternArcticIce,
-  patternQuartzCavern,
-  patternSunkenTreasure,
-  patternKiteFestival,
-  // Block 10
   patternMidnightSky,
-  patternDatamoshTide,
-  patternNarwhalIcefjord,
-  patternRavenStorm,
+  patternAurora,
+  patternQuartzCavern,
+  patternEtherealGlass,
+  patternAbyssalGlow,
+  patternWhaleSongDepth,
+  patternSwanLakeMist,
+  patternArcticIce,
+  patternJellyfishBloom,
+  patternCherryBlossom,
 ] as const
 
 /** Full time on one pattern before easing into the next (seconds). */
-export const PATTERN_SEGMENT_SEC = 25
+export const PATTERN_SEGMENT_SEC = 35
 /** Portion of each segment used for crossfade to the next pattern (seconds). */
-export const PATTERN_BLEND_SEC = 6.0
+export const PATTERN_BLEND_SEC = 8.0
 
 /** Seconds spent fully inside the outgoing pattern before blend begins. */
 export const PATTERN_HOLD_SEC = PATTERN_SEGMENT_SEC - PATTERN_BLEND_SEC
