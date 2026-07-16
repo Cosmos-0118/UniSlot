@@ -12,19 +12,35 @@ const TARGET_PARALLEL_SECTIONS = 11
 const PARALLEL_SOFT_WEIGHT = 100
 const DAY_BALANCE_WEIGHT = 6
 const LOAD_BALANCE_FACTOR = 4
+const PHASE2_BASE_ITER_FACTOR = 1.85
+const PHASE2_EXPANDED_ITER_FACTOR = 2.1
 
-function multiStartRunCount(courseCount: number): number {
-  return Math.min(72, Math.max(16, Math.ceil(Math.sqrt(courseCount) * 5)))
+function multiStartRunCount(courseCount: number, poolWorkers = 1): number {
+  const base = Math.min(72, Math.max(16, Math.ceil(Math.sqrt(courseCount) * 5)))
+  if (poolWorkers <= 1) return base
+  return Math.min(96, base + 8 * (poolWorkers - 1))
 }
 
 function solutionPoolSize(runCount: number): number {
   return Math.min(14, Math.max(4, Math.floor(runCount / 5)))
 }
 
+function phase2MaxIterFactor(poolWorkers: number): number {
+  return poolWorkers >= 4 ? PHASE2_EXPANDED_ITER_FACTOR : PHASE2_BASE_ITER_FACTOR
+}
+
 /** Exposed for pipeline UX (seed counts match the solver). */
-export function localSearchSeedPlan(courseCount: number): { runCount: number; poolSize: number } {
-  const runCount = multiStartRunCount(courseCount)
-  return { runCount, poolSize: solutionPoolSize(runCount) }
+export function localSearchSeedPlan(
+  courseCount: number,
+  poolWorkers = 1,
+): { runCount: number; poolSize: number; poolWorkers: number; phase2IterFactor: number } {
+  const runCount = multiStartRunCount(courseCount, poolWorkers)
+  return {
+    runCount,
+    poolSize: solutionPoolSize(runCount),
+    poolWorkers,
+    phase2IterFactor: phase2MaxIterFactor(poolWorkers),
+  }
 }
 
 export type SchedulerProgressEvent = {
@@ -67,14 +83,32 @@ function countStudentsWithSlotClashes(
 ): number {
   let n = 0
   for (const st of studentToSections.keys()) {
-    const tally = new Array(numSlots).fill(0)
-    for (const secId of studentToSections.get(st)!) {
-      const sl = slotBySection[secId]
-      if (sl !== undefined && sl >= 0 && sl < numSlots) tally[sl]++
+    if (studentHasSlotClash(studentToSections.get(st)!, (secId) => slotBySection[secId]!, numSlots)) {
+      n++
     }
-    if (tally.some((c: number) => c >= 2)) n++
   }
   return n
+}
+
+/** Pairwise / small-map clash check — students enroll in ≤5 courses, avoid Array(55) alloc. */
+function studentHasSlotClash(
+  sectionIds: string[],
+  slotOfSec: (secId: string) => number,
+  numSlots: number,
+): boolean {
+  const seen = new Map<number, number>()
+  for (const secId of sectionIds) {
+    const sl = slotOfSec(secId)
+    if (sl === undefined || sl < 0 || sl >= numSlots) continue
+    const c = (seen.get(sl) ?? 0) + 1
+    if (c >= 2) return true
+    seen.set(sl, c)
+  }
+  return false
+}
+
+function parallelExcessAt(load: number): number {
+  return load > TARGET_PARALLEL_SECTIONS ? load - TARGET_PARALLEL_SECTIONS : 0
 }
 
 function parallelExcessPenalty(slotLoads: number[]): number {
@@ -212,6 +246,14 @@ function buildCourseAdjacency(
     m.get(b)!.set(a, (m.get(b)!.get(a) ?? 0) + e.weight)
   }
   return m
+}
+
+/** Public for solver pool problem packing. */
+export function buildCourseAdjacencyForPool(
+  conflictGraph: ConflictGraph,
+  sectionToCourse: Map<string, string>,
+): Map<string, Map<string, number>> {
+  return buildCourseAdjacency(conflictGraph, sectionToCourse)
 }
 
 function clashDeltaMoveCourse(
@@ -445,11 +487,23 @@ function hybridSATabuImprove(
     if (sa === sb) return false
     const ka = sectionCountByCourse.get(ca) ?? 1
     const kb = sectionCountByCourse.get(cb) ?? 1
-    const la = (slotLoads[sa] ?? 0) - ka + kb
-    const lb = (slotLoads[sb] ?? 0) - kb + ka
-    if (la > parallelCap || lb > parallelCap) return false
-    const t = { ...slotByCourse, [ca]: sb, [cb]: sa }
-    return facultySlotsFeasible(sections, t)
+    if ((slotLoads[sa] ?? 0) - ka + kb > parallelCap) return false
+    if ((slotLoads[sb] ?? 0) - kb + ka > parallelCap) return false
+    // Faculty check without cloning slotByCourse: ca→sb, cb→sa.
+    for (const sec of sections) {
+      if (sec.course_code === ca) {
+        const f = sec.faculty
+        if (!f) continue
+        const occ = facultySlots.get(f)?.get(sb)
+        if (occ && occ !== sec.section_id && sectionIdToCourse.get(occ) !== cb) return false
+      } else if (sec.course_code === cb) {
+        const f = sec.faculty
+        if (!f) continue
+        const occ = facultySlots.get(f)?.get(sa)
+        if (occ && occ !== sec.section_id && sectionIdToCourse.get(occ) !== ca) return false
+      }
+    }
+    return true
   }
 
   function applySwapCourses(ca: string, cb: string): void {
@@ -498,12 +552,7 @@ function hybridSATabuImprove(
   }
 
   function studentClashUnder(slotOfSec: (secId: string) => number, st: string): boolean {
-    const tally = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
-    for (const secId of studentToSections.get(st) ?? []) {
-      const sl = slotOfSec(secId)
-      if (sl >= 0 && sl < TOTAL_WEEKLY_SLOTS) tally[sl]++
-    }
-    return tally.some((c: number) => c >= 2)
+    return studentHasSlotClash(studentToSections.get(st) ?? [], slotOfSec, TOTAL_WEEKLY_SLOTS)
   }
 
   function deltaStudentsCourseMove(course: string, newSlot: number): number {
@@ -549,24 +598,26 @@ function hybridSATabuImprove(
   }
 
   function deltaParallelMove(course: string, oldSlot: number, newSlot: number): number {
+    if (oldSlot === newSlot) return 0
     const k = sectionCountByCourse.get(course) ?? 1
-    const before = parallelExcessPenalty(slotLoads)
-    const a = [...slotLoads]
-    a[oldSlot] = (a[oldSlot] ?? 0) - k
-    a[newSlot] = (a[newSlot] ?? 0) + k
-    return parallelExcessPenalty(a) - before
+    const o = slotLoads[oldSlot] ?? 0
+    const n = slotLoads[newSlot] ?? 0
+    const before = parallelExcessAt(o) + parallelExcessAt(n)
+    const after = parallelExcessAt(o - k) + parallelExcessAt(n + k)
+    return after - before
   }
 
   function deltaParallelSwap(ca: string, cb: string): number {
     const sa = slotByCourse[ca]!
     const sb = slotByCourse[cb]!
+    if (sa === sb) return 0
     const ka = sectionCountByCourse.get(ca) ?? 1
     const kb = sectionCountByCourse.get(cb) ?? 1
-    const before = parallelExcessPenalty(slotLoads)
-    const a = [...slotLoads]
-    a[sa] = (a[sa] ?? 0) - ka + kb
-    a[sb] = (a[sb] ?? 0) - kb + ka
-    return parallelExcessPenalty(a) - before
+    const o = slotLoads[sa] ?? 0
+    const n = slotLoads[sb] ?? 0
+    const before = parallelExcessAt(o) + parallelExcessAt(n)
+    const after = parallelExcessAt(o - ka + kb) + parallelExcessAt(n - kb + ka)
+    return after - before
   }
 
   function registerTabu(course: string, fromSlot: number, iter: number, tenure: number): void {
@@ -695,6 +746,7 @@ function solveGreedySeed(
   parallelCap: number,
   randomize: boolean,
   rng: Rng,
+  shouldAbort?: () => boolean,
 ): { slotByCourse: Record<string, number>; clashWeight: number } {
   function coursePriority(code: string): number {
     const secs = sections.filter((s) => s.course_code === code)
@@ -718,6 +770,7 @@ function solveGreedySeed(
   const CAP_HARD = 100_000_000
 
   for (const code of sorted) {
+    if (shouldAbort?.()) throw new PipelineCancelledError()
     const k = sectionCountByCourse.get(code) ?? 1
     const secs = sections.filter((s) => s.course_code === code)
     const faculties = secs.map((s) => s.faculty).filter(Boolean) as string[]
@@ -776,7 +829,7 @@ function solveGreedySeed(
     courseAdj,
     sectionCountByCourse,
     parallelCap,
-    undefined,
+    { shouldAbort },
     rng,
   )
 
@@ -830,13 +883,7 @@ function tryRepairFacultyBundleOverlaps(
   return facultySlotsFeasible(sections, cur) ? cur : null
 }
 
-export function runScheduler(
-  courseSections: Record<string, Section[]>,
-  conflictGraph: ConflictGraph,
-  facultyConstraints: Record<string, string[]>,
-  onProgress?: (evt: SchedulerProgressEvent) => void,
-  options?: { randomSeed?: number; shouldAbort?: () => boolean },
-): {
+export type SchedulerRunResult = {
   slot_assignments: Record<string, number>
   solver_used: string
   solver_time_seconds: number
@@ -845,138 +892,132 @@ export function runScheduler(
   /** True when {@link feasible} and best solution has zero RED students and zero clash weight (heuristic certificate, not global optimality proof). */
   optimal: boolean
   hard_constraint_violations: string[]
-} {
-  const rng = createRng(options?.randomSeed)
-  const t0 = performance.now() / 1000
+}
+
+export type SchedulerRunOptions = {
+  randomSeed?: number
+  shouldAbort?: () => boolean
+  /** 1 = in-process sequential (tests). Omit to auto-detect in async path. */
+  poolWorkers?: number
+}
+
+export type SeedRunResult = {
+  seedIndex: number
+  slotByCourse: Record<string, number>
+  clashWeight: number
+  students: number
+}
+
+/** One Phase-1 greedy+SA seed with independent RNG (`baseSeed + seedIndex`). */
+export function runPhase1SeedTask(
+  courseCodes: string[],
+  sections: Section[],
+  conflictGraph: ConflictGraph,
+  courseAdj: Map<string, Map<string, number>>,
+  sectionCountByCourse: Map<string, number>,
+  conflictDensity: Record<string, number>,
+  parallelCap: number,
+  seedIndex: number,
+  baseSeed: number | undefined,
+  shouldAbort?: () => boolean,
+): SeedRunResult {
+  const rng = createRng(baseSeed === undefined ? undefined : (baseSeed + seedIndex) >>> 0)
+  const r = solveGreedySeed(
+    courseCodes,
+    sections,
+    conflictGraph,
+    courseAdj,
+    sectionCountByCourse,
+    conflictDensity,
+    parallelCap,
+    seedIndex > 0,
+    rng,
+    shouldAbort,
+  )
+  const { studentToSections } = buildEnrollmentIndex(sections)
+  const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
+  const students = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
+  return {
+    seedIndex,
+    slotByCourse: { ...r.slotByCourse },
+    clashWeight: r.clashWeight,
+    students,
+  }
+}
+
+/** One Phase-2 Tabu/SA refine with independent RNG (`baseSeed + 10000 + refineIndex`). */
+export function runPhase2RefineTask(
+  initialSlotByCourse: Record<string, number>,
+  courseCodes: string[],
+  sections: Section[],
+  conflictGraph: ConflictGraph,
+  courseAdj: Map<string, Map<string, number>>,
+  sectionCountByCourse: Map<string, number>,
+  parallelCap: number,
+  refineIndex: number,
+  baseSeed: number | undefined,
+  maxIterFactor: number,
+  shouldAbort?: () => boolean,
+): SeedRunResult {
+  const rng = createRng(baseSeed === undefined ? undefined : (baseSeed + 10_000 + refineIndex) >>> 0)
+  const refined = hybridSATabuImprove(
+    { ...initialSlotByCourse },
+    courseCodes,
+    sections,
+    conflictGraph,
+    courseAdj,
+    sectionCountByCourse,
+    parallelCap,
+    { maxIterFactor, shouldAbort },
+    rng,
+  )
+  const { studentToSections } = buildEnrollmentIndex(sections)
+  const slotMap = sectionSlotsFromBundle(sections, refined)
+  const clashWeight = computeClashWeight(conflictGraph, slotMap)
+  const students = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
+  return {
+    seedIndex: refineIndex,
+    slotByCourse: refined,
+    clashWeight,
+    students,
+  }
+}
+
+/** Stable reduce: sort by (students, clashWeight), ties broken by lower seedIndex. */
+export function reduceSeedRuns(runs: SeedRunResult[]): SeedRunResult[] {
+  return [...runs].sort(
+    (a, b) =>
+      a.students - b.students || a.clashWeight - b.clashWeight || a.seedIndex - b.seedIndex,
+  )
+}
+
+/** Faculty repair + hard-constraint audit after search (coordinator thread). */
+export function finalizeSchedulerBest(
+  courseSections: Record<string, Section[]>,
+  conflictGraph: ConflictGraph,
+  facultyConstraints: Record<string, string[]>,
+  bestIn: { slotByCourse: Record<string, number>; clashWeight: number; students: number },
+  options?: {
+    randomSeed?: number
+    onProgress?: (evt: SchedulerProgressEvent) => void
+    solverUsed?: string
+    elapsedAlreadySeconds?: number
+  },
+): SchedulerRunResult {
+  const t0 = performance.now() / 1000 - (options?.elapsedAlreadySeconds ?? 0)
   const sections = Object.values(courseSections).flat()
   const courseCodes = Object.keys(courseSections)
-  const sectionToCourse = new Map<string, string>()
   const sectionCountByCourse = new Map<string, number>()
   for (const c of courseCodes) {
-    const arr = courseSections[c]!
-    sectionCountByCourse.set(c, arr.length)
-    for (const s of arr) sectionToCourse.set(s.section_id, c)
+    sectionCountByCourse.set(c, courseSections[c]!.length)
   }
-
-  const courseAdj = buildCourseAdjacency(conflictGraph, sectionToCourse)
-  const { conflictDensity, adj } = buildAdjacency(conflictGraph)
-  void adj
-
   const parallelCap = parallelHardCap(sections.length)
-  const runCount = multiStartRunCount(courseCodes.length)
-  const poolSize = solutionPoolSize(runCount)
+  const repairRng = createRng(
+    options?.randomSeed === undefined ? undefined : (options.randomSeed + 50_000) >>> 0,
+  )
+  const push = (evt: SchedulerProgressEvent) => options?.onProgress?.(evt)
 
-  const { studentToSections } = buildEnrollmentIndex(sections)
-
-  const runs: {
-    slotByCourse: Record<string, number>
-    clashWeight: number
-    students: number
-  }[] = []
-
-  const push = (evt: SchedulerProgressEvent) => onProgress?.(evt)
-
-  const tPhase1 = performance.now()
-  push({
-    message: `Phase 1/2: ${runCount} bundle-aware greedy seeds (${TOTAL_WEEKLY_SLOTS} slots/week)`,
-    etaSeconds: null,
-    solverFraction: 0,
-  })
-
-  const shouldAbort = options?.shouldAbort
-  const progressStep = Math.max(1, Math.floor(runCount / 10))
-  for (let i = 0; i < runCount; i++) {
-    if (shouldAbort?.()) throw new PipelineCancelledError()
-    const r = solveGreedySeed(
-      courseCodes,
-      sections,
-      conflictGraph,
-      courseAdj,
-      sectionCountByCourse,
-      conflictDensity,
-      parallelCap,
-      i > 0,
-      rng,
-    )
-    const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
-    const students = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
-    runs.push({ slotByCourse: { ...r.slotByCourse }, clashWeight: r.clashWeight, students })
-
-    const done = i + 1
-    const elapsed = (performance.now() - tPhase1) / 1000
-    const shouldReport = done === 1 || done === runCount || done % progressStep === 0
-    if (shouldReport) {
-      const etaSeconds = done >= 2 ? (elapsed / done) * (runCount - done) : null
-      push({
-        message: `Phase 1/2: ${done}/${runCount} seeds · ${elapsed.toFixed(1)}s elapsed${
-          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
-            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
-            : ''
-        }`,
-        etaSeconds:
-          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
-        solverFraction: 0.55 * (done / runCount),
-      })
-    }
-  }
-
-  runs.sort((a, b) => a.students - b.students || a.clashWeight - b.clashWeight)
-  let best = runs[0] ?? { slotByCourse: {}, clashWeight: 0, students: 0 }
-
-  const pool = Math.min(poolSize, runs.length)
-  const refinementSteps = Math.max(1, pool - 1)
-
-  if (pool <= 1) {
-    push({
-      message: `Phase 2/2 skipped (single seed). Best: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`,
-      etaSeconds: null,
-      solverFraction: 0.92,
-    })
-  } else {
-    push({
-      message: `Phase 2/2: Tabu/SA refine top ${pool} candidates (best so far: ${best.students} overlaps · weight ${best.clashWeight})`,
-      etaSeconds: null,
-      solverFraction: 0.55,
-    })
-
-    const tPhase2 = performance.now()
-    for (let p = 1; p < pool; p++) {
-      if (shouldAbort?.()) throw new PipelineCancelledError()
-      const seed = runs[p]
-      if (!seed) continue
-      const elapsed = (performance.now() - tPhase2) / 1000
-      const finished = p - 1
-      const etaSeconds =
-        finished >= 1 ? (elapsed / finished) * (refinementSteps - finished) : null
-      push({
-        message: `Phase 2/2: refine ${p}/${refinementSteps} · ${elapsed.toFixed(1)}s${
-          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
-            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
-            : ''
-        }`,
-        etaSeconds:
-          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
-        solverFraction: 0.55 + 0.44 * (p / refinementSteps),
-      })
-      const refined = hybridSATabuImprove(
-        { ...seed.slotByCourse },
-        courseCodes,
-        sections,
-        conflictGraph,
-        courseAdj,
-        sectionCountByCourse,
-        parallelCap,
-        { maxIterFactor: 1.85, shouldAbort },
-        rng,
-      )
-      const slotMap = sectionSlotsFromBundle(sections, refined)
-      const cw = computeClashWeight(conflictGraph, slotMap)
-      const st = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
-      if (st < best.students || (st === best.students && cw < best.clashWeight)) {
-        best = { slotByCourse: refined, clashWeight: cw, students: st }
-      }
-    }
-  }
+  let best = { ...bestIn }
 
   push({
     message: `Search finished: ${best.students} students with slot overlaps · clash weight ${best.clashWeight}.`,
@@ -996,10 +1037,11 @@ export function runScheduler(
       best.slotByCourse,
       sectionCountByCourse,
       parallelCap,
-      rng,
+      repairRng,
       800,
     )
     if (fixed) {
+      const { studentToSections } = buildEnrollmentIndex(sections)
       const slotMap = sectionSlotsFromBundle(sections, fixed)
       const cw = computeClashWeight(conflictGraph, slotMap)
       const st = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
@@ -1018,11 +1060,214 @@ export function runScheduler(
 
   return {
     slot_assignments,
-    solver_used: 'bundle-sa-tabu-55',
+    solver_used: options?.solverUsed ?? 'bundle-sa-tabu-55',
     solver_time_seconds: performance.now() / 1000 - t0,
     total_clash_weight: best.clashWeight,
     feasible: audit.feasible,
     optimal: audit.feasible && primarySatisfied,
     hard_constraint_violations: audit.violations,
+  }
+}
+
+export function runScheduler(
+  courseSections: Record<string, Section[]>,
+  conflictGraph: ConflictGraph,
+  facultyConstraints: Record<string, string[]>,
+  onProgress?: (evt: SchedulerProgressEvent) => void,
+  options?: SchedulerRunOptions,
+): SchedulerRunResult {
+  const poolWorkers = options?.poolWorkers ?? 1
+  return runSchedulerInProcess(
+    courseSections,
+    conflictGraph,
+    facultyConstraints,
+    onProgress,
+    { ...options, poolWorkers },
+  )
+}
+
+function runSchedulerInProcess(
+  courseSections: Record<string, Section[]>,
+  conflictGraph: ConflictGraph,
+  facultyConstraints: Record<string, string[]>,
+  onProgress: ((evt: SchedulerProgressEvent) => void) | undefined,
+  options: SchedulerRunOptions & { poolWorkers: number },
+): SchedulerRunResult {
+  const t0 = performance.now() / 1000
+  const sections = Object.values(courseSections).flat()
+  const courseCodes = Object.keys(courseSections)
+  const sectionToCourse = new Map<string, string>()
+  const sectionCountByCourse = new Map<string, number>()
+  for (const c of courseCodes) {
+    const arr = courseSections[c]!
+    sectionCountByCourse.set(c, arr.length)
+    for (const s of arr) sectionToCourse.set(s.section_id, c)
+  }
+
+  const courseAdj = buildCourseAdjacency(conflictGraph, sectionToCourse)
+  const { conflictDensity } = buildAdjacency(conflictGraph)
+  const parallelCap = parallelHardCap(sections.length)
+  const runCount = multiStartRunCount(courseCodes.length, options.poolWorkers)
+  const poolSize = solutionPoolSize(runCount)
+  const maxIterFactor = phase2MaxIterFactor(options.poolWorkers)
+  const shouldAbort = options.shouldAbort
+  const baseSeed = options.randomSeed
+
+  const push = (evt: SchedulerProgressEvent) => onProgress?.(evt)
+  const tPhase1 = performance.now()
+
+  push({
+    message: `Phase 1/2: ${runCount} bundle-aware greedy seeds × ${options.poolWorkers} worker(s) (${TOTAL_WEEKLY_SLOTS} slots/week)`,
+    etaSeconds: null,
+    solverFraction: 0,
+  })
+
+  const progressStep = Math.max(1, Math.floor(runCount / 10))
+  const seedResults: SeedRunResult[] = []
+  for (let i = 0; i < runCount; i++) {
+    if (shouldAbort?.()) throw new PipelineCancelledError()
+    const r = runPhase1SeedTask(
+      courseCodes,
+      sections,
+      conflictGraph,
+      courseAdj,
+      sectionCountByCourse,
+      conflictDensity,
+      parallelCap,
+      i,
+      baseSeed,
+      shouldAbort,
+    )
+    seedResults.push(r)
+
+    const done = i + 1
+    const elapsed = (performance.now() - tPhase1) / 1000
+    const shouldReport = done === 1 || done === runCount || done % progressStep === 0
+    if (shouldReport) {
+      const etaSeconds = done >= 2 ? (elapsed / done) * (runCount - done) : null
+      push({
+        message: `Phase 1/2: ${done}/${runCount} seeds · ${elapsed.toFixed(1)}s elapsed${
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
+            : ''
+        }`,
+        etaSeconds:
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
+        solverFraction: 0.55 * (done / runCount),
+      })
+    }
+  }
+
+  const ranked = reduceSeedRuns(seedResults)
+  let best = ranked[0] ?? {
+    seedIndex: 0,
+    slotByCourse: {},
+    clashWeight: 0,
+    students: 0,
+  }
+
+  const pool = Math.min(poolSize, ranked.length)
+  const refinementSteps = Math.max(1, pool - 1)
+
+  if (pool <= 1) {
+    push({
+      message: `Phase 2/2 skipped (single seed). Best: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`,
+      etaSeconds: null,
+      solverFraction: 0.92,
+    })
+  } else {
+    push({
+      message: `Phase 2/2: Tabu/SA refine top ${pool} candidates (factor ${maxIterFactor}; best so far: ${best.students} overlaps · weight ${best.clashWeight})`,
+      etaSeconds: null,
+      solverFraction: 0.55,
+    })
+
+    const tPhase2 = performance.now()
+    for (let p = 1; p < pool; p++) {
+      if (shouldAbort?.()) throw new PipelineCancelledError()
+      const seed = ranked[p]
+      if (!seed) continue
+      const elapsed = (performance.now() - tPhase2) / 1000
+      const finished = p - 1
+      const etaSeconds =
+        finished >= 1 ? (elapsed / finished) * (refinementSteps - finished) : null
+      push({
+        message: `Phase 2/2: refine ${p}/${refinementSteps} · ${elapsed.toFixed(1)}s${
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+            ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
+            : ''
+        }`,
+        etaSeconds:
+          etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
+        solverFraction: 0.55 + 0.44 * (p / refinementSteps),
+      })
+      const refined = runPhase2RefineTask(
+        seed.slotByCourse,
+        courseCodes,
+        sections,
+        conflictGraph,
+        courseAdj,
+        sectionCountByCourse,
+        parallelCap,
+        p,
+        baseSeed,
+        maxIterFactor,
+        shouldAbort,
+      )
+      if (
+        refined.students < best.students ||
+        (refined.students === best.students && refined.clashWeight < best.clashWeight)
+      ) {
+        best = refined
+      }
+    }
+  }
+
+  return finalizeSchedulerBest(
+    courseSections,
+    conflictGraph,
+    facultyConstraints,
+    best,
+    {
+      randomSeed: baseSeed,
+      onProgress,
+      solverUsed: options.poolWorkers > 1 ? 'bundle-sa-tabu-55-pool' : 'bundle-sa-tabu-55',
+      elapsedAlreadySeconds: performance.now() / 1000 - t0,
+    },
+  )
+}
+
+/** Async multi-worker solve; falls back to in-process when poolWorkers===1 or Workers unavailable. */
+export async function runSchedulerAsync(
+  courseSections: Record<string, Section[]>,
+  conflictGraph: ConflictGraph,
+  facultyConstraints: Record<string, string[]>,
+  onProgress?: (evt: SchedulerProgressEvent) => void,
+  options?: SchedulerRunOptions,
+): Promise<SchedulerRunResult> {
+  const { resolvePoolWorkerCount } = await import('../worker/solverPoolTypes')
+  const poolWorkers = options?.poolWorkers ?? resolvePoolWorkerCount()
+  if (poolWorkers <= 1) {
+    return runSchedulerInProcess(courseSections, conflictGraph, facultyConstraints, onProgress, {
+      ...options,
+      poolWorkers: 1,
+    })
+  }
+
+  try {
+    const { runSchedulerWithPool } = await import('../worker/solverPool')
+    return await runSchedulerWithPool(
+      courseSections,
+      conflictGraph,
+      facultyConstraints,
+      onProgress,
+      { ...options, poolWorkers },
+    )
+  } catch (e) {
+    console.warn('Solver pool unavailable; falling back to in-process', e)
+    return runSchedulerInProcess(courseSections, conflictGraph, facultyConstraints, onProgress, {
+      ...options,
+      poolWorkers: 1,
+    })
   }
 }

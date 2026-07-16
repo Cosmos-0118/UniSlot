@@ -238,20 +238,22 @@ export async function runPipeline(
     fraction: PRE_END,
   })
 
-  const { localSearchSeedPlan, runScheduler, buildSchedule, computeClashReport } = await import(
+  const { localSearchSeedPlan, runSchedulerAsync, buildSchedule, computeClashReport } = await import(
     '../solver/scheduler',
   )
   throwIfAborted(signal)
 
-  const seedPlan = localSearchSeedPlan(courseCount)
+  const { resolvePoolWorkerCount } = await import('../worker/solverPoolTypes')
+  const poolWorkers = resolvePoolWorkerCount()
+  const seedPlan = localSearchSeedPlan(courseCount, poolWorkers)
   emit({
     stage: 'schedule',
-    message: `Local search: ${seedPlan.runCount} greedy seeds → refine top ${seedPlan.poolSize} · ${TOTAL_WEEKLY_SLOTS} slots/week`,
+    message: `Local search: ${seedPlan.runCount} greedy seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} slots/week`,
     fraction: SCHEDULE_LO,
     etaSeconds: null,
   })
 
-  const sched = runScheduler(
+  const sched = await runSchedulerAsync(
     courseSections,
     conflictGraph,
     facultyConstraints,
@@ -263,7 +265,11 @@ export async function runPipeline(
         etaSeconds: evt.etaSeconds,
       })
     },
-    { randomSeed: options?.randomSeed, shouldAbort: () => signal?.aborted === true },
+    {
+      randomSeed: options?.randomSeed,
+      shouldAbort: () => signal?.aborted === true,
+      poolWorkers,
+    },
   )
   throwIfAborted(signal)
   let schedule = buildSchedule(courseSections, sched.slot_assignments, {
