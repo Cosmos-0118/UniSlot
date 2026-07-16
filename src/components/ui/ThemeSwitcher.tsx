@@ -88,7 +88,7 @@ export function ThemeSwitcher({
           aria-expanded={popoverOpen}
           aria-haspopup="dialog"
           aria-label="Choose theme"
-          className="theme-theme-button theme-focusable flex size-10 items-center justify-center rounded-xl border border-border/60 bg-[color-mix(in_srgb,var(--bg-tertiary)_70%,transparent)] shadow-sm backdrop-blur-md transition-[background-color,color] duration-200 hover:bg-[color-mix(in_srgb,var(--bg-tertiary)_88%,var(--brand-500)_8%)]"
+          className="theme-theme-button theme-focusable flex size-10 items-center justify-center rounded-xl border border-border/60 bg-[color-mix(in_srgb,var(--bg-tertiary)_70%,transparent)] shadow-sm backdrop-blur-md transition-[background-color,color] duration-200 hover:bg-[color-mix(in_srgb,var(--bg-tertiary)_88%,transparent)]"
         >
           <TriggerIcon key={theme} className="size-[18px]" />
         </button>

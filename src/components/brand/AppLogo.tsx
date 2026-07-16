@@ -15,12 +15,13 @@ type AppLogoProps = {
   size?: AppLogoSize
   className?: string
   /**
-   * `squircle` matches exported brand PNGs (~22% radius). Use `2xl` for a softer UI-only clip.
+   * Brand PNGs are already squirled — default `none` avoids double-clip / light-theme halo.
+   * Use `squircle` only if you need an extra CSS clip on a non-brand asset.
    */
   rounded?: 'none' | 'squircle' | '2xl'
 }
 
-export function AppLogo({ size = 'md', className, rounded = 'squircle' }: AppLogoProps) {
+export function AppLogo({ size = 'md', className, rounded = 'none' }: AppLogoProps) {
   const { px, src } = SIZES[size]
   const roundedClass =
     rounded === 'none' ? '' : rounded === '2xl' ? 'rounded-2xl' : 'rounded-[22%]'
@@ -33,7 +34,11 @@ export function AppLogo({ size = 'md', className, rounded = 'squircle' }: AppLog
       alt="UniSlot"
       decoding="async"
       draggable={false}
-      className={cn('shrink-0 object-contain select-none', roundedClass, className)}
+      className={cn(
+        'app-logo shrink-0 object-contain select-none',
+        roundedClass,
+        className,
+      )}
     />
   )
 }

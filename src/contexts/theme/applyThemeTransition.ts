@@ -5,19 +5,13 @@ export type ThemeTransitionSource =
   | 'center'
 
 const STORAGE_KEY = 'unislot-theme'
-const COVER_MS = 90
-const REVEAL_MS = 340
+const COVER_MS = 60
+const REVEAL_MS = 280
 
 const THEME_BG: Record<Theme, string> = {
-  dark: '#070a14',
-  light: '#f7fbf9',
-  crimson: '#11070d',
-}
-
-const THEME_LABEL: Record<Theme, string> = {
-  dark: 'Midnight',
-  light: 'Sage',
-  crimson: 'Crimson',
+  dark: '#090b10',
+  light: '#f6f5f2',
+  crimson: '#0a0a0b',
 }
 
 let activeCurtain: HTMLDivElement | null = null
@@ -73,24 +67,16 @@ function runCurtainTransition(current: Theme, next: Theme, syncReact: () => void
 
   const curtain = document.createElement('div')
   curtain.className = 'theme-curtain'
-  curtain.setAttribute('role', 'status')
-  curtain.setAttribute('aria-live', 'polite')
-  curtain.setAttribute('aria-busy', 'true')
+  curtain.setAttribute('aria-hidden', 'true')
   curtain.style.setProperty('--theme-curtain-from', THEME_BG[current])
   curtain.style.setProperty('--theme-curtain-to', THEME_BG[next])
 
-  const panel = document.createElement('div')
-  panel.className = 'theme-curtain__panel'
-  panel.innerHTML = `<span class="theme-curtain__spinner" aria-hidden="true"></span><span class="theme-curtain__label">Switching to ${THEME_LABEL[next]}</span>`
-
-  curtain.append(panel)
   document.body.appendChild(curtain)
   activeCurtain = curtain
   document.documentElement.setAttribute('data-theme-switching', '')
 
   const finish = () => {
     if (gen !== sequence) return
-    curtain.setAttribute('aria-busy', 'false')
     clearCurtain()
   }
 
@@ -121,7 +107,7 @@ function runCurtainTransition(current: Theme, next: Theme, syncReact: () => void
     }
 
     curtain.addEventListener('transitionend', onRevealEnd)
-    schedule(COVER_MS + REVEAL_MS + 120, finish)
+    schedule(COVER_MS + REVEAL_MS + 100, finish)
   })()
 }
 

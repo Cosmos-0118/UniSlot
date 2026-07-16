@@ -15,7 +15,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const outDir = path.join(root, 'public', 'brand')
 
-const THEME_BG = { r: 26, g: 26, b: 27, alpha: 1 } // #1a1a1b — matches mark body
+/** Mark fill from brand/source/app-logo.png (not near-black — avoids two-tone squircle corners). */
+const THEME_BG = { r: 36, g: 28, b: 87, alpha: 1 } // #241c57
+/** Inset so white strokes never meet the squircle clip (fixes “cutoff” at small sizes). */
+const SAFE_PAD_RATIO = 0.14
 
 /**
  * Windows .ico containing embedded PNGs (Vista+). No extra npm deps.
@@ -104,13 +107,22 @@ async function prepareTrimmedBuffer(srcPath) {
 }
 
 async function writeSquareIcon(buf, fileName, size, background = THEME_BG) {
-  const square = await sharp(buf)
-    .resize(size, size, {
+  const pad = Math.max(2, Math.round(size * SAFE_PAD_RATIO))
+  const inner = Math.max(1, size - pad * 2)
+  const mark = await sharp(buf)
+    .resize(inner, inner, {
       fit: 'contain',
       position: 'center',
       background,
     })
     .ensureAlpha()
+    .png()
+    .toBuffer()
+
+  const square = await sharp({
+    create: { width: size, height: size, channels: 4, background },
+  })
+    .composite([{ input: mark, gravity: 'center' }])
     .png()
     .toBuffer()
 
@@ -120,7 +132,8 @@ async function writeSquareIcon(buf, fileName, size, background = THEME_BG) {
 
 async function writeMaskable512(buf) {
   const canvas = 512
-  const inner = Math.round(canvas * 0.72)
+  // Maskable safe zone ~80%; keep mark well inside
+  const inner = Math.round(canvas * 0.68)
   const innerBuf = await sharp(buf)
     .resize(inner, inner, { fit: 'contain', background: THEME_BG })
     .png()
@@ -193,8 +206,8 @@ async function main() {
     description: 'Evening course scheduling in your browser.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#1a1a1b',
-    theme_color: '#1a1a1b',
+    background_color: '#241c57',
+    theme_color: '#241c57',
     icons: [
       {
         src: '/brand/icon-192.png',

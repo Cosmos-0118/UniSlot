@@ -3,9 +3,9 @@ export const BOOT_VEIL_ID = 'boot-veil'
 
 /** Theme-matched backgrounds (keep in sync with index.css `--bg`). */
 export const BOOT_VEIL_BG: Record<'dark' | 'light' | 'crimson', string> = {
-  dark: '#070a14',
-  light: '#f7fbf9',
-  crimson: '#11070d',
+  dark: '#090b10',
+  light: '#f6f5f2',
+  crimson: '#0a0a0b',
 }
 
 export function removeBootVeil(): void {
