@@ -13,6 +13,16 @@ const LandingPage = lazy(async () => {
   return { default: m.LandingPage }
 })
 
+const PrivacyPage = lazy(async () => {
+  const m = await import('@/features/landing/PrivacyPage')
+  return { default: m.PrivacyPage }
+})
+
+const TermsPage = lazy(async () => {
+  const m = await import('@/features/landing/TermsPage')
+  return { default: m.TermsPage }
+})
+
 const Scheduler = lazy(async () => {
   const m = await import('@/features/scheduling/Scheduler')
   return { default: m.Scheduler }
@@ -41,6 +51,22 @@ export default function App() {
             element={
               <Suspense fallback={<LandingRouteFallback />}>
                 <LandingPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/privacy"
+            element={
+              <Suspense fallback={<LandingRouteFallback />}>
+                <PrivacyPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/terms"
+            element={
+              <Suspense fallback={<LandingRouteFallback />}>
+                <TermsPage />
               </Suspense>
             }
           />

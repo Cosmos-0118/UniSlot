@@ -3,11 +3,12 @@ import { ArrowRight } from 'lucide-react'
 import { motion, useReducedMotion } from 'framer-motion'
 import type { Variants } from 'framer-motion'
 import { useLayoutEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { CubesBackground } from '@/components/ui/CubesBackground'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 import { useBootGate } from '@/contexts/boot/useBootGate'
 import { useTheme } from '@/contexts/theme/useTheme'
+import { glassPanelSurface } from '@/features/landing/MarketingShell'
 import { cn } from '@/shared/utils/cn'
 
 /**
@@ -15,9 +16,6 @@ import { cn } from '@/shared/utils/cn'
  * Opacity must stay off parent entrance animations: animating opacity on a Framer
  * ancestor breaks backdrop-filter compositing (brief “glass” then flat grey).
  */
-const glassPanelSurface =
-  'relative rounded-[1.75rem] border border-white/[0.14] bg-[color-mix(in_srgb,var(--bg)_14%,transparent)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_8px_32px_-12px_rgba(0,0,0,0.38)] backdrop-blur-2xl ring-1 ring-white/[0.06] md:rounded-[2rem]'
-
 const glassHoverClass =
   'transition-[box-shadow,border-color] duration-500 hover:border-brand-400/30 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14),0_24px_64px_-16px_color-mix(in_srgb,var(--brand-500)_28%,transparent),0_12px_40px_-18px_rgba(0,0,0,0.55)]'
 
@@ -144,7 +142,7 @@ export function LandingPage() {
         </motion.div>
       </nav>
 
-      <main className="pointer-events-none relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 pb-20 pt-24 md:px-8 md:pb-28 md:pt-32">
+      <main className="pointer-events-none relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 pb-12 pt-24 md:px-8 md:pb-16 md:pt-32">
         <motion.div
           variants={containerVariants}
           initial="hidden"
@@ -218,6 +216,39 @@ export function LandingPage() {
           </motion.div>
         </motion.div>
       </main>
+
+      <motion.footer
+        initial={false}
+        animate={showContent ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
+        transition={{ duration: 0.45, delay: showContent ? 0.35 : 0 }}
+        className={cn(
+          'relative z-10 mt-auto border-t border-white/[0.06] bg-[color-mix(in_srgb,var(--bg)_12%,transparent)] px-6 py-5 backdrop-blur-md md:px-8',
+          showContent ? 'pointer-events-auto' : 'pointer-events-none',
+        )}
+      >
+        <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
+          <p className="text-center text-sm text-text-muted sm:text-left">
+            © {new Date().getFullYear()} UniSlot. All rights reserved.
+          </p>
+          <nav className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1 text-sm" aria-label="Legal">
+            <Link
+              to="/privacy"
+              className="theme-focusable rounded-lg px-3 py-1.5 text-text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+            >
+              Privacy
+            </Link>
+            <span className="text-white/20 select-none" aria-hidden>
+              ·
+            </span>
+            <Link
+              to="/terms"
+              className="theme-focusable rounded-lg px-3 py-1.5 text-text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+            >
+              Terms of Service
+            </Link>
+          </nav>
+        </div>
+      </motion.footer>
     </motion.div>
   )
 }
