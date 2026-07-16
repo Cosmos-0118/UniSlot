@@ -1,7 +1,7 @@
 /**
  * Raster brand pipeline: trim padding, resize to standard icon sizes, optional maskable + OG.
  *
- * Source (first match): CLI path, brand/source/app-logo.png, ./unisloticon.png, ./App-logo.png
+ * Source (first match): CLI path, brand/source/app-logo.png, ./App-logo.png
  * Output: public/brand/
  *
  * Run: npm run build:brand
@@ -15,9 +15,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const outDir = path.join(root, 'public', 'brand')
 
-/** Mark fill from brand/source/app-logo.png (periwinkle from unisloticon). */
-const THEME_BG = { r: 117, g: 117, b: 248, alpha: 1 } // #7575F8
-/** Inset so white strokes never meet the squircle clip (legacy mark-only sources). */
+/** Mark fill from brand/source/app-logo.png (not near-black — avoids two-tone squircle corners). */
+const THEME_BG = { r: 36, g: 28, b: 87, alpha: 1 } // #241c57
+/** Inset so white strokes never meet the squircle clip (fixes “cutoff” at small sizes). */
 const SAFE_PAD_RATIO = 0.14
 
 /**
@@ -86,14 +86,13 @@ function resolveSource() {
   const candidates = [
     cli && path.resolve(process.cwd(), cli),
     path.join(root, 'brand', 'source', 'app-logo.png'),
-    path.join(root, 'unisloticon.png'),
     path.join(root, 'App-logo.png'),
   ].filter(Boolean)
   for (const p of candidates) {
     if (fs.existsSync(p)) return p
   }
   throw new Error(
-    'No source PNG found. Add brand/source/app-logo.png, unisloticon.png, or App-logo.png at repo root, or pass a path:\n  node scripts/generate-brand-assets.mjs ./my-logo.png',
+    'No source PNG found. Add brand/source/app-logo.png or App-logo.png at repo root, or pass a path:\n  node scripts/generate-brand-assets.mjs ./my-logo.png',
   )
 }
 
@@ -107,8 +106,7 @@ async function prepareTrimmedBuffer(srcPath) {
     .toBuffer()
 }
 
-/** Mark-only sources (transparent bg) — inset padding before squircle clip. */
-async function writeMarkIcon(buf, fileName, size, background = THEME_BG) {
+async function writeSquareIcon(buf, fileName, size, background = THEME_BG) {
   const pad = Math.max(2, Math.round(size * SAFE_PAD_RATIO))
   const inner = Math.max(1, size - pad * 2)
   const mark = await sharp(buf)
@@ -132,61 +130,14 @@ async function writeMarkIcon(buf, fileName, size, background = THEME_BG) {
   await fs.promises.writeFile(path.join(outDir, fileName), out)
 }
 
-/** Clip square raster to a rounded squircle with transparent corners (for in-app UI). */
-async function squircleClipTransparent(rgbaBuffer, size) {
-  const mask = squircleMaskSvg(size)
-  return sharp(rgbaBuffer)
-    .ensureAlpha()
-    .resize(size, size, { fit: 'fill' })
-    .composite([{ input: mask, blend: 'dest-in' }])
-    .png({ compressionLevel: 9, effort: 10 })
-    .toBuffer()
-}
-
-/** Full-bleed source already includes the squircle fill — resize only, no inset padding. */
-async function prepareFullBleedSource(srcPath) {
-  const { data, info } = await sharp(srcPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  const { width: w, height: h, channels: ch } = info
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * ch
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      if (r < 24 && g < 24 && b < 24) {
-        data[i + 3] = 0
-      }
-    }
-  }
-
-  return sharp(data, { raw: { width: w, height: h, channels: ch } }).png().toBuffer()
-}
-
-async function resizeFullBleed(srcBuffer, size) {
-  return sharp(srcBuffer)
-    .rotate()
-    .resize(size, size, { fit: 'cover', position: 'center' })
-    .ensureAlpha()
-    .toBuffer()
-}
-
-async function writeUiLogo(srcBuffer, fileName, size) {
-  const resized = await resizeFullBleed(srcBuffer, size)
-  const out = await squircleClipTransparent(resized, size)
-  await fs.promises.writeFile(path.join(outDir, fileName), out)
-}
-
-async function writeSquareIcon(srcBuffer, fileName, size, background = THEME_BG) {
-  const resized = await resizeFullBleed(srcBuffer, size)
-  const out = await squircleClipFlatten(resized, size, background)
-  await fs.promises.writeFile(path.join(outDir, fileName), out)
-}
-
-async function writeMaskable512(srcBuffer) {
+async function writeMaskable512(buf) {
   const canvas = 512
-  const inner = Math.round(canvas * 0.88)
-  const innerBuf = await resizeFullBleed(srcBuffer, inner)
+  // Maskable safe zone ~80%; keep mark well inside
+  const inner = Math.round(canvas * 0.68)
+  const innerBuf = await sharp(buf)
+    .resize(inner, inner, { fit: 'contain', background: THEME_BG })
+    .png()
+    .toBuffer()
   const flat = await sharp({
     create: {
       width: canvas,
@@ -203,11 +154,19 @@ async function writeMaskable512(srcBuffer) {
   await fs.promises.writeFile(path.join(outDir, 'icon-maskable-512.png'), out)
 }
 
-async function writeOgImage(srcBuffer) {
+async function writeOgImage(buf) {
   const W = 1200
   const H = 630
   const logoMax = 380
-  const logoSquare = await resizeFullBleed(srcBuffer, logoMax)
+  const logoSquare = await sharp(buf)
+    .resize(logoMax, logoMax, {
+      fit: 'contain',
+      position: 'center',
+      background: THEME_BG,
+    })
+    .ensureAlpha()
+    .png()
+    .toBuffer()
   const logoBuf = await squircleClipFlatten(logoSquare, logoMax, THEME_BG)
   await sharp({
     create: { width: W, height: H, channels: 3, background: { r: 14, g: 14, b: 16 } },
@@ -221,20 +180,14 @@ async function main() {
   const src = resolveSource()
   await fs.promises.mkdir(outDir, { recursive: true })
 
-  const cleaned = await prepareFullBleedSource(src)
+  const trimmed = await prepareTrimmedBuffer(src)
 
-  // In-app UI logos — transparent outside squircle (no visible box on dark themes)
-  await writeUiLogo(cleaned, 'logo-48.png', 48)
-  await writeUiLogo(cleaned, 'logo-96.png', 96)
-  await writeUiLogo(cleaned, 'logo-192.png', 192)
-
-  // Favicons / PWA — solid squircle fill for tab icons
-  await writeSquareIcon(cleaned, 'icon-16.png', 16)
-  await writeSquareIcon(cleaned, 'icon-32.png', 32)
-  await writeSquareIcon(cleaned, 'icon-48.png', 48)
-  await writeSquareIcon(cleaned, 'icon-192.png', 192)
-  await writeSquareIcon(cleaned, 'icon-512.png', 512)
-  await writeSquareIcon(cleaned, 'apple-touch-icon.png', 180)
+  await writeSquareIcon(trimmed, 'icon-16.png', 16)
+  await writeSquareIcon(trimmed, 'icon-32.png', 32)
+  await writeSquareIcon(trimmed, 'icon-48.png', 48)
+  await writeSquareIcon(trimmed, 'icon-192.png', 192)
+  await writeSquareIcon(trimmed, 'icon-512.png', 512)
+  await writeSquareIcon(trimmed, 'apple-touch-icon.png', 180)
 
   const png16 = await fs.promises.readFile(path.join(outDir, 'icon-16.png'))
   const png32 = await fs.promises.readFile(path.join(outDir, 'icon-32.png'))
@@ -244,8 +197,8 @@ async function main() {
   ])
   await fs.promises.writeFile(path.join(root, 'public', 'favicon.ico'), ico)
 
-  await writeMaskable512(cleaned)
-  await writeOgImage(cleaned)
+  await writeMaskable512(trimmed)
+  await writeOgImage(trimmed)
 
   const manifest = {
     name: 'UniSlot',
@@ -253,8 +206,8 @@ async function main() {
     description: 'Evening course scheduling in your browser.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#7575F8',
-    theme_color: '#7575F8',
+    background_color: '#241c57',
+    theme_color: '#241c57',
     icons: [
       {
         src: '/brand/icon-192.png',
