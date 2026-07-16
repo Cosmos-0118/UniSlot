@@ -65,10 +65,9 @@ export function Scheduler() {
     result,
     setResult,
     fileName,
-    setFileName,
     viewMode,
     setViewMode,
-    run,
+    startRun,
     cancelRun,
     exportXlsx,
     fetchSchedulingSnapshot,
@@ -77,7 +76,11 @@ export function Scheduler() {
     warmupWorker,
     running,
     progress,
+    displayEtaSeconds,
+    backgroundThrottled,
+    beginNewRun,
     resetTerminalLog,
+    flushTerminalLog,
     terminalLines,
     terminalTypingIdx,
     onTerminalLineTypeDone,
@@ -205,6 +208,13 @@ export function Scheduler() {
     [result, exportXlsx, setResult, showAlert],
   )
 
+  // Flush typewriter when leaving the Scheduler mid-run so the log queue cannot stall.
+  useEffect(() => {
+    return () => {
+      flushTerminalLog()
+    }
+  }, [flushTerminalLog])
+
   const handleFile = useCallback(
     async (file: File | null) => {
       if (!file) return
@@ -216,10 +226,6 @@ export function Scheduler() {
         })
         return
       }
-      resetTerminalLog()
-      setFileName(file.name)
-      setResult(null)
-      setViewMode('processing')
       try {
         const pipelineOpts: RunPipelineOptions = {}
         const raw = runSeedInput.trim()
@@ -229,17 +235,9 @@ export function Scheduler() {
         }
         if (allowProvisionalExport) pipelineOpts.allowProvisionalScheduleExport = true
         const keys = Object.keys(pipelineOpts) as (keyof RunPipelineOptions)[]
-        const out = await run(file, keys.length > 0 ? pipelineOpts : undefined)
-        setResult(out)
-        if (out.validation.is_valid) {
-          setViewMode('actions')
-        } else {
-          setViewMode('details')
-        }
+        await startRun(file, keys.length > 0 ? pipelineOpts : undefined)
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Something went wrong'
-        resetTerminalLog()
-        setViewMode('idle')
         if (msg.toLowerCase().includes('cancelled')) return
         console.error(e)
         void showAlert({
@@ -249,7 +247,7 @@ export function Scheduler() {
         })
       }
     },
-    [run, setResult, setFileName, setViewMode, resetTerminalLog, runSeedInput, allowProvisionalExport, showAlert],
+    [startRun, runSeedInput, allowProvisionalExport, showAlert],
   )
 
   const showUploader = viewMode === 'idle'
@@ -285,11 +283,7 @@ export function Scheduler() {
         {(viewMode === 'actions' || viewMode === 'details') && (
           <button
             type="button"
-            onClick={() => {
-              resetTerminalLog()
-              setResult(null)
-              setViewMode('idle')
-            }}
+            onClick={() => beginNewRun()}
             className="theme-btn-secondary theme-focusable inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
           >
             <FileSpreadsheet className="size-4" aria-hidden />
@@ -297,6 +291,20 @@ export function Scheduler() {
           </button>
         )}
       </header>
+
+      {backgroundThrottled && viewMode === 'processing' && (
+        <div
+          className="mb-4 rounded-xl border px-4 py-3 text-sm"
+          style={{
+            borderColor: 'var(--soft-warning-border)',
+            background: 'var(--soft-warning-bg)',
+            color: 'var(--accent-warning)',
+          }}
+          role="status"
+        >
+          Tab in background — the browser may slow this run. Keep this tab focused for the fastest ETA.
+        </div>
+      )}
 
       {/* ── Upload zone ──────────────────────────────────── */}
       {showUploader && (
@@ -404,8 +412,9 @@ export function Scheduler() {
             done={false}
             progressFraction={running ? progress?.fraction : undefined}
             progressMessage={running ? progress?.message : undefined}
-            progressEta={running ? progress?.etaSeconds : undefined}
+            progressEta={running ? displayEtaSeconds : undefined}
             fileLabel={fileName ?? undefined}
+            backgroundThrottled={backgroundThrottled}
           />
         </section>
       )}

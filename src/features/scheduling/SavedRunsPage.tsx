@@ -116,7 +116,7 @@ export function SavedRunsPage() {
 
 function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: () => void }) {
   const navigate = useNavigate()
-  const { setResult, setFileName } = useSchedulingSession()
+  const { setResult, setFileName, result } = useSchedulingSession()
   const { alert: showAlert, confirm: showConfirm } = useAppDialog()
   const [title, setTitle] = useState(run.title)
   const [snapshot, setSnapshot] = useState(run.snapshot)
@@ -467,7 +467,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
             <button
               type="button"
               onClick={() => {
-                if (!applySavedRunEmailsToSession(run, setResult, setFileName)) {
+                if (!applySavedRunEmailsToSession(run, setResult, setFileName, result)) {
                   void showAlert({
                     title: 'No enrollment data',
                     message: 'This saved run has no enrollment rows to build course emails from.',

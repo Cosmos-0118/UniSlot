@@ -28,7 +28,31 @@ export function useSchedulingTerminalLog(progress: PipelineProgressEvent | null)
     isTyping.current = false
   }, [])
 
+  /** Append all pending lines immediately (no typewriter) — used when tab is hidden or UI unmounts. */
+  const flush = useCallback(() => {
+    if (drainTimeoutRef.current) {
+      clearTimeout(drainTimeoutRef.current)
+      drainTimeoutRef.current = null
+    }
+    isTyping.current = false
+    setTypingIdx(-1)
+    const pending = pendingQueue.current
+    pendingQueue.current = []
+    if (pending.length === 0) return
+    setLines((prev) => [...prev, ...pending])
+  }, [])
+
   function drainNext() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      const pending = pendingQueue.current
+      pendingQueue.current = []
+      isTyping.current = false
+      setTypingIdx(-1)
+      if (pending.length > 0) {
+        setLines((prev) => [...prev, ...pending])
+      }
+      return
+    }
     if (isTyping.current || pendingQueue.current.length === 0) return
     isTyping.current = true
     const next = pendingQueue.current.shift()!
@@ -73,5 +97,15 @@ export function useSchedulingTerminalLog(progress: PipelineProgressEvent | null)
     pushLine({ text: `${prefix}${progress.message}`, type })
   }, [progress, pushLine])
 
-  return { lines, typingIdx, handleTypeDone, reset }
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        flush()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [flush])
+
+  return { lines, typingIdx, handleTypeDone, reset, flush }
 }

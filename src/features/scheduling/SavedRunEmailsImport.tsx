@@ -24,7 +24,7 @@ type SavedRunEmailsImportProps = {
 }
 
 export function SavedRunEmailsImport({ onImported, className, embedded = false }: SavedRunEmailsImportProps) {
-  const { setResult, setFileName } = useSchedulingSession()
+  const { setResult, setFileName, result } = useSchedulingSession()
   const [runs, setRuns] = useState<SavedScheduleRun[]>(() => loadSavedRuns())
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export function SavedRunEmailsImport({ onImported, className, embedded = false }
   }, [])
 
   const importRun = (run: SavedScheduleRun) => {
-    if (!applySavedRunEmailsToSession(run, setResult, setFileName)) return
+    if (!applySavedRunEmailsToSession(run, setResult, setFileName, result)) return
     onImported?.()
   }
 

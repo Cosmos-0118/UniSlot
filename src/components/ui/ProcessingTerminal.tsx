@@ -14,12 +14,20 @@ function TypewriterLine({
   const [charIdx, setCharIdx] = useState(0)
   const rafRef = useRef<number | null>(null)
   const lastTime = useRef(0)
+  const doneRef = useRef(false)
 
   const CPS = 65
 
   useEffect(() => {
     if (!animate) return
     lastTime.current = 0
+    doneRef.current = false
+
+    const finish = () => {
+      if (doneRef.current) return
+      doneRef.current = true
+      onDone?.()
+    }
 
     const step = (ts: number) => {
       if (!lastTime.current) lastTime.current = ts
@@ -29,12 +37,14 @@ function TypewriterLine({
       if (next < line.text.length) {
         rafRef.current = requestAnimationFrame(step)
       } else {
-        onDone?.()
+        finish()
       }
     }
     rafRef.current = requestAnimationFrame(step)
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      // Unmount / tab hide / navigate-away: unblock the log queue.
+      finish()
     }
   }, [line.text, animate, onDone])
 
@@ -71,6 +81,8 @@ interface Props {
   progressEta?: number | null
   /** Optional file name shown in the footer while processing. */
   fileLabel?: string | null
+  /** Tab is in the background — ETA may be frozen / less meaningful. */
+  backgroundThrottled?: boolean
 }
 
 export function ProcessingTerminal({
@@ -82,6 +94,7 @@ export function ProcessingTerminal({
   progressMessage,
   progressEta,
   fileLabel,
+  backgroundThrottled = false,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -89,11 +102,16 @@ export function ProcessingTerminal({
     progressFraction != null && Number.isFinite(progressFraction) && progressFraction >= 0
   const pct = determinate ? Math.round(Math.max(0, Math.min(1, progressFraction)) * 100) : null
   const etaLabel =
-    progressEta != null && Number.isFinite(progressEta) && progressEta > 0
+    !backgroundThrottled &&
+    progressEta != null &&
+    Number.isFinite(progressEta) &&
+    progressEta > 0
       ? progressEta >= 120
         ? `~${Math.round(progressEta / 60)}m left`
         : `~${Math.max(1, Math.round(progressEta))}s left`
-      : null
+      : backgroundThrottled
+        ? 'background'
+        : null
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

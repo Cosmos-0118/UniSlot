@@ -2,13 +2,15 @@ import { Suspense } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { RouteChunkFallback } from '@/components/ui/RouteChunkFallback'
 import { Layout } from '@/components/layout/Layout'
+import { useAppDialog } from '@/contexts/appDialog/useAppDialog'
 import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
 import type { LucideIcon } from 'lucide-react'
 
 export function DashboardLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { resetSession } = useSchedulingSession()
+  const { resetSession, running, viewMode, result } = useSchedulingSession()
+  const { confirm } = useAppDialog()
 
   const parts = location.pathname.split('/').filter(Boolean)
   const activeFeature = parts[0] === 'app' && parts[1] ? parts[1] : 'scheduler'
@@ -17,13 +19,25 @@ export function DashboardLayout() {
     navigate(`/app/${feature}`)
   }
 
-  const goHome = () => {
+  const goHome = async () => {
+    const hasSession = running || viewMode !== 'idle' || result != null
+    if (hasSession) {
+      const ok = await confirm({
+        title: 'Leave Scheduler session?',
+        message: running
+          ? 'A scheduling run is still in progress. Leaving will cancel it and clear results.'
+          : 'This clears your current scheduling results from this session (saved runs stay).',
+        confirmLabel: 'Leave',
+        tone: 'warning',
+      })
+      if (!ok) return
+    }
     resetSession()
     navigate('/')
   }
 
   return (
-    <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={goHome}>
+    <Layout activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={() => void goHome()}>
       <Suspense fallback={<RouteChunkFallback />}>
         <Outlet />
       </Suspense>

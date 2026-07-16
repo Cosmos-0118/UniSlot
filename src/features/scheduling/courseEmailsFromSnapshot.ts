@@ -42,13 +42,35 @@ export function savedRunEmailsSourceLabel(run: Pick<SavedScheduleRun, 'title' | 
   return fileStem ? `${label} (${fileStem})` : label
 }
 
+function hasLiveScheduleSession(result: PipelineOutput | null | undefined): boolean {
+  if (!result) return false
+  return result.schedule != null || result.clashReport != null || result.schedulingSnapshot != null
+}
+
+/**
+ * Load course email groups from a saved run into the live session.
+ * When a scheduling result is already present, only patches `courseEmailsData`
+ * so the timetable session is not clobbered.
+ */
 export function applySavedRunEmailsToSession(
   run: SavedScheduleRun,
   setResult: (r: PipelineOutput | null) => void,
   setFileName: (name: string | null) => void,
+  currentResult?: PipelineOutput | null,
 ): boolean {
   if (run.snapshot.enrollmentRows.length === 0) return false
-  setResult(buildCourseEmailsPipelineOutput(run.snapshot))
-  setFileName(savedRunEmailsSourceLabel(run))
+  const emailsOnly = buildCourseEmailsPipelineOutput(run.snapshot)
+  const label = savedRunEmailsSourceLabel(run)
+
+  if (hasLiveScheduleSession(currentResult)) {
+    setResult({
+      ...currentResult!,
+      courseEmailsData: emailsOnly.courseEmailsData,
+    })
+    return true
+  }
+
+  setResult(emailsOnly)
+  setFileName(label)
   return true
 }

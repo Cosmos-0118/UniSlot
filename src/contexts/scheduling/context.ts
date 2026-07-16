@@ -15,7 +15,8 @@ export type SchedulingSessionValue = {
   setFileName: (name: string | null) => void
   viewMode: SchedulerViewMode
   setViewMode: (mode: SchedulerViewMode) => void
-  run: (file: File, pipelineOptions?: RunPipelineOptions) => Promise<PipelineOutput>
+  /** Start a scheduling run; completion updates session even if Scheduler is unmounted. */
+  startRun: (file: File, pipelineOptions?: RunPipelineOptions) => Promise<PipelineOutput>
   cancelRun: () => void
   exportXlsx: (kind: PipelineExportKind) => Promise<ArrayBuffer>
   fetchSchedulingSnapshot: () => Promise<SchedulingSnapshot>
@@ -24,12 +25,20 @@ export type SchedulingSessionValue = {
   warmupWorker: (options?: { includeSolver?: boolean }) => void
   running: boolean
   progress: PipelineProgressEvent | null
+  /** ETA to show in UI — frozen while the tab is in the background. */
+  displayEtaSeconds: number | null
+  /** True when a run is active and the document is hidden (browser may throttle). */
+  backgroundThrottled: boolean
   resetSession: () => void
+  /** Clear result and return to idle upload (also clears persisted live draft). */
+  beginNewRun: () => void
   /** Pipeline terminal transcript (persists across sidebar navigation). */
   terminalLines: LogLine[]
   terminalTypingIdx: number
   onTerminalLineTypeDone: () => void
   resetTerminalLog: () => void
+  /** Instantly flush typewriter queue (used when tab hides / Scheduler unmounts). */
+  flushTerminalLog: () => void
 }
 
 export const SchedulingSessionContext = createContext<SchedulingSessionValue | null>(null)
