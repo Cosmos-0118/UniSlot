@@ -59,9 +59,9 @@ export function ThemeSwitcher({
       className={cn(
         'theme-theme-toggle relative',
         layout === 'toolbar'
-          ? 'flex flex-row gap-1 rounded-2xl p-1.5'
+          ? 'grid grid-cols-2 gap-2 rounded-2xl p-1.5'
           : cn(
-              'grid gap-1.5 rounded-2xl p-1.5',
+              'grid gap-2 rounded-2xl p-1.5',
               hideLight ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 md:grid-cols-3'
             )
       )}
@@ -96,9 +96,9 @@ export function ThemeSwitcher({
           <div
             role="dialog"
             aria-label="Theme"
-            className="theme-muted-surface theme-popover-in absolute right-0 top-[calc(100%+10px)] z-[120] min-w-[220px] rounded-2xl p-2 shadow-xl ring-1 ring-border/50"
+            className="theme-theme-popover theme-popover-in absolute right-0 top-[calc(100%+10px)] z-[120] min-w-[280px] rounded-3xl p-3 shadow-2xl"
           >
-            <div className="mb-2 px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-text-muted">
+            <div className="mb-2.5 px-1 text-[11px] font-bold uppercase tracking-[0.18em] text-text">
               Theme
             </div>
             {panel}
@@ -142,18 +142,18 @@ function ThemeButton({
       onClick={onClick}
       title={label}
       className={cn(
-        'theme-theme-button theme-focusable relative flex items-center justify-center gap-2 rounded-xl px-2 py-2.5 transition-[color,transform] duration-200 active:scale-[0.97]',
+        'theme-theme-button theme-focusable relative flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-[color,transform] duration-200 active:scale-[0.97]',
         compact
-          ? 'min-h-9 flex-1 flex-col gap-0.5 py-2 sm:min-h-[40px] sm:flex-row sm:gap-2 sm:py-2.5'
+          ? 'min-h-[44px] min-w-[7rem] flex-row'
           : 'md:flex-col md:gap-1',
         isActive && 'theme-theme-button-active'
       )}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className="size-4.5 shrink-0" />
       <span
         className={cn(
-          'text-[11px] font-semibold tracking-wide',
-          compact ? 'hidden sm:inline' : 'hidden md:block'
+          'text-xs font-bold tracking-wide',
+          compact ? 'inline' : 'hidden md:block'
         )}
       >
         {label}

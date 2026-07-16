@@ -556,23 +556,40 @@
 }
 
 .theme-theme-button {
-  color: var(--text-muted);
-  border: 1px solid transparent;
-  background: transparent;
+  color: color-mix(in srgb, var(--text) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-tertiary) 68%, transparent);
   min-height: 40px;
   transition: all 0.22s ease;
 }
 
 .theme-theme-button:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--bg-tertiary) 88%, transparent);
+  border-color: color-mix(in srgb, var(--brand-400) 38%, transparent);
+  background: color-mix(in srgb, var(--bg-tertiary) 92%, var(--brand-500) 8%);
 }
 
 .theme-theme-button-active {
   color: #fff;
-  border-color: color-mix(in srgb, var(--brand-500) 42%, transparent);
-  background: var(--btn-primary-from);
-  box-shadow: 0 8px 24px -14px var(--btn-primary-glow);
+  border-color: color-mix(in srgb, var(--brand-300) 70%, transparent);
+  background: linear-gradient(135deg, var(--btn-primary-from), var(--btn-primary-to));
+  box-shadow:
+    0 12px 28px -16px var(--btn-primary-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.theme-theme-popover {
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-secondary) 96%, transparent),
+      color-mix(in srgb, var(--bg) 98%, transparent)
+    );
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow:
+    0 28px 64px -30px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
 }
 
 .theme-dropzone {
