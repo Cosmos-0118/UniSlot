@@ -1,4 +1,5 @@
 import type { ConflictGraph, Section } from '../types'
+import type { EffortLevel } from '../solver/effort'
 
 /** Immutable problem snapshot posted once to each seed worker. */
 export type SolverPoolProblem = {
@@ -10,6 +11,7 @@ export type SolverPoolProblem = {
   sectionCountByCourse: [string, number][]
   conflictDensity: Record<string, number>
   parallelCap: number
+  effort: EffortLevel
 }
 
 export type SolverSeedRequest =
@@ -19,6 +21,7 @@ export type SolverSeedRequest =
       jobId: number
       seedIndex: number
       baseSeed?: number
+      effort?: EffortLevel
     }
   | {
       type: 'refine'
@@ -27,6 +30,7 @@ export type SolverSeedRequest =
       slotByCourse: Record<string, number>
       baseSeed?: number
       maxIterFactor: number
+      effort?: EffortLevel
     }
   | { type: 'cancel' }
 

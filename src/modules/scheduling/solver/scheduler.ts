@@ -13,6 +13,7 @@ export {
   finalizeSchedulerBest,
   buildCourseAdjacencyForPool,
 } from './localSearchSolver'
-export type { SchedulerRunResult, SchedulerRunOptions, SeedRunResult } from './localSearchSolver'
+export type { SchedulerRunResult, SchedulerRunOptions, SeedRunResult, EffortLevel } from './localSearchSolver'
+export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
 export { buildSchedule, computeClashReport } from './scheduleOutput'
 export { INDEX_TO_DAY, TOTAL_WEEKLY_SLOTS, SLOTS_PER_DAY } from './timeModel'

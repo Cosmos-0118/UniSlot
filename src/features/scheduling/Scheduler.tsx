@@ -90,6 +90,7 @@ export function Scheduler() {
   const [drag, setDrag] = useState(false)
   const [runSeedInput, setRunSeedInput] = useState('')
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
+  const [effortLevel, setEffortLevel] = useState<'fast' | 'balanced' | 'max'>('balanced')
   const [exportBusy, setExportBusy] = useState<PipelineExportKind | null>(null)
   const [snapshotBusy, setSnapshotBusy] = useState(false)
   const [entriesBusy, setEntriesBusy] = useState(false)
@@ -234,6 +235,7 @@ export function Scheduler() {
           if (Number.isFinite(n)) pipelineOpts.randomSeed = Math.floor(n)
         }
         if (allowProvisionalExport) pipelineOpts.allowProvisionalScheduleExport = true
+        pipelineOpts.effort = effortLevel
         const keys = Object.keys(pipelineOpts) as (keyof RunPipelineOptions)[]
         await startRun(file, keys.length > 0 ? pipelineOpts : undefined)
       } catch (e) {
@@ -247,7 +249,7 @@ export function Scheduler() {
         })
       }
     },
-    [startRun, runSeedInput, allowProvisionalExport, showAlert],
+    [startRun, runSeedInput, allowProvisionalExport, effortLevel, showAlert],
   )
 
   const showUploader = viewMode === 'idle'
@@ -314,6 +316,39 @@ export function Scheduler() {
               Run options (determinism & exports)
             </summary>
             <div className="mt-4 space-y-4 border-t border-border/60 pt-4">
+              <div>
+                <span className="text-sm text-text-muted">Search effort</span>
+                <div className="mt-2 inline-flex rounded-xl border border-border bg-bg p-1">
+                  {(
+                    [
+                      ['fast', 'Fast'],
+                      ['balanced', 'Balanced'],
+                      ['max', 'Max'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setEffortLevel(value)}
+                      className={`theme-focusable rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                        effortLevel === value
+                          ? 'bg-accent text-white'
+                          : 'text-text-muted hover:text-text'
+                      }`}
+                      aria-pressed={effortLevel === value}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs text-text-muted">
+                  {effortLevel === 'fast'
+                    ? 'Quick pass — fewer seeds and shorter refine.'
+                    : effortLevel === 'max'
+                      ? 'Longest search — more seeds, Kempe escapes, and elite restarts.'
+                      : 'Default — solid quality vs time (recommended).'}
+                </p>
+              </div>
               <label className="block text-sm">
                 <span className="text-text-muted">Deterministic RNG seed (optional)</span>
                 <input

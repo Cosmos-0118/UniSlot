@@ -1,20 +1,34 @@
 import type { Course, Section } from '../types'
 
-const DEFAULT_MAX_CAPACITY = 65
+/** Single-section courses may keep up to this many students without splitting. */
+export const SINGLE_SECTION_MAX = 64
+/** When splitting, each section hard-caps at this size (Constraints.md §6 preferred band). */
+export const SPLIT_SECTION_CAP = 60
 
 /**
- * Phase 1 (research §10): capacity splits — each fragment is a schedulable section.
+ * Capacity splits — each fragment is a schedulable section.
+ * - enrollment ≤ 64 → one section (capacity 64)
+ * - enrollment ≥ 65 → ceil(n / 60) sections, each capacity 60
  * Faculty placeholders for splits are assigned in `faculty.ts`.
  */
 export function computeSectionSplits(
   courses: Record<string, Course>,
-  maxCapacity: number = DEFAULT_MAX_CAPACITY,
 ): Record<string, Section[]> {
   const courseSections: Record<string, Section[]> = {}
 
   for (const [code, course] of Object.entries(courses)) {
-    const numSections =
-      course.enrollment_count > 0 ? Math.ceil(course.enrollment_count / maxCapacity) : 1
+    const n = course.enrollment_count
+    let numSections: number
+    let sectionCapacity: number
+
+    if (n <= SINGLE_SECTION_MAX) {
+      numSections = 1
+      sectionCapacity = SINGLE_SECTION_MAX
+    } else {
+      numSections = Math.ceil(n / SPLIT_SECTION_CAP)
+      sectionCapacity = SPLIT_SECTION_CAP
+    }
+
     course.section_count = numSections
 
     const sections: Section[] = []
@@ -26,7 +40,7 @@ export function computeSectionSplits(
         course_title: course.title,
         section_number: i + 1,
         faculty: null,
-        capacity: maxCapacity,
+        capacity: sectionCapacity,
         enrolled_students: [],
         programs: [],
       })
@@ -35,4 +49,10 @@ export function computeSectionSplits(
   }
 
   return courseSections
+}
+
+/** Ideal balanced target size when splitting (ceil so totals fit). */
+export function balancedTargetSize(enrollment: number, numSections: number): number {
+  if (numSections <= 0) return enrollment
+  return Math.ceil(enrollment / numSections)
 }

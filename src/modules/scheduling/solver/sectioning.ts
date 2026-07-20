@@ -1,8 +1,9 @@
 import type { EnrollmentRow, Section, Student } from '../types'
+import { balancedTargetSize } from './capacity'
 
 /**
- * Phase 2 (research §4.2): edge-aware sectioning — batch students with identical
- * *other-course* fingerprints so cross-section edges stay sparse.
+ * Edge-aware sectioning — batch students with identical *other-course* fingerprints
+ * so cross-section edges stay sparse, while keeping section loads near a balanced target.
  */
 export function assignStudentsToSections(
   students: Record<string, Student>,
@@ -43,9 +44,11 @@ export function assignStudentsToSections(
 
     type Cohort = { students: string[]; program: string }
     const cohorts: Cohort[] = []
+    let totalEnrollment = 0
 
     for (const [program, idSet] of byProgram) {
       const programStudents = [...idSet].sort()
+      totalEnrollment += programStudents.length
       const byFingerprint = new Map<string, string[]>()
       for (const reg of programStudents) {
         const fp = studentOtherCourses(reg, courseCode).join(',')
@@ -56,6 +59,10 @@ export function assignStudentsToSections(
         cohorts.push({ students: ids, program })
       }
     }
+
+    const target = balancedTargetSize(totalEnrollment, sections.length)
+    // Soft balance band: prefer staying at/under target; hard capacity remains section.capacity.
+    const balancePenaltyWeight = 50
 
     cohorts.sort((a, b) => b.students.length - a.students.length)
 
@@ -76,6 +83,14 @@ export function assignStudentsToSections(
       return crossEdges
     }
 
+    function balancePenalty(secIdx: number, addCount: number): number {
+      const next = (sectionLoads[secIdx] ?? 0) + addCount
+      // Prefer filling emptier sections first; heavily penalize going past the balanced target.
+      const over = Math.max(0, next - target)
+      const underFillBonus = Math.max(0, target - (sectionLoads[secIdx] ?? 0)) * 0.01
+      return over * over * balancePenaltyWeight - underFillBonus
+    }
+
     function pushChunk(program: string, secIdx: number, chunk: string[]): void {
       if (!chunk.length) return
       const sec = sections[secIdx]!
@@ -92,10 +107,13 @@ export function assignStudentsToSections(
         for (let si = 0; si < sections.length; si++) {
           const space = sections[si]!.capacity - (sectionLoads[si] ?? 0)
           if (space <= 0) continue
-          const chunk = remaining.slice(0, Math.min(space, remaining.length))
+          // Prefer taking a chunk that keeps us near target when possible.
+          const roomToTarget = Math.max(1, target - (sectionLoads[si] ?? 0))
+          const takeIdeal = Math.min(space, remaining.length, Math.max(1, roomToTarget))
+          const chunk = remaining.slice(0, takeIdeal)
           const cross = crossEdgeScore(si, chunk)
-          const loadPenalty = (sectionLoads[si] ?? 0) * 0.01
-          const score = cross * 1000 + loadPenalty
+          const bal = balancePenalty(si, chunk.length)
+          const score = cross * 1000 + bal
           if (score < bestScore) {
             bestScore = score
             bestSi = si
@@ -124,10 +142,14 @@ export function assignStudentsToSections(
           continue
         }
         const space = sections[bestSi]!.capacity - (sectionLoads[bestSi] ?? 0)
-        const take = remaining.splice(0, Math.min(space, remaining.length))
+        const roomToTarget = Math.max(1, target - (sectionLoads[bestSi] ?? 0))
+        const take = remaining.splice(0, Math.min(space, remaining.length, Math.max(1, roomToTarget)))
         pushChunk(cohort.program, bestSi, take)
       }
     }
+
+    // Final pass: if any section is empty while another is oversized vs target, leave as-is —
+    // capacity and exclusivity matter more than perfect ±1 when cohorts cannot split.
   }
 
   return courseSections

@@ -49,6 +49,7 @@ self.onmessage = (ev: MessageEvent<SolverSeedRequest>) => {
           msg.seedIndex,
           msg.baseSeed,
           shouldAbort,
+          msg.effort ?? problem.effort ?? 'balanced',
         )
         if (aborted) {
           const out: SolverSeedResponse = { type: 'cancelled', jobId }
@@ -80,6 +81,7 @@ self.onmessage = (ev: MessageEvent<SolverSeedRequest>) => {
           msg.baseSeed,
           msg.maxIterFactor,
           shouldAbort,
+          msg.effort ?? problem.effort ?? 'balanced',
         )
         if (aborted) {
           const out: SolverSeedResponse = { type: 'cancelled', jobId }

@@ -263,12 +263,6 @@ export async function mergeLateEnrollmentIntoSnapshot(
     ? 'Hard-constraint audit did not pass after merging. Enable “Allow provisional schedule export” if you need the schedule workbook anyway.'
     : null
 
-  const scheduleXlsx = allowScheduleXlsx ? await buildScheduleXlsxBuffer(schedule) : null
-  const clashXlsx = await buildClashXlsxBuffer(clashReport)
-  const courseEmailsXlsx = null
-
-  const schedulingStats = computeSchedulingStats(flatSections, snap.slot_assignments, conflictGraph)
-
   const nextSnapshot: SchedulingSnapshot = {
     slot_assignments: { ...snap.slot_assignments },
     courseSections: deepCloneCourseSections(courseSections),
@@ -281,6 +275,14 @@ export async function mergeLateEnrollmentIntoSnapshot(
     })(),
     enrollmentRows: mergedDeduped.map((r) => ({ ...r })),
   }
+
+  const scheduleXlsx = allowScheduleXlsx
+    ? await buildScheduleXlsxBuffer(schedule, nextSnapshot)
+    : null
+  const clashXlsx = await buildClashXlsxBuffer(clashReport)
+  const courseEmailsXlsx = null
+
+  const schedulingStats = computeSchedulingStats(flatSections, snap.slot_assignments, conflictGraph)
 
   const validation: ValidationResult = {
     is_valid: true,

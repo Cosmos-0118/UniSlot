@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
-import type { Schedule, ScheduleEntry } from '../types'
-import { WEEKDAY_ORDER } from '../solver/timeModel'
+import type { Schedule, ScheduleEntry, Student } from '../types'
+import type { SchedulingSnapshot } from '../merge/snapshot'
+import { WEEKDAY_ORDER, SLOTS_PER_DAY, slotIndexToBand } from '../solver/timeModel'
 import {
   applyDataRow,
   ColumnWidthTracker,
@@ -46,32 +47,50 @@ function resolveBranding(b?: ScheduleWorkbookBranding): Required<ScheduleWorkboo
   return { ...DEFAULT_BRANDING, ...b }
 }
 
-/** Primary columns aligned with common academic timetable exports + UniSlot detail columns. */
+/** Clean primary columns for non-technical readers. */
 const MAIN_HEADERS = [
-  'S.NO',
-  'BRANCH',
-  'COURSE CODE',
-  'COURSE TITLE',
-  'Total No. of Students',
-  'DAY',
-  'TIMING',
-  'VENUE',
-  'FACULTY NAME',
-  'Faculty ID No',
-  'FACULTY MOBILE NO',
-  'FACULTY Email',
+  'S.No',
+  'Branch / Program',
+  'Course Code',
+  'Course Title',
+  'Students',
+  'Day',
+  'Timing',
+  'Venue',
+  'Faculty',
   'Section',
-  'Section ID',
-  'Slot',
-  'Band',
 ] as const
 
 const MAIN_COL_COUNT = MAIN_HEADERS.length
 
-function timingForDisplay(time: string): string {
-  const t = time.trim()
-  const idx = t.indexOf('·')
-  return idx > 0 ? t.slice(0, idx).trim() : t
+const DETAIL_HEADERS = [
+  'S.No',
+  'Course Code',
+  'Course Title',
+  'Section',
+  'Section ID',
+  'Day',
+  'Timing',
+  'Slot',
+  'Band',
+  'Students',
+  'Faculty',
+  'Programs',
+] as const
+
+/** Friendly timing: "Monday 5:00–7:00 PM (Band 3/11)". */
+export function friendlyTiming(day: string, slotIndex: number): string {
+  const band = slotIndexToBand(slotIndex)
+  return `${day} 5:00–7:00 PM (Band ${band}/${SLOTS_PER_DAY})`
+}
+
+function timingForDisplay(e: ScheduleEntry | string): string {
+  if (typeof e === 'string') {
+    const t = e.trim()
+    const idx = t.indexOf('·')
+    return idx > 0 ? t.slice(0, idx).trim() : t
+  }
+  return friendlyTiming(e.day, e.slot_index)
 }
 
 function rowFillForEntry(e: ScheduleEntry, rowIndex: number): string {
@@ -153,26 +172,43 @@ function asciiBar(value: number, max: number, width: number): string {
   return `${'█'.repeat(n)}${value > n && n === width ? '+' : ''}`
 }
 
+export type ScheduleWorkbookOptions = {
+  branding?: ScheduleWorkbookBranding
+  /** When provided, adds the “Students by Course & Slot” roster sheet. */
+  snapshot?: SchedulingSnapshot | null
+}
+
 /**
- * Publication-style schedule workbook (multi-sheet), aligned with common institutional .xlsx layouts:
- * **Schedule** (banner + roster), **By Day**, **By Program**, **Course Catalog**, **Summary**.
+ * Publication-style schedule workbook (multi-sheet):
+ * Schedule · Details · By Day · By Program · Course Catalog · Summary · (optional) Students by Course & Slot
  */
 export async function scheduleToWorkbookBuffer(
   schedule: Schedule,
-  branding?: ScheduleWorkbookBranding,
+  brandingOrOptions?: ScheduleWorkbookBranding | ScheduleWorkbookOptions,
 ): Promise<ArrayBuffer> {
+  const options: ScheduleWorkbookOptions =
+    brandingOrOptions &&
+    typeof brandingOrOptions === 'object' &&
+    ('branding' in brandingOrOptions || 'snapshot' in brandingOrOptions)
+      ? (brandingOrOptions as ScheduleWorkbookOptions)
+      : { branding: brandingOrOptions as ScheduleWorkbookBranding | undefined }
+
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = new Date()
-  const brand = resolveBranding(branding)
+  const brand = resolveBranding(options.branding)
 
   const sorted = sortEntries(schedule.entries)
 
   buildScheduleMainSheet(wb, sorted, brand)
+  buildDetailsSheet(wb, sorted)
   buildByDaySheet(wb, sorted)
   buildByProgramSheet(wb, sorted)
   buildCourseCatalogSheet(wb, sorted)
   buildSummarySheet(wb, schedule, sorted)
+  if (options.snapshot) {
+    buildStudentsByCourseSlotSheet(wb, sorted, options.snapshot)
+  }
 
   const buf = await wb.xlsx.writeBuffer()
   return writeBufferToArrayBuffer(buf)
@@ -184,7 +220,7 @@ function buildScheduleMainSheet(
   brand: Required<ScheduleWorkbookBranding>,
 ) {
   const ws = wb.addWorksheet('Schedule', {
-    views: [{ state: 'frozen', ySplit: 7, activeCell: 'A8', topLeftCell: 'A8' }],
+    views: [{ state: 'frozen', ySplit: 9, activeCell: 'A10', topLeftCell: 'A10' }],
   })
 
   const bannerLines = [
@@ -201,7 +237,21 @@ function buildScheduleMainSheet(
     r++
   }
 
-  ws.getRow(r).height = 6
+  ws.mergeCells(r, 1, r, MAIN_COL_COUNT)
+  const howto = ws.getCell(r, 1)
+  howto.value =
+    'How to read this timetable: each row is one course section. Day row colors group weekdays. Technical IDs (Slot, Band, Section ID) are on the Details sheet.'
+  howto.font = { size: 10, italic: true, color: { argb: 'FF334155' } }
+  howto.alignment = { wrapText: true, vertical: 'middle' }
+  ws.getRow(r).height = 28
+  r++
+
+  ws.mergeCells(r, 1, r, MAIN_COL_COUNT)
+  const legend = ws.getCell(r, 1)
+  legend.value = `Day legend: ${WEEKDAY_ORDER.join(' · ')}  |  Evening window: 5:00–7:00 PM · ${SLOTS_PER_DAY} bands/day`
+  legend.font = { size: 10, color: { argb: 'FF475569' } }
+  legend.alignment = { wrapText: true, vertical: 'middle' }
+  ws.getRow(r).height = 22
   r++
 
   const headerRowIndex = r
@@ -210,21 +260,15 @@ function buildScheduleMainSheet(
 
   const colWidths = new ColumnWidthTracker([
     { col: 1, width: 6, min: 5, max: 8 },
-    { col: 2, width: 18, min: 14, max: 48 },
+    { col: 2, width: 22, min: 14, max: 48 },
     { col: 3, width: 14, min: 12, max: 22 },
     { col: 4, width: 36, min: 24, max: 56 },
-    { col: 5, width: 12, min: 10, max: 16 },
+    { col: 5, width: 10, min: 8, max: 14 },
     { col: 6, width: 11, min: 9, max: 14 },
-    { col: 7, width: 22, min: 18, max: 36 },
+    { col: 7, width: 32, min: 24, max: 44 },
     { col: 8, width: 10, min: 8, max: 14 },
-    { col: 9, width: 22, min: 14, max: 42 },
-    { col: 10, width: 12, min: 10, max: 16 },
-    { col: 11, width: 16, min: 12, max: 20 },
-    { col: 12, width: 28, min: 18, max: 40 },
-    { col: 13, width: 9, min: 8, max: 12 },
-    { col: 14, width: 22, min: 14, max: 36 },
-    { col: 15, width: 7, min: 6, max: 10 },
-    { col: 16, width: 7, min: 6, max: 10 },
+    { col: 9, width: 24, min: 14, max: 42 },
+    { col: 10, width: 9, min: 8, max: 12 },
   ])
 
   let idx = 1
@@ -232,7 +276,7 @@ function buildScheduleMainSheet(
     const row = ws.getRow(r)
     const titleStr = safeCellString(e.course_title)
     const programsStr = safeCellString(e.programs)
-    const timeDisp = timingForDisplay(safeCellString(e.time))
+    const timeDisp = timingForDisplay(e)
     const fillArgb = rowFillForEntry(e, r)
 
     const wrappedLines = applyDataRow(
@@ -244,16 +288,10 @@ function buildScheduleMainSheet(
         { col: 4, value: titleStr, wrap: true },
         { col: 5, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
         { col: 6, value: e.day, horizontal: 'center' },
-        { col: 7, value: timeDisp },
+        { col: 7, value: timeDisp, wrap: true },
         { col: 8, value: brand.venuePlaceholder, horizontal: 'center' },
         { col: 9, value: facultyDisplay(e.faculty), wrap: true },
-        { col: 10, value: '—', horizontal: 'center' },
-        { col: 11, value: '—', horizontal: 'center' },
-        { col: 12, value: '—', wrap: true },
-        { col: 13, value: e.section_number, horizontal: 'center', numFmt: '0' },
-        { col: 14, value: safeCellString(e.section_id) },
-        { col: 15, value: e.slot_index, horizontal: 'center', numFmt: '0' },
-        { col: 16, value: e.slot_band, horizontal: 'center', numFmt: '0' },
+        { col: 10, value: e.section_number, horizontal: 'center', numFmt: '0' },
       ],
       { fillArgb, columnWidths: colWidths, defaultVertical: 'middle' },
     )
@@ -271,6 +309,153 @@ function buildScheduleMainSheet(
       to: { row: headerRowIndex, column: MAIN_COL_COUNT },
     }
   }
+}
+
+function buildDetailsSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
+  const lastCol = DETAIL_HEADERS.length
+  const ws = wb.addWorksheet('Details', {
+    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
+  })
+  styleBannerRow(ws, 1, lastCol, 16)
+  ws.getCell(1, 1).value = 'TECHNICAL DETAILS (Slot / Band / Section ID)'
+  ws.getRow(2).height = 8
+
+  const headerRowIndex = 3
+  applyHeaderRow(ws.getRow(headerRowIndex), DETAIL_HEADERS, lastCol)
+
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 6, min: 5, max: 8 },
+    { col: 2, width: 14, min: 12, max: 22 },
+    { col: 3, width: 36, min: 24, max: 56 },
+    { col: 4, width: 9, min: 8, max: 12 },
+    { col: 5, width: 22, min: 14, max: 36 },
+    { col: 6, width: 11, min: 9, max: 14 },
+    { col: 7, width: 32, min: 24, max: 44 },
+    { col: 8, width: 8, min: 6, max: 10 },
+    { col: 9, width: 8, min: 6, max: 10 },
+    { col: 10, width: 10, min: 8, max: 14 },
+    { col: 11, width: 22, min: 14, max: 42 },
+    { col: 12, width: 28, min: 18, max: 48 },
+  ])
+
+  let r = 4
+  let idx = 1
+  for (const e of entries) {
+    const row = ws.getRow(r)
+    const fillArgb = rowFillForEntry(e, r)
+    const wrappedLines = applyDataRow(
+      row,
+      [
+        { col: 1, value: idx, horizontal: 'center', numFmt: '0' },
+        { col: 2, value: safeCellString(e.course_code) },
+        { col: 3, value: safeCellString(e.course_title), wrap: true },
+        { col: 4, value: e.section_number, horizontal: 'center', numFmt: '0' },
+        { col: 5, value: safeCellString(e.section_id) },
+        { col: 6, value: e.day, horizontal: 'center' },
+        { col: 7, value: timingForDisplay(e), wrap: true },
+        { col: 8, value: e.slot_index, horizontal: 'center', numFmt: '0' },
+        { col: 9, value: e.slot_band, horizontal: 'center', numFmt: '0' },
+        { col: 10, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
+        { col: 11, value: facultyDisplay(e.faculty), wrap: true },
+        { col: 12, value: safeCellString(e.programs), wrap: true },
+      ],
+      { fillArgb, columnWidths: colWidths },
+    )
+    fitRowHeight(row, wrappedLines, true)
+    idx++
+    r++
+  }
+  colWidths.apply(ws)
+  if (entries.length > 0) {
+    ws.autoFilter = {
+      from: { row: headerRowIndex, column: 1 },
+      to: { row: headerRowIndex, column: lastCol },
+    }
+  }
+}
+
+function buildStudentsByCourseSlotSheet(
+  wb: ExcelJS.Workbook,
+  entries: ScheduleEntry[],
+  snapshot: SchedulingSnapshot,
+) {
+  const lastCol = 6
+  const ws = wb.addWorksheet('Students by Course & Slot', {
+    views: [{ state: 'frozen', ySplit: 2, activeCell: 'A3', topLeftCell: 'A3' }],
+  })
+  styleBannerRow(ws, 1, lastCol, 15)
+  ws.getCell(1, 1).value = 'STUDENTS BY COURSE & SLOT'
+  ws.getRow(2).height = 8
+
+  const colWidths = new ColumnWidthTracker([
+    { col: 1, width: 6, min: 5, max: 8 },
+    { col: 2, width: 16, min: 12, max: 22 },
+    { col: 3, width: 28, min: 18, max: 44 },
+    { col: 4, width: 18, min: 12, max: 28 },
+    { col: 5, width: 14, min: 10, max: 18 },
+    { col: 6, width: 28, min: 18, max: 40 },
+  ])
+
+  const sectionById = new Map<string, (typeof snapshot.courseSections)[string][number]>()
+  for (const secs of Object.values(snapshot.courseSections)) {
+    for (const s of secs) sectionById.set(s.section_id, s)
+  }
+
+  const byCourse = new Map<string, ScheduleEntry[]>()
+  for (const e of entries) {
+    if (!byCourse.has(e.course_code)) byCourse.set(e.course_code, [])
+    byCourse.get(e.course_code)!.push(e)
+  }
+
+  let r = 3
+  const courseCodes = [...byCourse.keys()].sort((a, b) => a.localeCompare(b))
+  for (const code of courseCodes) {
+    const courseEntries = byCourse.get(code)!
+    for (const e of courseEntries) {
+      const sec = sectionById.get(e.section_id)
+      const roster = sec?.enrolled_students ?? []
+      const timing = timingForDisplay(e)
+      styleSectionTitle(
+        ws,
+        r,
+        lastCol,
+        `${code} · ${e.course_title} · ${timing} · Section ${e.section_number} · Slot ${e.slot_index} · ${roster.length} students`,
+      )
+      r++
+      applyHeaderRow(
+        ws.getRow(r),
+        ['S.No', 'Register No', 'Student Name', 'Program', 'Mobile', 'Email'],
+        lastCol,
+      )
+      r++
+
+      const sortedRegs = [...roster].sort((a, b) => a.localeCompare(b))
+      let n = 1
+      for (const reg of sortedRegs) {
+        const st: Student | undefined = snapshot.students[reg]
+        const row = ws.getRow(r)
+        const fillArgb = r % 2 === 0 ? XL.rowAlt : XL.white
+        const wrappedLines = applyDataRow(
+          row,
+          [
+            { col: 1, value: n, horizontal: 'center', numFmt: '0' },
+            { col: 2, value: reg },
+            { col: 3, value: safeCellString(st?.name ?? '—'), wrap: true },
+            { col: 4, value: safeCellString(st?.program ?? '—'), wrap: true },
+            { col: 5, value: safeCellString(st?.mobile ?? '—') },
+            { col: 6, value: safeCellString(st?.email ?? '—'), wrap: true },
+          ],
+          { fillArgb, columnWidths: colWidths },
+        )
+        fitRowHeight(row, wrappedLines, true)
+        n++
+        r++
+      }
+      r++
+    }
+  }
+
+  colWidths.apply(ws)
 }
 
 function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
@@ -319,7 +504,7 @@ function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
           { col: 4, value: e.section_number, horizontal: 'center', numFmt: '0' },
           { col: 5, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
           { col: 6, value: e.programs, wrap: true },
-          { col: 7, value: timingForDisplay(e.time) },
+          { col: 7, value: timingForDisplay(e) },
         ],
         { fillArgb, columnWidths: colWidths },
       )
@@ -385,7 +570,7 @@ function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
           { col: 2, value: e.course_code },
           { col: 3, value: e.course_title, wrap: true },
           { col: 4, value: e.day },
-          { col: 5, value: timingForDisplay(e.time) },
+          { col: 5, value: timingForDisplay(e) },
           { col: 6, value: e.enrollment_count, horizontal: 'center', numFmt: '0' },
         ],
         { fillArgb, columnWidths: colWidths },

@@ -160,7 +160,10 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         if (!artifacts) {
           throw new Error('No completed run is available for export. Run the scheduler first.')
         }
-        const buffer = await buildPipelineExportBuffer(msg.kind, artifacts)
+        const buffer = await buildPipelineExportBuffer(msg.kind, {
+          ...artifacts,
+          snapshot: getWorkerRunSnapshot(),
+        })
         const out: WorkerResponse = { type: 'exportResult', id: msg.id, kind: msg.kind, buffer }
         self.postMessage(out, [buffer])
       } catch (e) {
@@ -177,7 +180,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
 
   if (msg.type !== 'run') return
 
-  const { id, buffer, randomSeed, allowProvisionalScheduleExport, eagerExports, eagerExportKinds } = msg
+  const { id, buffer, randomSeed, allowProvisionalScheduleExport, eagerExports, eagerExportKinds, effort } = msg
   const signal = beginWorkerRun(id)
 
   void (async () => {
@@ -194,6 +197,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         allowProvisionalScheduleExport,
         eagerExports,
         eagerExportKinds,
+        effort,
         signal,
       })
 

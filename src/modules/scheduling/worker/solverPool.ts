@@ -49,8 +49,14 @@ export async function runSchedulerWithPool(
     localSearchSeedPlan,
     parallelHardCap,
     finalizeSchedulerBest,
+    runPhase2RefineTask,
+    perturbEliteSlots,
   } = await import('../solver/localSearchSolver')
+  const { resolveEffort } = await import('../solver/effort')
+  const { createRng } = await import('../solver/rng')
 
+  const effortLevel = options.effort ?? 'balanced'
+  const effort = resolveEffort(effortLevel)
   const t0 = performance.now() / 1000
   const sections = Object.values(courseSections).flat()
   const courseCodes = Object.keys(courseSections)
@@ -65,7 +71,7 @@ export async function runSchedulerWithPool(
   const courseAdj = buildCourseAdjacencyForPool(conflictGraph, sectionToCourse)
   const { conflictDensity } = buildAdjacency(conflictGraph)
   const parallelCap = parallelHardCap(sections.length)
-  const plan = localSearchSeedPlan(courseCodes.length, options.poolWorkers)
+  const plan = localSearchSeedPlan(courseCodes.length, options.poolWorkers, effortLevel)
   const { runCount, poolSize, phase2IterFactor: maxIterFactor } = plan
   const shouldAbort = options.shouldAbort
   const baseSeed = options.randomSeed
@@ -78,6 +84,7 @@ export async function runSchedulerWithPool(
     sectionCountByCourse: [...sectionCountByCourse.entries()],
     conflictDensity,
     parallelCap,
+    effort: effortLevel,
   }
 
   const workerCount = Math.min(options.poolWorkers, Math.max(1, runCount))
@@ -98,7 +105,7 @@ export async function runSchedulerWithPool(
 
   try {
     push({
-      message: `Phase 1/2: ${runCount} greedy seeds across ${workerCount} workers (${TOTAL_WEEKLY_SLOTS} slots/week)`,
+      message: `Phase 1/2: ${runCount} seeds (${effortLevel}) across ${workerCount} workers (${TOTAL_WEEKLY_SLOTS} slots/week)`,
       etaSeconds: null,
       solverFraction: 0,
     })
@@ -117,6 +124,7 @@ export async function runSchedulerWithPool(
           jobId,
           seedIndex: index,
           baseSeed,
+          effort: effortLevel,
         } satisfies SolverSeedRequest)
       },
       match: (data, jobId) => {
@@ -188,6 +196,7 @@ export async function runSchedulerWithPool(
             slotByCourse: seed.slotByCourse,
             baseSeed,
             maxIterFactor,
+            effort: effortLevel,
           } satisfies SolverSeedRequest)
         },
         match: (data, jobId) => {
@@ -231,6 +240,64 @@ export async function runSchedulerWithPool(
       }
     }
 
+    // Elite restart diversification on coordinator (balanced/max).
+    if (effort.eliteRestartRounds > 0 && best.students > 0) {
+      const elites = ranked.slice(0, Math.min(6, ranked.length))
+      let stagnant = 0
+      for (let round = 0; round < effort.eliteRestartRounds; round++) {
+        if (shouldAbort?.()) throw new PipelineCancelledError()
+        if (best.students === 0 && best.clashWeight === 0) break
+        push({
+          message: `Elite restart ${round + 1}/${effort.eliteRestartRounds} (best ${best.students} RED · weight ${best.clashWeight})`,
+          etaSeconds: null,
+          solverFraction: 0.9 + 0.05 * (round / effort.eliteRestartRounds),
+        })
+        let improved = false
+        for (let ei = 0; ei < elites.length; ei++) {
+          const elite = elites[ei]!
+          const perturbRng = createRng(
+            baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + ei) >>> 0,
+          )
+          const kicked = perturbEliteSlots(
+            elite.slotByCourse,
+            courseCodes,
+            conflictGraph,
+            courseAdj,
+            sectionToCourse,
+            perturbRng,
+            4 + round,
+          )
+          const refined = runPhase2RefineTask(
+            kicked,
+            courseCodes,
+            sections,
+            conflictGraph,
+            courseAdj,
+            sectionCountByCourse,
+            parallelCap,
+            1000 + round * 50 + ei,
+            baseSeed,
+            maxIterFactor * 1.1,
+            shouldAbort,
+            effortLevel,
+          )
+          if (
+            refined.students < best.students ||
+            (refined.students === best.students && refined.clashWeight < best.clashWeight)
+          ) {
+            best = refined
+            improved = true
+          }
+        }
+        if (!improved) {
+          stagnant++
+          if (stagnant >= effort.eliteStagnationStop) break
+        } else {
+          stagnant = 0
+        }
+      }
+    }
+
     return finalizeSchedulerBest(
       courseSections,
       conflictGraph,
@@ -239,7 +306,7 @@ export async function runSchedulerWithPool(
       {
         randomSeed: baseSeed,
         onProgress,
-        solverUsed: 'bundle-sa-tabu-55-pool',
+        solverUsed: `bundle-sa-tabu-55-pool-${effortLevel}`,
         elapsedAlreadySeconds: performance.now() / 1000 - t0,
       },
     )

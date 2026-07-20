@@ -5,41 +5,55 @@ import {
   computeClashWeight,
   sumConflictGraphWeights,
 } from './conflictGraph'
+import { resolveEffort, type EffortLevel, type EffortParams } from './effort'
 import { createRng, type Rng } from './rng'
 import { SLOTS_PER_DAY, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
+
+export type { EffortLevel } from './effort'
+export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
 
 const TARGET_PARALLEL_SECTIONS = 11
 const PARALLEL_SOFT_WEIGHT = 100
 const DAY_BALANCE_WEIGHT = 6
 const LOAD_BALANCE_FACTOR = 4
-const PHASE2_BASE_ITER_FACTOR = 1.85
-const PHASE2_EXPANDED_ITER_FACTOR = 2.1
 
-function multiStartRunCount(courseCount: number, poolWorkers = 1): number {
-  const base = Math.min(72, Math.max(16, Math.ceil(Math.sqrt(courseCount) * 5)))
+function multiStartRunCount(
+  courseCount: number,
+  poolWorkers = 1,
+  effort: EffortParams = resolveEffort('balanced'),
+): number {
+  const base = Math.min(
+    effort.runCountCap,
+    Math.max(16, Math.ceil(Math.sqrt(courseCount) * 5)),
+  )
   if (poolWorkers <= 1) return base
-  return Math.min(96, base + 8 * (poolWorkers - 1))
+  return Math.min(effort.runCountCap, base + 8 * (poolWorkers - 1))
 }
 
-function solutionPoolSize(runCount: number): number {
-  return Math.min(14, Math.max(4, Math.floor(runCount / 5)))
-}
-
-function phase2MaxIterFactor(poolWorkers: number): number {
-  return poolWorkers >= 4 ? PHASE2_EXPANDED_ITER_FACTOR : PHASE2_BASE_ITER_FACTOR
+function solutionPoolSize(runCount: number, effort: EffortParams = resolveEffort('balanced')): number {
+  return Math.min(effort.poolSizeCap, Math.max(4, Math.floor(runCount / 5)))
 }
 
 /** Exposed for pipeline UX (seed counts match the solver). */
 export function localSearchSeedPlan(
   courseCount: number,
   poolWorkers = 1,
-): { runCount: number; poolSize: number; poolWorkers: number; phase2IterFactor: number } {
-  const runCount = multiStartRunCount(courseCount, poolWorkers)
+  effortLevel: EffortLevel = 'balanced',
+): {
+  runCount: number
+  poolSize: number
+  poolWorkers: number
+  phase2IterFactor: number
+  effort: EffortLevel
+} {
+  const effort = resolveEffort(effortLevel)
+  const runCount = multiStartRunCount(courseCount, poolWorkers, effort)
   return {
     runCount,
-    poolSize: solutionPoolSize(runCount),
+    poolSize: solutionPoolSize(runCount, effort),
     poolWorkers,
-    phase2IterFactor: phase2MaxIterFactor(poolWorkers),
+    phase2IterFactor: effort.phase2IterFactor,
+    effort: effort.effort,
   }
 }
 
@@ -376,9 +390,16 @@ function hybridSATabuImprove(
   courseAdj: Map<string, Map<string, number>>,
   sectionCountByCourse: Map<string, number>,
   parallelCap: number,
-  options?: { maxIterFactor?: number; shouldAbort?: () => boolean },
+  options?: {
+    maxIterFactor?: number
+    shouldAbort?: () => boolean
+    effort?: EffortParams
+    deadlineMs?: number
+    enableKempe?: boolean
+  },
   rng: Rng = Math.random,
 ): Record<string, number> {
+  const effort = options?.effort ?? resolveEffort('balanced')
   const slotByCourse: Record<string, number> = { ...initialSlotByCourse }
   const n = courseCodes.length
   const mEdges = conflictGraph.edges.length
@@ -386,13 +407,13 @@ function hybridSATabuImprove(
   const slotLoads = slotLoadsFromBundleSlots(courseCodes, slotByCourse, sectionCountByCourse)
   const facultySlots = buildFacultySlotMap(sections, slotByCourse)
 
-  const maxIter = Math.min(
-    350_000,
-    Math.max(8_000, Math.floor((options?.maxIterFactor ?? 1) * (400 * n + 40 * mEdges + 2500))),
-  )
+  const rawMax = Math.floor((options?.maxIterFactor ?? 1) * (400 * n + 40 * mEdges + 2500))
+  const maxIter = Math.min(effort.maxIterCap, Math.max(8_000, rawMax))
   const baseTenure = Math.max(4, Math.min(36, Math.floor(4 + n / 10)))
   const coolPeriod = Math.max(35, Math.floor(20 + n / 4))
   const stagnationReheat = Math.max(200, Math.floor(150 + n * 3))
+  const tStart = performance.now()
+  const deadlineMs = options?.deadlineMs ?? effort.perTaskMs
 
   const { studentToSections } = buildEnrollmentIndex(sections)
   const LEX_W = sumConflictGraphWeights(conflictGraph) + 1
@@ -624,10 +645,136 @@ function hybridSATabuImprove(
     tabuUntil.set(tabuAttrKey(course, fromSlot), iter + tenure)
   }
 
-    const abortStride = 2048
+  const conflictCourses = new Set<string>()
+  function rebuildConflictCourses(): void {
+    conflictCourses.clear()
+    for (const e of conflictGraph.edges) {
+      const ca = sectionIdToCourse.get(e.section_a)
+      const cb = sectionIdToCourse.get(e.section_b)
+      if (!ca || !cb || ca === cb) continue
+      if ((slotByCourse[ca] ?? -1) === (slotByCourse[cb] ?? -2)) {
+        conflictCourses.add(ca)
+        conflictCourses.add(cb)
+      }
+    }
+  }
+  rebuildConflictCourses()
+
+  function pickMinConflictSlot(course: string): number | null {
+    const sample = effort.minConflictSlotSample
+    const candidates: number[] = []
+    const seen = new Set<number>()
+    for (let t = 0; t < sample * 2 && candidates.length < sample; t++) {
+      const s = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+      if (seen.has(s)) continue
+      seen.add(s)
+      if (feasibleCourseMove(course, s)) candidates.push(s)
+    }
+    if (candidates.length === 0) return null
+    let bestSlot = candidates[0]!
+    let bestScore = Number.POSITIVE_INFINITY
+    const oldSlot = slotByCourse[course]!
+    for (const s of candidates) {
+      const dS = deltaStudentsCourseMove(course, s)
+      const dE = clashDeltaMoveCourse(course, oldSlot, s, courseAdj, slotByCourse)
+      const score = dS * LEX_W + dE
+      if (score < bestScore) {
+        bestScore = score
+        bestSlot = s
+      }
+    }
+    return bestSlot
+  }
+
+  function tryKempeChain(): boolean {
+    const sa = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+    let sb = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+    if (sa === sb) sb = (sb + 1) % TOTAL_WEEKLY_SLOTS
+
+    const inA: string[] = []
+    const inB: string[] = []
+    for (const c of courseCodes) {
+      const sl = slotByCourse[c]!
+      if (sl === sa) inA.push(c)
+      else if (sl === sb) inB.push(c)
+    }
+    if (inA.length === 0 || inB.length === 0) return false
+
+    const neighborsA = new Map<string, string[]>()
+    const neighborsB = new Map<string, string[]>()
+    for (const a of inA) {
+      const nb: string[] = []
+      const adj = courseAdj.get(a)
+      if (adj) {
+        for (const b of inB) {
+          if (adj.has(b)) nb.push(b)
+        }
+      }
+      if (nb.length) neighborsA.set(a, nb)
+    }
+    for (const b of inB) {
+      const nb: string[] = []
+      const adj = courseAdj.get(b)
+      if (adj) {
+        for (const a of inA) {
+          if (adj.has(a)) nb.push(a)
+        }
+      }
+      if (nb.length) neighborsB.set(b, nb)
+    }
+    if (neighborsA.size === 0) return false
+
+    const seeds = [...neighborsA.keys()]
+    const start = seeds[Math.floor(rng() * seeds.length)]!
+    const chainA = new Set<string>()
+    const chainB = new Set<string>()
+    const q: { c: string; side: 'A' | 'B' }[] = [{ c: start, side: 'A' }]
+    const seen = new Set<string>([`A:${start}`])
+    while (q.length) {
+      const { c, side } = q.pop()!
+      if (side === 'A') {
+        chainA.add(c)
+        for (const b of neighborsA.get(c) ?? []) {
+          const key = `B:${b}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          q.push({ c: b, side: 'B' })
+        }
+      } else {
+        chainB.add(c)
+        for (const a of neighborsB.get(c) ?? []) {
+          const key = `A:${a}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          q.push({ c: a, side: 'A' })
+        }
+      }
+    }
+    if (chainA.size === 0 || chainB.size === 0) return false
+
+    const trial = { ...slotByCourse }
+    for (const c of chainA) trial[c] = sb
+    for (const c of chainB) trial[c] = sa
+    if (!facultySlotsFeasible(sections, trial)) return false
+    const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
+    for (let i = 0; i < loads.length; i++) {
+      if ((loads[i] ?? 0) > parallelCap) return false
+    }
+
+    for (const c of chainA) {
+      if (slotByCourse[c] !== sb) applyCourseMove(c, sb)
+    }
+    for (const c of chainB) {
+      if (slotByCourse[c] !== sa) applyCourseMove(c, sa)
+    }
+    return true
+  }
+
+  const abortStride = 2048
   for (let iter = 0; iter < maxIter; iter++) {
-    if (iter > 0 && iter % abortStride === 0 && options?.shouldAbort?.()) {
-      throw new PipelineCancelledError()
+    if (iter > 0 && iter % abortStride === 0) {
+      if (options?.shouldAbort?.()) throw new PipelineCancelledError()
+      if (performance.now() - tStart > deadlineMs) break
     }
     if (iter > 0 && iter % coolPeriod === 0) temperature *= 0.992
 
@@ -663,9 +810,26 @@ function hybridSATabuImprove(
       return rng() < Math.exp(-deltaF / temperature)
     }
 
-    if (roll < 0.58) {
-      const course = courseCodes[Math.floor(rng() * n)]!
-      const newSlot = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+    if (options?.enableKempe && roll < effort.kempeProb) {
+      if (tryKempeChain()) {
+        const slotMap = sectionSlotsFromBundle(sections, slotByCourse)
+        totalClash = computeClashWeight(conflictGraph, slotMap)
+        studentClash = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
+        parallelPenalty = parallelExcessPenalty(slotLoads)
+        dayPenalty = dayL1Penalty(dayTotals, idealPerDay)
+        rebuildConflictCourses()
+      }
+    } else if (roll < 0.58 + effort.focusProb * 0.15) {
+      let course: string
+      if (conflictCourses.size > 0 && rng() < effort.focusProb) {
+        const arr = [...conflictCourses]
+        course = arr[Math.floor(rng() * arr.length)]!
+      } else {
+        course = courseCodes[Math.floor(rng() * n)]!
+      }
+      const picked =
+        rng() < 0.85 ? pickMinConflictSlot(course) : Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+      const newSlot = picked ?? Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
       if (!feasibleCourseMove(course, newSlot)) continue
       const oldSlot = slotByCourse[course]!
       const k = sectionCountByCourse.get(course) ?? 1
@@ -681,6 +845,7 @@ function hybridSATabuImprove(
       parallelPenalty += dP
       dayPenalty += dDay
       registerTabu(course, oldSlot, iter, tenure)
+      if (dE !== 0 || dS !== 0) rebuildConflictCourses()
     } else {
       const ca = courseCodes[Math.floor(rng() * n)]!
       const cb = courseCodes[Math.floor(rng() * n)]!
@@ -704,6 +869,7 @@ function hybridSATabuImprove(
       dayPenalty += dDay
       registerTabu(ca, sa, iter, tenure)
       registerTabu(cb, sb, iter, tenure)
+      if (dE !== 0 || dS !== 0) rebuildConflictCourses()
     }
 
     if (
@@ -747,8 +913,12 @@ function solveGreedySeed(
   randomize: boolean,
   rng: Rng,
   shouldAbort?: () => boolean,
+  options?: { useDsatur?: boolean; effort?: EffortParams },
 ): { slotByCourse: Record<string, number>; clashWeight: number } {
-  function coursePriority(code: string): number {
+  const effort = options?.effort ?? resolveEffort('balanced')
+  const useDsatur = options?.useDsatur === true
+
+  function staticPriority(code: string): number {
     const secs = sections.filter((s) => s.course_code === code)
     let score = 0
     for (const s of secs) {
@@ -761,62 +931,92 @@ function solveGreedySeed(
     return score
   }
 
-  const sorted = [...courseCodes].sort((a, b) => coursePriority(b) - coursePriority(a))
   const slotByCourse: Record<string, number> = {}
   const slotLoads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
   const idealPerDay = sections.length / WEEKDAY_COUNT
+  const remaining = new Set(courseCodes)
 
   const FACULTY_VIOL = 1_000_000_000
   const CAP_HARD = 100_000_000
 
-  for (const code of sorted) {
+  function scoreSlot(code: string, slot: number, k: number, faculties: string[]): number {
+    let violation = 0
+    if (slotLoads[slot]! + k > parallelCap) {
+      violation += CAP_HARD * (slotLoads[slot]! + k - parallelCap)
+    }
+    for (const f of faculties) {
+      for (const sec of sections) {
+        if (sec.faculty === f && slotByCourse[sec.course_code] === slot && sec.course_code !== code) {
+          violation += FACULTY_VIOL
+        }
+      }
+    }
+    let conflictCost = 0
+    const adj = courseAdj.get(code)
+    if (adj) {
+      for (const [other, w] of adj) {
+        if (slotByCourse[other] === slot) conflictCost += w
+      }
+    }
+    const totalAssigned = slotLoads.reduce((a: number, b: number) => a + b, 0)
+    const targetLoad = TOTAL_WEEKLY_SLOTS ? totalAssigned / TOTAL_WEEKLY_SLOTS : 0
+    const L = (slotLoads[slot] ?? 0) + k
+    const parallelSoft = Math.max(0, L - TARGET_PARALLEL_SECTIONS) * PARALLEL_SOFT_WEIGHT
+    const loadPenalty = Math.max(0, (slotLoads[slot] ?? 0) - targetLoad) * LOAD_BALANCE_FACTOR
+    const trialLoads = [...slotLoads]
+    trialLoads[slot] = (trialLoads[slot] ?? 0) + k
+    const daySoft = dayL1PenaltyFromSlotLoads(trialLoads, idealPerDay) * 3
+    let score = violation + conflictCost + parallelSoft + loadPenalty + daySoft
+    if (randomize) score += rng() * (conflictCost > 0 ? conflictCost * 0.4 + 3 : 3)
+    return score
+  }
+
+  function pickNextCourse(): string {
+    if (!useDsatur) {
+      const sorted = [...remaining].sort((a, b) => staticPriority(b) - staticPriority(a))
+      return sorted[0]!
+    }
+    // DSATUR: max saturation (distinct neighbor slots already used), then weighted degree.
+    let best: string | null = null
+    let bestSat = -1
+    let bestDeg = -1
+    for (const code of remaining) {
+      const used = new Set<number>()
+      const adj = courseAdj.get(code)
+      let deg = 0
+      if (adj) {
+        for (const [other, w] of adj) {
+          deg += w
+          if (slotByCourse[other] !== undefined) used.add(slotByCourse[other]!)
+        }
+      }
+      const sat = used.size
+      if (sat > bestSat || (sat === bestSat && deg > bestDeg)) {
+        bestSat = sat
+        bestDeg = deg
+        best = code
+      }
+    }
+    return best ?? [...remaining][0]!
+  }
+
+  while (remaining.size > 0) {
     if (shouldAbort?.()) throw new PipelineCancelledError()
+    const code = pickNextCourse()
+    remaining.delete(code)
     const k = sectionCountByCourse.get(code) ?? 1
     const secs = sections.filter((s) => s.course_code === code)
     const faculties = secs.map((s) => s.faculty).filter(Boolean) as string[]
 
     let bestSlot = 0
     let bestScore = Number.POSITIVE_INFINITY
-
-    const totalAssigned = slotLoads.reduce((a: number, b: number) => a + b, 0)
-    const targetLoad = TOTAL_WEEKLY_SLOTS ? totalAssigned / TOTAL_WEEKLY_SLOTS : 0
-
     for (let slot = 0; slot < TOTAL_WEEKLY_SLOTS; slot++) {
-      let violation = 0
-      if (slotLoads[slot]! + k > parallelCap) {
-        violation += CAP_HARD * (slotLoads[slot]! + k - parallelCap)
-      }
-      for (const f of faculties) {
-        for (const sec of sections) {
-          if (sec.faculty === f && slotByCourse[sec.course_code] === slot && sec.course_code !== code) {
-            violation += FACULTY_VIOL
-          }
-        }
-      }
-
-      let conflictCost = 0
-      for (const other of sorted) {
-        if (other === code || slotByCourse[other] === undefined) continue
-        if (slotByCourse[other] === slot) {
-          const w = courseAdj.get(code)?.get(other)
-          if (w) conflictCost += w
-        }
-      }
-
-      const L = (slotLoads[slot] ?? 0) + k
-      const parallelSoft = Math.max(0, L - TARGET_PARALLEL_SECTIONS) * PARALLEL_SOFT_WEIGHT
-      const loadPenalty = Math.max(0, (slotLoads[slot] ?? 0) - targetLoad) * LOAD_BALANCE_FACTOR
-      const trialLoads = [...slotLoads]
-      trialLoads[slot] = (trialLoads[slot] ?? 0) + k
-      const daySoft = dayL1PenaltyFromSlotLoads(trialLoads, idealPerDay) * 3
-      let score = violation + conflictCost + parallelSoft + loadPenalty + daySoft
-      if (randomize) score += rng() * (conflictCost > 0 ? conflictCost * 0.4 + 3 : 3)
+      const score = scoreSlot(code, slot, k, faculties)
       if (score < bestScore) {
         bestScore = score
         bestSlot = slot
       }
     }
-
     slotByCourse[code] = bestSlot
     slotLoads[bestSlot] = (slotLoads[bestSlot] ?? 0) + k
   }
@@ -829,7 +1029,7 @@ function solveGreedySeed(
     courseAdj,
     sectionCountByCourse,
     parallelCap,
-    { shouldAbort },
+    { shouldAbort, effort, enableKempe: false, deadlineMs: effort.perTaskMs },
     rng,
   )
 
@@ -899,6 +1099,8 @@ export type SchedulerRunOptions = {
   shouldAbort?: () => boolean
   /** 1 = in-process sequential (tests). Omit to auto-detect in async path. */
   poolWorkers?: number
+  /** Search effort dial. Default balanced. */
+  effort?: EffortLevel
 }
 
 export type SeedRunResult = {
@@ -920,7 +1122,9 @@ export function runPhase1SeedTask(
   seedIndex: number,
   baseSeed: number | undefined,
   shouldAbort?: () => boolean,
+  effortLevel: EffortLevel = 'balanced',
 ): SeedRunResult {
+  const effort = resolveEffort(effortLevel)
   const rng = createRng(baseSeed === undefined ? undefined : (baseSeed + seedIndex) >>> 0)
   const r = solveGreedySeed(
     courseCodes,
@@ -933,6 +1137,7 @@ export function runPhase1SeedTask(
     seedIndex > 0,
     rng,
     shouldAbort,
+    { useDsatur: seedIndex % 2 === 0, effort },
   )
   const { studentToSections } = buildEnrollmentIndex(sections)
   const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
@@ -958,7 +1163,9 @@ export function runPhase2RefineTask(
   baseSeed: number | undefined,
   maxIterFactor: number,
   shouldAbort?: () => boolean,
+  effortLevel: EffortLevel = 'balanced',
 ): SeedRunResult {
+  const effort = resolveEffort(effortLevel)
   const rng = createRng(baseSeed === undefined ? undefined : (baseSeed + 10_000 + refineIndex) >>> 0)
   const refined = hybridSATabuImprove(
     { ...initialSlotByCourse },
@@ -968,7 +1175,13 @@ export function runPhase2RefineTask(
     courseAdj,
     sectionCountByCourse,
     parallelCap,
-    { maxIterFactor, shouldAbort },
+    {
+      maxIterFactor,
+      shouldAbort,
+      effort,
+      enableKempe: true,
+      deadlineMs: effort.perTaskMs,
+    },
     rng,
   )
   const { studentToSections } = buildEnrollmentIndex(sections)
@@ -981,6 +1194,35 @@ export function runPhase2RefineTask(
     clashWeight,
     students,
   }
+}
+
+/** Perturb elite solution for restart diversification. */
+export function perturbEliteSlots(
+  slotByCourse: Record<string, number>,
+  courseCodes: string[],
+  conflictGraph: ConflictGraph,
+  courseAdj: Map<string, Map<string, number>>,
+  sectionToCourse: Map<string, string>,
+  rng: Rng,
+  kicks = 6,
+): Record<string, number> {
+  const next = { ...slotByCourse }
+  const conflict: string[] = []
+  for (const e of conflictGraph.edges) {
+    const ca = sectionToCourse.get(e.section_a)
+    const cb = sectionToCourse.get(e.section_b)
+    if (!ca || !cb || ca === cb) continue
+    if ((next[ca] ?? -1) === (next[cb] ?? -2)) {
+      conflict.push(ca, cb)
+    }
+  }
+  const pool = conflict.length > 0 ? conflict : courseCodes
+  for (let i = 0; i < kicks; i++) {
+    const c = pool[Math.floor(rng() * pool.length)]!
+    next[c] = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+  }
+  void courseAdj
+  return next
 }
 
 /** Stable reduce: sort by (students, clashWeight), ties broken by lower seedIndex. */
@@ -1093,6 +1335,7 @@ function runSchedulerInProcess(
   onProgress: ((evt: SchedulerProgressEvent) => void) | undefined,
   options: SchedulerRunOptions & { poolWorkers: number },
 ): SchedulerRunResult {
+  const effort = resolveEffort(options.effort)
   const t0 = performance.now() / 1000
   const sections = Object.values(courseSections).flat()
   const courseCodes = Object.keys(courseSections)
@@ -1107,17 +1350,19 @@ function runSchedulerInProcess(
   const courseAdj = buildCourseAdjacency(conflictGraph, sectionToCourse)
   const { conflictDensity } = buildAdjacency(conflictGraph)
   const parallelCap = parallelHardCap(sections.length)
-  const runCount = multiStartRunCount(courseCodes.length, options.poolWorkers)
-  const poolSize = solutionPoolSize(runCount)
-  const maxIterFactor = phase2MaxIterFactor(options.poolWorkers)
+  const runCount = multiStartRunCount(courseCodes.length, options.poolWorkers, effort)
+  const poolSize = solutionPoolSize(runCount, effort)
+  const maxIterFactor = effort.phase2IterFactor
   const shouldAbort = options.shouldAbort
   const baseSeed = options.randomSeed
+  const overallDeadlineMs =
+    effort.perTaskMs * Math.max(8, runCount) * effort.overallDeadlineMul * 0.15
 
   const push = (evt: SchedulerProgressEvent) => onProgress?.(evt)
   const tPhase1 = performance.now()
 
   push({
-    message: `Phase 1/2: ${runCount} bundle-aware greedy seeds × ${options.poolWorkers} worker(s) (${TOTAL_WEEKLY_SLOTS} slots/week)`,
+    message: `Phase 1/2: ${runCount} seeds (${effort.effort}) × ${options.poolWorkers} worker(s) · ${TOTAL_WEEKLY_SLOTS} slots/week`,
     etaSeconds: null,
     solverFraction: 0,
   })
@@ -1126,6 +1371,7 @@ function runSchedulerInProcess(
   const seedResults: SeedRunResult[] = []
   for (let i = 0; i < runCount; i++) {
     if (shouldAbort?.()) throw new PipelineCancelledError()
+    if (performance.now() - tPhase1 > overallDeadlineMs) break
     const r = runPhase1SeedTask(
       courseCodes,
       sections,
@@ -1137,6 +1383,7 @@ function runSchedulerInProcess(
       i,
       baseSeed,
       shouldAbort,
+      effort.effort,
     )
     seedResults.push(r)
 
@@ -1153,7 +1400,7 @@ function runSchedulerInProcess(
         }`,
         etaSeconds:
           etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
-        solverFraction: 0.55 * (done / runCount),
+        solverFraction: 0.5 * (done / Math.max(1, runCount)),
       })
     }
   }
@@ -1171,13 +1418,13 @@ function runSchedulerInProcess(
 
   if (pool <= 1) {
     push({
-      message: `Phase 2/2 skipped (single seed). Best: ${best.students} students with overlaps · clash weight ${best.clashWeight}.`,
+      message: `Phase 2/2 skipped (single seed). Best: ${best.students} overlaps · weight ${best.clashWeight}.`,
       etaSeconds: null,
-      solverFraction: 0.92,
+      solverFraction: 0.85,
     })
   } else {
     push({
-      message: `Phase 2/2: Tabu/SA refine top ${pool} candidates (factor ${maxIterFactor}; best so far: ${best.students} overlaps · weight ${best.clashWeight})`,
+      message: `Phase 2/2: refine top ${pool} (factor ${maxIterFactor}; best ${best.students} overlaps · weight ${best.clashWeight})`,
       etaSeconds: null,
       solverFraction: 0.55,
     })
@@ -1199,7 +1446,7 @@ function runSchedulerInProcess(
         }`,
         etaSeconds:
           etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5 ? etaSeconds : null,
-        solverFraction: 0.55 + 0.44 * (p / refinementSteps),
+        solverFraction: 0.55 + 0.25 * (p / refinementSteps),
       })
       const refined = runPhase2RefineTask(
         seed.slotByCourse,
@@ -1213,12 +1460,74 @@ function runSchedulerInProcess(
         baseSeed,
         maxIterFactor,
         shouldAbort,
+        effort.effort,
       )
       if (
         refined.students < best.students ||
         (refined.students === best.students && refined.clashWeight < best.clashWeight)
       ) {
         best = refined
+      }
+    }
+  }
+
+  // Elite restart diversification (balanced/max).
+  if (effort.eliteRestartRounds > 0 && best.students > 0) {
+    const elites = ranked.slice(0, Math.min(6, ranked.length))
+    let stagnant = 0
+    for (let round = 0; round < effort.eliteRestartRounds; round++) {
+      if (shouldAbort?.()) throw new PipelineCancelledError()
+      if (performance.now() / 1000 - t0 > overallDeadlineMs / 1000) break
+      if (best.students === 0 && best.clashWeight === 0) break
+
+      push({
+        message: `Elite restart ${round + 1}/${effort.eliteRestartRounds} (best ${best.students} RED · weight ${best.clashWeight})`,
+        etaSeconds: null,
+        solverFraction: 0.82 + 0.08 * (round / effort.eliteRestartRounds),
+      })
+
+      let improved = false
+      for (let ei = 0; ei < elites.length; ei++) {
+        const elite = elites[ei]!
+        const perturbRng = createRng(
+          baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + ei) >>> 0,
+        )
+        const kicked = perturbEliteSlots(
+          elite.slotByCourse,
+          courseCodes,
+          conflictGraph,
+          courseAdj,
+          sectionToCourse,
+          perturbRng,
+          4 + round,
+        )
+        const refined = runPhase2RefineTask(
+          kicked,
+          courseCodes,
+          sections,
+          conflictGraph,
+          courseAdj,
+          sectionCountByCourse,
+          parallelCap,
+          1000 + round * 50 + ei,
+          baseSeed,
+          maxIterFactor * 1.1,
+          shouldAbort,
+          effort.effort,
+        )
+        if (
+          refined.students < best.students ||
+          (refined.students === best.students && refined.clashWeight < best.clashWeight)
+        ) {
+          best = refined
+          improved = true
+        }
+      }
+      if (!improved) {
+        stagnant++
+        if (stagnant >= effort.eliteStagnationStop) break
+      } else {
+        stagnant = 0
       }
     }
   }
@@ -1231,7 +1540,10 @@ function runSchedulerInProcess(
     {
       randomSeed: baseSeed,
       onProgress,
-      solverUsed: options.poolWorkers > 1 ? 'bundle-sa-tabu-55-pool' : 'bundle-sa-tabu-55',
+      solverUsed:
+        options.poolWorkers > 1
+          ? `bundle-sa-tabu-55-pool-${effort.effort}`
+          : `bundle-sa-tabu-55-${effort.effort}`,
       elapsedAlreadySeconds: performance.now() / 1000 - t0,
     },
   )

@@ -83,6 +83,8 @@ function mapSolverFraction(solverFraction: number | undefined): number | undefin
 export type RunPipelineOptions = {
   randomSeed?: number
   allowProvisionalScheduleExport?: boolean
+  /** Search effort: fast | balanced | max. Default balanced. */
+  effort?: import('../solver/effort').EffortLevel
   /**
    * When true, build .xlsx buffers during the run (higher memory, slower time-to-done).
    * Default false: exports are generated on demand in the worker after the solve completes.
@@ -120,6 +122,7 @@ async function buildEagerExportsSequential(
     clashReport: ClashReport | null
     enrollmentRows: EnrollmentRow[]
     allowScheduleXlsx: boolean
+    snapshot?: import('../merge/snapshot').SchedulingSnapshot | null
   },
 ): Promise<{
   scheduleXlsx: ArrayBuffer | null
@@ -131,7 +134,7 @@ async function buildEagerExportsSequential(
   let courseEmailsXlsx: ArrayBuffer | null = null
 
   if (kinds.schedule && artifacts.allowScheduleXlsx && artifacts.schedule) {
-    scheduleXlsx = await buildScheduleXlsxBuffer(artifacts.schedule)
+    scheduleXlsx = await buildScheduleXlsxBuffer(artifacts.schedule, artifacts.snapshot)
   }
   if (kinds.clash && artifacts.clashReport) {
     clashXlsx = await buildClashXlsxBuffer(artifacts.clashReport)
@@ -245,10 +248,11 @@ export async function runPipeline(
 
   const { resolvePoolWorkerCount } = await import('../worker/solverPoolTypes')
   const poolWorkers = resolvePoolWorkerCount()
-  const seedPlan = localSearchSeedPlan(courseCount, poolWorkers)
+  const effort = options?.effort ?? 'balanced'
+  const seedPlan = localSearchSeedPlan(courseCount, poolWorkers, effort)
   emit({
     stage: 'schedule',
-    message: `Local search: ${seedPlan.runCount} greedy seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} slots/week`,
+    message: `Local search (${seedPlan.effort}): ${seedPlan.runCount} seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} slots/week`,
     fraction: SCHEDULE_LO,
     etaSeconds: null,
   })
@@ -269,6 +273,7 @@ export async function runPipeline(
       randomSeed: options?.randomSeed,
       shouldAbort: () => signal?.aborted === true,
       poolWorkers,
+      effort,
     },
   )
   throwIfAborted(signal)
@@ -288,6 +293,13 @@ export async function runPipeline(
   const scheduleExportBlockReason = scheduleExportBlocked
     ? 'Hard-constraint audit did not pass. The schedule workbook was not generated. Enable “Allow provisional schedule export” and re-run with the same file, or fix the underlying data and re-run.'
     : null
+
+  const schedulingSnapshot: SchedulingSnapshot = {
+    slot_assignments: { ...sched.slot_assignments },
+    courseSections: deepCloneCourseSections(courseSections),
+    students: cloneStudents(students),
+    enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
+  }
 
   const eagerKinds = options?.eagerExportKinds ?? {
     schedule: true,
@@ -311,6 +323,7 @@ export async function runPipeline(
       clashReport,
       enrollmentRows,
       allowScheduleXlsx,
+      snapshot: schedulingSnapshot,
     })
     scheduleXlsx = built.scheduleXlsx
     clashXlsx = built.clashXlsx
@@ -350,11 +363,6 @@ export async function runPipeline(
     },
     schedule_export_blocked: scheduleExportBlocked,
     schedule_export_block_reason: scheduleExportBlockReason,
-    schedulingSnapshot: {
-      slot_assignments: { ...sched.slot_assignments },
-      courseSections: deepCloneCourseSections(courseSections),
-      students: cloneStudents(students),
-      enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
-    },
+    schedulingSnapshot,
   }
 }

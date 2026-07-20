@@ -418,7 +418,7 @@ function SavedRunDetail({ run, onDeleted }: { run: SavedScheduleRun; onDeleted: 
                 void (async () => {
                   setExportBusy('schedule')
                   try {
-                    const buf = await buildSavedRunScheduleXlsx(exportState)
+                    const buf = await buildSavedRunScheduleXlsx(exportState, snapshot)
                     if (buf) downloadArrayBuffer(buf, 'unislot-schedule.xlsx')
                   } catch (e) {
                     void showAlert({

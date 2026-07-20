@@ -40,9 +40,10 @@ export function computeSavedRunExportState(
 
 export async function buildSavedRunScheduleXlsx(
   state: SavedRunExportState,
+  snapshot?: SchedulingSnapshot | null,
 ): Promise<ArrayBuffer | null> {
   if (state.schedule_export_blocked) return null
-  return buildScheduleXlsxBuffer(state.schedule)
+  return buildScheduleXlsxBuffer(state.schedule, snapshot)
 }
 
 export async function buildSavedRunClashXlsx(state: SavedRunExportState): Promise<ArrayBuffer> {
