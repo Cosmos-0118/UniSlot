@@ -21,7 +21,6 @@ import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession
 import { ProcessingTerminal } from '@/components/ui/ProcessingTerminal'
 import { createSavedRun } from '@/features/scheduling/storage/savedRunsStorage'
 import { downloadArrayBuffer } from '@/shared/lib/downloadArrayBuffer'
-import { FacultyMappingPanel } from '@/features/scheduling/FacultyMappingPanel'
 import {
   ClashPreview,
   HardConstraintAuditNotice,
@@ -72,7 +71,6 @@ export function Scheduler() {
     exportXlsx,
     fetchSchedulingSnapshot,
     fetchScheduleEntries,
-    syncWorkerArtifacts,
     warmupWorker,
     running,
     progress,
@@ -146,12 +144,16 @@ export function Scheduler() {
     if (viewMode !== 'actions' && viewMode !== 'details') return
     let cancelled = false
     queueMicrotask(() => {
-      if (!cancelled) void ensureSnapshot()
+      if (cancelled || !result) return
+      void fetchSchedulingSnapshot().then((snapshot) => {
+        if (cancelled) return
+        setResult({ ...result, schedulingSnapshot: snapshot, hasDeferredSnapshot: false })
+      })
     })
     return () => {
       cancelled = true
     }
-  }, [viewMode, result?.hasDeferredSnapshot, result?.schedulingSnapshot, ensureSnapshot])
+  }, [viewMode, result, fetchSchedulingSnapshot, setResult])
 
   useEffect(() => {
     if (viewMode !== 'details' || !result?.schedule) return
@@ -260,24 +262,26 @@ export function Scheduler() {
   return (
     <div className={cn(
       'mx-auto flex w-full max-w-5xl flex-col px-4 sm:px-8',
-      showTerminal ? 'py-6 h-full' : 'py-10',
+      showTerminal ? 'py-6 h-full' : 'py-8',
       showActions && 'h-full justify-center',
     )}>
       <header className={cn(
-        'flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between',
-        showTerminal ? 'mb-4' : 'mb-12',
+        'flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between',
+        showTerminal ? 'mb-4' : 'mb-8',
       )}>
         <div>
+          {!showTerminal && (
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Scheduling engine</p>
+          )}
           <h1 className={cn(
             'font-bold tracking-tight text-text',
-            showTerminal ? 'text-2xl' : 'text-4xl sm:text-5xl',
+            showTerminal ? 'text-2xl' : 'mt-2 text-3xl sm:text-4xl',
           )}>
             Scheduler
           </h1>
           {!showTerminal && (
-            <p className="mt-3 max-w-xl text-lg leading-relaxed text-text-muted">
-              Drop your enrollment workbook. Parsing, sectioning, conflict detection, and scheduling run
-              entirely in a dedicated browser worker.
+            <p className="mt-2 max-w-xl text-base leading-relaxed text-text-muted">
+              Drop your enrollment workbook to run parsing, sectioning, and scheduling in the browser.
             </p>
           )}
         </div>
@@ -310,8 +314,8 @@ export function Scheduler() {
 
       {/* ── Upload zone ──────────────────────────────────── */}
       {showUploader && (
-        <section className="mb-10">
-          <details className="theme-card mb-6 rounded-2xl border border-border px-4 py-3">
+        <section className="mb-8">
+          <details className="theme-card mb-5 rounded-2xl border border-border/70 px-4 py-3">
             <summary className="cursor-pointer select-none text-sm font-medium text-text">
               Run options (determinism & exports)
             </summary>
@@ -397,7 +401,7 @@ export function Scheduler() {
               input.click()
             }}
             className={cn(
-              'theme-dropzone theme-focusable group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 transition-all duration-300',
+              'theme-dropzone theme-focusable group relative flex w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-6 py-14 transition-all duration-300',
               drag && 'theme-dropzone-active',
             )}
           >
@@ -642,31 +646,6 @@ export function Scheduler() {
                   </button>
                 </div>
               </div>
-
-              {(result.schedulingSnapshot || result.hasDeferredSnapshot) &&
-                (result.schedulingSnapshot ? (
-                  <FacultyMappingPanel
-                    snapshot={result.schedulingSnapshot}
-                    schedule={result.schedule}
-                    onApplied={({ snapshot, schedule, auditFeasible }) => {
-                      syncWorkerArtifacts({ schedule, snapshot })
-                      setResult({
-                        ...result,
-                        schedulingSnapshot: snapshot,
-                        schedule,
-                        scheduleXlsx: null,
-                        schedule_export_blocked: auditFeasible
-                          ? result.schedule_export_blocked
-                          : true,
-                        schedule_export_block_reason: auditFeasible
-                          ? result.schedule_export_block_reason
-                          : 'Hard-constraint audit failed after faculty mapping. Fix faculty double-booking or re-run with provisional export enabled.',
-                      })
-                    }}
-                  />
-                ) : (
-                  <p className="text-sm text-text-muted">Loading faculty mapping tools…</p>
-                ))}
 
               {(result.schedulingSnapshot || result.hasDeferredSnapshot) && (
                 <div className="theme-card rounded-2xl p-5">

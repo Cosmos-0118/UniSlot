@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { TopBar } from './TopBar';
+import { MobileNav, TopBar } from './TopBar';
 
 interface LayoutProps {
   children: ReactNode;
@@ -13,8 +13,9 @@ export function Layout({ children, activeFeature, setActiveFeature, onLogoClick 
     <div className="app-shell flex flex-col h-screen overflow-hidden text-text">
       <TopBar activeFeature={activeFeature} setActiveFeature={setActiveFeature} onLogoClick={onLogoClick} />
       <main className="relative flex flex-1 flex-col overflow-hidden">
-        <div className="relative z-10 flex-1 overflow-y-auto w-full">{children}</div>
+        <div className="relative z-10 flex-1 overflow-y-auto w-full pb-[4.5rem] lg:pb-0">{children}</div>
       </main>
+      <MobileNav activeFeature={activeFeature} setActiveFeature={setActiveFeature} />
     </div>
   );
 }

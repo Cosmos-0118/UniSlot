@@ -334,7 +334,9 @@
 .app-shell {
   position: relative;
   isolation: isolate;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, color-mix(in srgb, var(--brand-500) 8%, transparent), transparent),
+    var(--bg);
 }
 
 /* UI logos ship with transparent corners — no extra box shadow needed */

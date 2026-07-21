@@ -38,6 +38,16 @@ const EmailsView = lazy(async () => {
   return { default: m.EmailsView }
 })
 
+const TeacherAssignmentPage = lazy(async () => {
+  const m = await import('@/features/scheduling/TeacherAssignmentPage')
+  return { default: m.TeacherAssignmentPage }
+})
+
+const LateSubmissionsPage = lazy(async () => {
+  const m = await import('@/features/scheduling/LateSubmissionsPage')
+  return { default: m.LateSubmissionsPage }
+})
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -73,6 +83,8 @@ export default function App() {
           <Route path="/app" element={<DashboardLayout />}>
             <Route index element={<Navigate to="scheduler" replace />} />
             <Route path="scheduler" element={<Scheduler />} />
+            <Route path="teachers" element={<TeacherAssignmentPage />} />
+            <Route path="late-submissions" element={<LateSubmissionsPage />} />
             <Route path="runs/:runId?" element={<SavedRunsPage />} />
             <Route path="emails" element={<EmailsView />} />
             <Route
