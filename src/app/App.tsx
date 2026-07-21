@@ -5,8 +5,7 @@ import { BootGateProvider } from '@/contexts/boot/BootGateProvider'
 import { AppDialogProvider } from '@/contexts/appDialog/AppDialogProvider'
 import { ThemeProvider } from '@/contexts/theme/ThemeProvider'
 import { SchedulingSessionProvider } from '@/contexts/scheduling/SchedulingSessionProvider'
-import { DashboardLayout, ComingSoonPanel } from '@/features/dashboard/Dashboard'
-import { BarChart3, SlidersHorizontal } from 'lucide-react'
+import { DashboardLayout } from '@/features/dashboard/Dashboard'
 
 const LandingPage = lazy(async () => {
   const m = await import('@/features/landing/LandingPage')
@@ -31,11 +30,6 @@ const Scheduler = lazy(async () => {
 const SavedRunsPage = lazy(async () => {
   const m = await import('@/features/scheduling/SavedRunsPage')
   return { default: m.SavedRunsPage }
-})
-
-const EmailsView = lazy(async () => {
-  const m = await import('@/features/scheduling/EmailsView')
-  return { default: m.EmailsView }
 })
 
 const TeacherAssignmentPage = lazy(async () => {
@@ -86,29 +80,6 @@ export default function App() {
             <Route path="teachers" element={<TeacherAssignmentPage />} />
             <Route path="late-submissions" element={<LateSubmissionsPage />} />
             <Route path="runs/:runId?" element={<SavedRunsPage />} />
-            <Route path="emails" element={<EmailsView />} />
-            <Route
-              path="insights"
-              element={
-                <ComingSoonPanel
-                  icon={BarChart3}
-                  title="Insights in Progress"
-                  description="Course-level analytics, slot heatmaps, and scheduling quality trends are being designed for this dashboard."
-                  accent="var(--accent-info)"
-                />
-              }
-            />
-            <Route
-              path="settings"
-              element={
-                <ComingSoonPanel
-                  icon={SlidersHorizontal}
-                  title="Settings in Progress"
-                  description="Theme presets, export preferences, and advanced scheduling controls will be available here soon."
-                  accent="var(--accent-warning)"
-                />
-              }
-            />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

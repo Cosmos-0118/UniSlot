@@ -2,7 +2,7 @@ import { AppLogo } from '@/components/brand/AppLogo'
 import { cn } from '@/shared/utils/cn'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
-import { Calendar, CheckCircle2, Clock, Library, Mail, Settings, UserCheck, Zap } from 'lucide-react'
+import { Calendar, CheckCircle2, Clock, Library, UserCheck } from 'lucide-react'
 
 interface TopBarProps {
   activeFeature: string
@@ -19,9 +19,6 @@ export function TopBar({ activeFeature, setActiveFeature, onLogoClick }: TopBarP
     { id: 'teachers', label: 'Teachers', icon: UserCheck },
     { id: 'late-submissions', label: 'Late submissions', icon: Clock },
     { id: 'runs', label: 'Saved runs', icon: Library },
-    { id: 'emails', label: 'Emails', icon: Mail },
-    { id: 'insights', label: 'Insights', icon: Zap },
-    { id: 'settings', label: 'Settings', icon: Settings },
   ]
 
   const showRunning = running || viewMode === 'processing'
@@ -138,9 +135,6 @@ export function MobileNav({ activeFeature, setActiveFeature }: Pick<TopBarProps,
     { id: 'teachers', label: 'Teachers', icon: UserCheck },
     { id: 'late-submissions', label: 'Late', icon: Clock },
     { id: 'runs', label: 'Runs', icon: Library },
-    { id: 'emails', label: 'Emails', icon: Mail },
-    { id: 'insights', label: 'Insights', icon: Zap },
-    { id: 'settings', label: 'Settings', icon: Settings },
   ]
 
   return (
