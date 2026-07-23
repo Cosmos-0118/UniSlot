@@ -240,7 +240,9 @@ export async function runSchedulerWithPool(
 
     // Elite restart diversification on coordinator (balanced/max).
     if (effort.eliteRestartRounds > 0 && best.students > 0) {
-      const elites = ranked.slice(0, Math.min(6, ranked.length))
+      const numElites = Math.min(12, ranked.length)
+      const elites = ranked.slice(0, numElites)
+      const jobsPerRound = Math.max(numElites, workerCount * 2)
       let stagnant = 0
       for (let round = 0; round < effort.eliteRestartRounds; round++) {
         if (shouldAbort?.()) throw new PipelineCancelledError()
@@ -250,22 +252,24 @@ export async function runSchedulerWithPool(
           etaSeconds: null,
           solverFraction: 0.9 + 0.05 * (round / effort.eliteRestartRounds),
         })
+        const tElite = performance.now()
         const eliteResults = await mapPoolJobs<SeedRunResult>({
           pool,
-          jobCount: elites.length,
+          jobCount: jobsPerRound,
           shouldAbort,
           cancelAll,
           dispatch: (worker, jobId, index) => {
-            const elite = elites[index]!
+            const eliteIndex = index % elites.length
+            const elite = elites[eliteIndex]!
             const perturbRng = createRng(
-              baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + index) >>> 0,
+              baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 1000 + index) >>> 0,
             )
             const partnerElite = elites[Math.floor(perturbRng() * elites.length)]!
             worker.postMessage({
               type: 'eliteRestart',
               jobId,
               round,
-              eliteIndex: index,
+              eliteIndex,
               slotByCourse: elite.slotByCourse,
               partnerSlotByCourse: partnerElite.slotByCourse,
               baseSeed,
@@ -286,7 +290,22 @@ export async function runSchedulerWithPool(
             if (data.type === 'cancelled' && data.jobId === jobId) throw new PipelineCancelledError()
             return null
           },
-          onProgressUnit: () => {},
+          onProgressUnit: (done) => {
+            const elapsed = (performance.now() - tElite) / 1000
+            const etaSeconds = done >= 1 ? (elapsed / done) * (jobsPerRound - done) : null
+            push({
+              message: `Elite restart ${round + 1}/${effort.eliteRestartRounds} · refine ${done}/${jobsPerRound} · ${elapsed.toFixed(1)}s${
+                etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+                  ? ` · ETA ${formatEtaSeconds(etaSeconds)}`
+                  : ''
+              }`,
+              etaSeconds:
+                etaSeconds != null && Number.isFinite(etaSeconds) && etaSeconds > 0.5
+                  ? etaSeconds
+                  : null,
+              solverFraction: 0.9 + 0.05 * (round / effort.eliteRestartRounds) + 0.05 * (1 / effort.eliteRestartRounds) * (done / jobsPerRound),
+            })
+          },
         })
 
         let improved = false

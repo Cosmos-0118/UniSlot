@@ -1323,13 +1323,32 @@ export function runPhase1SeedTask(
     // DSATUR produces tighter initial colorings for dense conflict graphs.
     { useDsatur: seedIndex === 0 || rng() < 0.6, effort },
   )
+  const refined = hybridSATabuImprove(
+    { ...r.slotByCourse },
+    courseCodes,
+    sections,
+    conflictGraph,
+    courseAdj,
+    sectionCountByCourse,
+    parallelCap,
+    {
+      maxIterFactor: 0.15, // A quick descent pass to polish the greedy seed
+      shouldAbort,
+      effort,
+      enableKempe: false, // Keep it fast, Kempe is for Phase 2/Elite
+      deadlineMs: effort.perTaskMs / 5, // Soft deadline so Phase 1 doesn't hang
+    },
+    rng,
+  )
+
   const { studentToSections } = buildEnrollmentIndex(sections)
-  const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
+  const slotMap = sectionSlotsFromBundle(sections, refined)
+  const clashWeight = computeClashWeight(conflictGraph, slotMap)
   const students = countStudentsWithSlotClashes(studentToSections, slotMap, TOTAL_WEEKLY_SLOTS)
   return {
     seedIndex,
-    slotByCourse: { ...r.slotByCourse },
-    clashWeight: r.clashWeight,
+    slotByCourse: refined,
+    clashWeight,
     students,
   }
 }
@@ -1674,7 +1693,9 @@ function runSchedulerInProcess(
 
   // Elite restart diversification (balanced/max).
   if (effort.eliteRestartRounds > 0 && best.students > 0) {
-    const elites = ranked.slice(0, Math.min(6, ranked.length))
+    const numElites = Math.min(12, ranked.length)
+    const elites = ranked.slice(0, numElites)
+    const jobsPerRound = Math.max(numElites, options.poolWorkers * 2)
     let stagnant = 0
     for (let round = 0; round < effort.eliteRestartRounds; round++) {
       if (shouldAbort?.()) throw new PipelineCancelledError()
@@ -1688,10 +1709,11 @@ function runSchedulerInProcess(
       })
 
       let improved = false
-      for (let ei = 0; ei < elites.length; ei++) {
-        const elite = elites[ei]!
+      for (let ei = 0; ei < jobsPerRound; ei++) {
+        const eliteIndex = ei % elites.length
+        const elite = elites[eliteIndex]!
         const perturbRng = createRng(
-          baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + ei) >>> 0,
+          baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 1000 + ei) >>> 0,
         )
         const partnerElite = elites[Math.floor(perturbRng() * elites.length)]!
         const kicked = perturbEliteSlots(

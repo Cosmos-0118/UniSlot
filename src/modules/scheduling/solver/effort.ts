@@ -1,5 +1,5 @@
-/** Search effort dial — Auto / Fast / Balanced / Max / Extreme. Default: auto. */
-export type EffortLevel = 'auto' | 'fast' | 'balanced' | 'max' | 'extreme'
+/** Search effort dial — Auto / Fast / Balanced / Max / Extreme / Unlimited. Default: auto. */
+export type EffortLevel = 'auto' | 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
 
 export type EffortParams = {
   effort: EffortLevel
@@ -27,7 +27,7 @@ export type EffortParams = {
   kempeProb: number
 }
 
-const TABLE: Record<'fast' | 'balanced' | 'max' | 'extreme', EffortParams> = {
+const TABLE: Record<'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited', EffortParams> = {
   fast: {
     effort: 'fast',
     runCountCap: 48,
@@ -84,12 +84,26 @@ const TABLE: Record<'fast' | 'balanced' | 'max' | 'extreme', EffortParams> = {
     minConflictSlotSample: 40,
     kempeProb: 0.20,
   },
+  unlimited: {
+    effort: 'unlimited',
+    runCountCap: 640,
+    poolSizeCap: 60,
+    phase2IterFactor: 12.0,
+    maxIterCap: 12_000_000,
+    perTaskMs: 180_000,
+    eliteRestartRounds: 32,
+    eliteStagnationStop: 8,
+    overallDeadlineMul: 40,
+    focusProb: 0.85,
+    minConflictSlotSample: 60,
+    kempeProb: 0.30,
+  },
 }
 
 export function resolveEffort(effort?: EffortLevel | null): EffortParams {
   const level = effort || 'auto'
   
-  let baseLevel: 'fast' | 'balanced' | 'max' | 'extreme'
+  let baseLevel: 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
   let hc = 4
   if (typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number') {
     hc = navigator.hardwareConcurrency
@@ -100,7 +114,7 @@ export function resolveEffort(effort?: EffortLevel | null): EffortParams {
     else if (hc >= 8) baseLevel = 'max'
     else baseLevel = 'balanced'
   } else {
-    baseLevel = level as 'fast' | 'balanced' | 'max' | 'extreme'
+    baseLevel = level as 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
   }
 
   const params = { ...TABLE[baseLevel], effort: level }
@@ -116,12 +130,15 @@ export function resolveEffort(effort?: EffortLevel | null): EffortParams {
   } else if (baseLevel === 'extreme') {
     params.perTaskMs = Math.max(params.perTaskMs, 90_000)
     params.runCountCap = 400 // Raise runCountCap for extreme effort
+  } else if (baseLevel === 'unlimited') {
+    params.perTaskMs = Math.max(params.perTaskMs, 240_000)
+    params.runCountCap = 800
   }
 
   return params
 }
 
-export const EFFORT_LEVELS: EffortLevel[] = ['auto', 'fast', 'balanced', 'max', 'extreme']
+export const EFFORT_LEVELS: EffortLevel[] = ['auto', 'fast', 'balanced', 'max', 'extreme', 'unlimited']
 
 export function effortLabel(level: EffortLevel): string {
   switch (level) {
@@ -135,5 +152,7 @@ export function effortLabel(level: EffortLevel): string {
       return 'Max'
     case 'extreme':
       return 'Extreme'
+    case 'unlimited':
+      return 'Unlimited'
   }
 }

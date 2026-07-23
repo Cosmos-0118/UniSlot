@@ -84,7 +84,7 @@ function mapSolverFraction(solverFraction: number | undefined): number | undefin
 export type RunPipelineOptions = {
   randomSeed?: number
   allowProvisionalScheduleExport?: boolean
-  /** Search effort: fast | balanced | max | extreme. Default balanced. */
+  /** Search effort: fast | balanced | max | extreme | unlimited. Default balanced. */
   effort?: import('../solver/effort').EffortLevel
   /**
    * When true, build .xlsx buffers during the run (higher memory, slower time-to-done).
