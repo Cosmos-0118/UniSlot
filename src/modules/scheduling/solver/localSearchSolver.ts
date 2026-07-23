@@ -383,6 +383,15 @@ export function auditScheduleHardConstraints(
     violations.push('Faculty overlap: same faculty in multiple sections on one weekday')
   }
 
+  // Saturday (slot 5) is reserved exclusively for Mathematics courses.
+  for (const [code, slot] of Object.entries(slotByCourse)) {
+    if (slot === 5 && !isMathCourse(code)) {
+      violations.push(
+        `Course ${code}: non-mathematics course assigned to Saturday (slot 5); Saturday is reserved for mathematics courses`,
+      )
+    }
+  }
+
   for (const [facLabel, secIds] of Object.entries(facultyConstraints)) {
     for (const id of secIds) {
       const sec = sections.find((x) => x.section_id === id)
@@ -525,6 +534,11 @@ function hybridSATabuImprove(
     const sa = slotByCourse[ca]!
     const sb = slotByCourse[cb]!
     if (sa === sb) return false
+
+    // Domain Constraint: Saturday (slot 5) is strictly reserved for Mathematics courses.
+    if (sb === 5 && !isMathCourse(ca)) return false
+    if (sa === 5 && !isMathCourse(cb)) return false
+
     const ka = sectionCountByCourse.get(ca) ?? 1
     const kb = sectionCountByCourse.get(cb) ?? 1
     if ((slotLoads[sa] ?? 0) - ka + kb > parallelCap) return false
@@ -1035,19 +1049,7 @@ function solveGreedySeed(
   const sectionIdToCourseGreedy = new Map<string, string>()
   for (const sec of sections) sectionIdToCourseGreedy.set(sec.section_id, sec.course_code)
 
-  // Identify top-N heaviest courses (by conflict density) for student-aware scoring.
-  const topHeavyThreshold = Math.max(20, Math.floor(courseCodes.length * 0.15))
-  const courseConflictWeight = new Map<string, number>()
-  for (const code of courseCodes) {
-    let w = 0
-    const adj = courseAdj.get(code)
-    if (adj) for (const [, ew] of adj) w += ew
-    courseConflictWeight.set(code, w)
-  }
-  const sortedByWeight = [...courseCodes].sort(
-    (a, b) => (courseConflictWeight.get(b) ?? 0) - (courseConflictWeight.get(a) ?? 0),
-  )
-  const heavyCourses = new Set(sortedByWeight.slice(0, topHeavyThreshold))
+
 
   // Pre-compute per-course enrollment for tiebreaking.
   const courseEnrollment = new Map<string, number>()
@@ -1096,7 +1098,7 @@ function solveGreedySeed(
           if (!oc || oc === code) continue
           if (slotByCourse[oc] === slot) {
             clashes++
-            break // One clash per student is enough to count them
+            // Count all overlaps (no break) to accurately reflect density
           }
         }
       }
@@ -1126,11 +1128,8 @@ function solveGreedySeed(
         if (slotByCourse[other] === slot) conflictCost += w
       }
     }
-    // For heavy courses, add direct student-clash estimate (more expensive but much more accurate).
-    let studentClashCost = 0
-    if (heavyCourses.has(code)) {
-      studentClashCost = studentClashEstimate(code, slot) * 50
-    }
+    // Direct student-clash estimate for all courses (accurate and fast enough in JS).
+    const studentClashCost = studentClashEstimate(code, slot) * 50
     const totalAssigned = slotLoads.reduce((a: number, b: number) => a + b, 0)
     const targetLoad = TOTAL_WEEKLY_SLOTS ? totalAssigned / TOTAL_WEEKLY_SLOTS : 0
     const L = (slotLoads[slot] ?? 0) + k

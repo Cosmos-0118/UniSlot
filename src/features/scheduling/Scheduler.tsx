@@ -330,6 +330,7 @@ export function Scheduler() {
                       ['fast', 'Fast'],
                       ['balanced', 'Balanced'],
                       ['max', 'Max'],
+                      ['extreme', 'Extreme'],
                     ] as const
                   ).map(([value, label]) => (
                     <button
@@ -353,8 +354,10 @@ export function Scheduler() {
                     : effortLevel === 'fast'
                       ? 'Quick pass — fewer seeds and shorter refine.'
                       : effortLevel === 'max'
-                        ? 'Longest search — more seeds, Kempe escapes, and elite restarts.'
-                        : 'Balanced pass — solid quality vs time.'}
+                        ? 'Long search — more seeds, Kempe escapes, and elite restarts.'
+                        : effortLevel === 'extreme'
+                          ? 'Maximum search — longest runtime, exhaustive search to minimize clashes.'
+                          : 'Balanced pass — solid quality vs time.'}
                 </p>
               </div>
               <label className="block text-sm">
