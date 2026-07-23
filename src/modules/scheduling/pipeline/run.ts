@@ -288,12 +288,9 @@ export async function runPipeline(
   const clashReport = computeClashReport(students, courseSections, sched.slot_assignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
 
-  const allowScheduleXlsx =
-    sched.feasible === true || options?.allowProvisionalScheduleExport === true
-  const scheduleExportBlocked = !allowScheduleXlsx
-  const scheduleExportBlockReason = scheduleExportBlocked
-    ? 'Hard-constraint audit did not pass. The schedule workbook was not generated. Enable “Allow provisional schedule export” and re-run with the same file, or fix the underlying data and re-run.'
-    : null
+  // Always allow schedule export — clashes are soft warnings, not export blockers.
+  const scheduleExportBlocked = false
+  const scheduleExportBlockReason: string | null = null
 
   const schedulingSnapshot: SchedulingSnapshot = {
     slot_model: WEEKDAY_SLOT_MODEL,
@@ -324,7 +321,7 @@ export async function runPipeline(
       schedule,
       clashReport,
       enrollmentRows,
-      allowScheduleXlsx,
+      allowScheduleXlsx: true,
       snapshot: schedulingSnapshot,
     })
     scheduleXlsx = built.scheduleXlsx

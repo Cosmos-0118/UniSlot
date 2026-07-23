@@ -774,6 +774,11 @@ function hybridSATabuImprove(
     const trial = { ...slotByCourse }
     for (const c of chainA) trial[c] = sb
     for (const c of chainB) trial[c] = sa
+
+    // Reject Kempe swaps that would place non-math courses on Saturday
+    if (sb === 5) { for (const c of chainA) if (!isMathCourse(c)) return false }
+    if (sa === 5) { for (const c of chainB) if (!isMathCourse(c)) return false }
+
     if (!facultySlotsFeasible(sections, trial)) return false
     const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
     for (let i = 0; i < loads.length; i++) {
@@ -913,6 +918,8 @@ function hybridSATabuImprove(
       if (!feasibleCourseMove(cb, sc)) continue
       // For cc→sa, we need to check after applying the first two moves.
       // Use a lightweight feasibility check on the trial state.
+      // Also respect Saturday math-only constraint for cc→sa.
+      if (sa === 5 && !isMathCourse(cc)) continue
       const trial = { ...slotByCourse, [ca]: sb, [cb]: sc, [cc]: sa }
       if (!facultySlotsFeasible(sections, trial)) continue
       const trialLoads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
@@ -1234,6 +1241,8 @@ function tryRepairFacultyBundleOverlaps(
       const slotsTry = [...Array(TOTAL_WEEKLY_SLOTS).keys()].sort(() => rng() - 0.5)
       for (const newSlot of slotsTry) {
         if (newSlot === oldSlot) continue
+        // Respect Saturday math-only constraint
+        if (newSlot === 5 && !isMathCourse(code)) continue
         const trial = { ...cur, [code]: newSlot }
         if (!facultySlotsFeasible(sections, trial)) continue
         const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
@@ -1399,7 +1408,10 @@ export function perturbEliteSlots(
     const conflictSet = new Set(conflict)
     for (const c of conflictSet) {
       if (partnerSlotByCourse[c] !== undefined) {
-        next[c] = partnerSlotByCourse[c]!
+        const partnerSlot = partnerSlotByCourse[c]!
+        // Don't place non-math courses on Saturday via recombination
+        if (partnerSlot === 5 && !isMathCourse(c)) continue
+        next[c] = partnerSlot
       }
     }
   }
@@ -1407,7 +1419,9 @@ export function perturbEliteSlots(
   const pool = conflict.length > 0 ? conflict : courseCodes
   for (let i = 0; i < kicks; i++) {
     const c = pool[Math.floor(rng() * pool.length)]!
-    next[c] = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+    // Non-math courses can only go to Mon–Fri (slots 0–4)
+    const slotRange = isMathCourse(c) ? TOTAL_WEEKLY_SLOTS : TOTAL_WEEKLY_SLOTS - 1
+    next[c] = Math.floor(rng() * slotRange)
   }
   void courseAdj
   return next
