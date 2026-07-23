@@ -13,9 +13,15 @@ export type { EffortLevel } from './effort'
 export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
 
 const TARGET_PARALLEL_SECTIONS = PREFERRED_PARALLEL_SECTIONS
-const PARALLEL_SOFT_WEIGHT = 100
-const DAY_BALANCE_WEIGHT = 6
+const PARALLEL_SOFT_WEIGHT = 0.01
+const DAY_BALANCE_WEIGHT = 0.001
 const LOAD_BALANCE_FACTOR = 4
+
+function isMathCourse(code: string): boolean {
+  const upper = code.toUpperCase()
+  // Matches '21MAB101T', '21MAC503T', 'MA101', 'MAT201', etc.
+  return /^[0-9]*MA/.test(upper) || upper.startsWith('MAT')
+}
 
 function multiStartRunCount(
   courseCount: number,
@@ -470,6 +476,9 @@ function hybridSATabuImprove(
     const oldSlot = slotByCourse[course]!
     if (oldSlot === newSlot) return false
     if (newSlot < 0 || newSlot >= TOTAL_WEEKLY_SLOTS) return false
+    
+    // Domain Constraint: Saturday (slot 5) is strictly reserved for Mathematics courses.
+    if (newSlot === 5 && !isMathCourse(course)) return false
 
     const k = sectionCountByCourse.get(course) ?? 1
     const loadAfter = (slotLoads[newSlot] ?? 0) + k
@@ -1090,6 +1099,9 @@ function solveGreedySeed(
 
   function scoreSlot(code: string, slot: number, k: number, faculties: string[]): number {
     let violation = 0
+    if (slot === 5 && !isMathCourse(code)) {
+      violation += CAP_HARD * 10
+    }
     if (slotLoads[slot]! + k > parallelCap) {
       violation += CAP_HARD * (slotLoads[slot]! + k - parallelCap)
     }

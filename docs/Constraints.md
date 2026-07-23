@@ -54,10 +54,10 @@ Ideal outcome:
 | Total Students | ~2600 |
 | Total Courses | 306+ |
 | Max Courses per Student | 5 |
-| Working Days | Monday–Friday |
+| Working Days | Monday–Saturday |
 | Time Window | 5:00 PM – 7:00 PM |
 | Preferred Parallel Courses per Weekday | 11 |
-| Total Weekly Sessions | 5 |
+| Total Weekly Sessions | 6 |
 
 ---
 
@@ -70,6 +70,7 @@ Ideal outcome:
 - Wednesday
 - Thursday
 - Friday
+- Saturday (Strictly Maths courses only)
 
 ---
 
@@ -85,10 +86,10 @@ Courses can only occur during:
 
 ## Slot Structure
 
-The week contains five real scheduling choices:
+The week contains six real scheduling choices:
 
 ```text
-Monday · Tuesday · Wednesday · Thursday · Friday
+Monday · Tuesday · Wednesday · Thursday · Friday · Saturday
 ```
 
 Each weekday has one simultaneous evening session from 5:00 PM – 7:00 PM.
@@ -360,7 +361,7 @@ Splitting increases:
 Only:
 
 ```text
-5 weekday evening sessions
+6 weekday evening sessions
 ```
 
 must accommodate:
@@ -486,8 +487,9 @@ One course -> one weekly occurrence
 ### Valid scheduling window only
 
 ```text
-Only Monday–Friday
+Only Monday–Saturday
 Only 5 PM – 7 PM
+Saturday exclusively reserved for Maths courses
 ```
 
 ---

@@ -4,6 +4,7 @@ export type DayName =
   | 'Wednesday'
   | 'Thursday'
   | 'Friday'
+  | 'Saturday'
 
 export interface EnrollmentRow {
   program: string

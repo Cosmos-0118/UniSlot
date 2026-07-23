@@ -1,7 +1,7 @@
 import type { DayName } from '../types'
 
 /** One simultaneous evening session (5–7 PM) on each weekday. */
-export const WEEKDAY_COUNT = 5
+export const WEEKDAY_COUNT = 6
 export const TOTAL_WEEKLY_SLOTS = WEEKDAY_COUNT
 /** Comfortable number of simultaneous sections; the solver may exceed this when required. */
 export const PREFERRED_PARALLEL_SECTIONS = 11
@@ -14,6 +14,7 @@ export const WEEKDAY_ORDER: DayName[] = [
   'Wednesday',
   'Thursday',
   'Friday',
+  'Saturday',
 ]
 
 /** 0–4 → weekday (Mon..Fri). */

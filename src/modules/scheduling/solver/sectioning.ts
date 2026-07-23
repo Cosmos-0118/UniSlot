@@ -156,7 +156,7 @@ export function assignStudentsToSections(
     // The number of conflict edges for a section is the number of DISTINCT other courses its students take.
     // We try moving a student to another section if it reduces the total number of distinct courses across both sections.
     let improved = true
-    const maxPasses = 5
+    const maxPasses = 20
     let passes = 0
     
     while (improved && passes < maxPasses) {
