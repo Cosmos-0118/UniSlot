@@ -1,6 +1,6 @@
 import type { ConflictGraph, Section } from '../types'
 import { computeClashWeight } from './conflictGraph'
-import { SLOTS_PER_DAY, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
+import { TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
 
 export interface SchedulingStats {
   total_sections: number
@@ -28,11 +28,7 @@ export function computeSchedulingStats(
   const avgParallel = TOTAL_WEEKLY_SLOTS ? sumLoad / TOTAL_WEEKLY_SLOTS : 0
   const emptySlots = loads.filter((n: number) => n === 0).length
 
-  const dayTotals = new Array(WEEKDAY_COUNT).fill(0)
-  for (let s = 0; s < TOTAL_WEEKLY_SLOTS; s++) {
-    const di = Math.floor(s / SLOTS_PER_DAY)
-    dayTotals[di] = (dayTotals[di] ?? 0) + (loads[s] ?? 0)
-  }
+  const dayTotals = [...loads]
   const idealPerDay = sections.length / WEEKDAY_COUNT
   const weekdayBalanceL1 = dayTotals.reduce(
     (acc: number, d: number) => acc + Math.abs(d - idealPerDay),

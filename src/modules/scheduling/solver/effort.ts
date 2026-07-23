@@ -1,5 +1,5 @@
-/** Search effort dial — Fast / Balanced / Max. Default: balanced. */
-export type EffortLevel = 'fast' | 'balanced' | 'max'
+/** Search effort dial — Auto / Fast / Balanced / Max. Default: auto. */
+export type EffortLevel = 'auto' | 'fast' | 'balanced' | 'max'
 
 export type EffortParams = {
   effort: EffortLevel
@@ -27,7 +27,7 @@ export type EffortParams = {
   kempeProb: number
 }
 
-const TABLE: Record<EffortLevel, EffortParams> = {
+const TABLE: Record<'fast' | 'balanced' | 'max', EffortParams> = {
   fast: {
     effort: 'fast',
     runCountCap: 48,
@@ -73,14 +73,43 @@ const TABLE: Record<EffortLevel, EffortParams> = {
 }
 
 export function resolveEffort(effort?: EffortLevel | null): EffortParams {
-  if (effort === 'fast' || effort === 'balanced' || effort === 'max') return TABLE[effort]
-  return TABLE.balanced
+  const level = effort || 'auto'
+  
+  let baseLevel: 'fast' | 'balanced' | 'max'
+  let hc = 4
+  if (typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number') {
+    hc = navigator.hardwareConcurrency
+  }
+
+  if (level === 'auto') {
+    if (hc <= 2) baseLevel = 'fast'
+    else if (hc >= 8) baseLevel = 'max'
+    else baseLevel = 'balanced'
+  } else {
+    baseLevel = level as 'fast' | 'balanced' | 'max'
+  }
+
+  const params = { ...TABLE[baseLevel], effort: level }
+  
+  // Scale perTaskMs with core count (more parallel workers = more time allowed per task)
+  const coreFactor = Math.max(1, Math.sqrt(hc / 4))
+  params.perTaskMs = Math.round(params.perTaskMs * coreFactor)
+  
+  // For 'max', allow up to 45s on powerful machines
+  if (baseLevel === 'max') {
+    params.perTaskMs = Math.max(params.perTaskMs, 45_000)
+    params.runCountCap = 240 // Raise runCountCap for max effort
+  }
+
+  return params
 }
 
-export const EFFORT_LEVELS: EffortLevel[] = ['fast', 'balanced', 'max']
+export const EFFORT_LEVELS: EffortLevel[] = ['auto', 'fast', 'balanced', 'max']
 
 export function effortLabel(level: EffortLevel): string {
   switch (level) {
+    case 'auto':
+      return 'Auto'
     case 'fast':
       return 'Fast'
     case 'balanced':

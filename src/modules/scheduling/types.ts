@@ -80,12 +80,14 @@ export interface ScheduleEntry {
   course_title: string
   section_number: number
   day: DayName
-  /** Human-readable evening window + intra-day band (Constraints.md §4). */
+  /** Human-readable evening window (Constraints.md §4). */
   time: string
-  /** Global slot 0..54 (Mon band1 .. Fri band11). */
+  /** Weekday index 0..4 (Monday..Friday). */
   slot_index: number
-  /** 1..11 within the weekday. */
+  /** Display-only parallel lane on that weekday (not a distinct time). */
   slot_band: number
+  /** Number of simultaneous parallel lanes used on this weekday. */
+  parallel_lane_count: number
   faculty: string | null
   enrollment_count: number
   programs: string
@@ -113,9 +115,9 @@ export interface StudentClashReport {
   enrolled_courses: string[]
   status: ClashStatus
   clashing_courses: [string, string][]
-  /** First weekday (by global slot order) where a clash occurs; null if Green. */
+  /** First weekday (by global slot order) where the student has multiple courses; null if Green. */
   clashing_day: DayName | null
-  /** All weekdays on which this student has at least one overlapping slot (Constraints §5.3). */
+  /** All weekdays on which this student has multiple courses (Constraints §5.3). */
   clashing_days: DayName[]
 }
 

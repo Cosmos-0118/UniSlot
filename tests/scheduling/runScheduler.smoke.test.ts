@@ -83,6 +83,107 @@ describe('runScheduler smoke', () => {
     expect(a.slot_assignments.B1).toBeDefined()
     expect(a.slot_assignments.A1).not.toBe(a.slot_assignments.B1)
   })
+
+  it('assigns a three-course student to three different weekdays', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [section('A1', 'A', ['s1'])],
+      B: [section('B1', 'B', ['s1'])],
+      C: [section('C1', 'C', ['s1'])],
+    }
+    const students = {
+      s1: {
+        register_number: 's1',
+        name: 'S1',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['A', 'B', 'C'],
+      },
+    }
+    const conflictGraph = buildConflictGraph(students, courseSections)
+    const facultyConstraints = {
+      'Planning:A1': ['A1'],
+      'Planning:B1': ['B1'],
+      'Planning:C1': ['C1'],
+    }
+
+    const a = runScheduler(courseSections, conflictGraph, facultyConstraints, undefined, {
+      randomSeed: 42,
+      poolWorkers: 1,
+    })
+    const b = runScheduler(courseSections, conflictGraph, facultyConstraints, undefined, {
+      randomSeed: 42,
+      poolWorkers: 1,
+    })
+    const days = new Set(Object.values(a.slot_assignments))
+
+    expect(a.slot_assignments).toEqual(b.slot_assignments)
+    expect(days.size).toBe(3)
+    expect(a.feasible).toBe(true)
+    expect(a.total_clash_weight).toBe(0)
+  })
+
+  it('can escape a conflicted seed toward a conflict-free weekday coloring', () => {
+    // Shared-student clique of size 3 must use 3 distinct weekdays.
+    const courseSections: Record<string, Section[]> = {
+      A: [section('A1', 'A', ['s1', 's2'])],
+      B: [section('B1', 'B', ['s1', 's3'])],
+      C: [section('C1', 'C', ['s1', 's4'])],
+      D: [section('D1', 'D', ['s2', 's3', 's4'])],
+    }
+    const students = {
+      s1: {
+        register_number: 's1',
+        name: 'S1',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['A', 'B', 'C'],
+      },
+      s2: {
+        register_number: 's2',
+        name: 'S2',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['A', 'D'],
+      },
+      s3: {
+        register_number: 's3',
+        name: 'S3',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['B', 'D'],
+      },
+      s4: {
+        register_number: 's4',
+        name: 'S4',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['C', 'D'],
+      },
+    }
+    const conflictGraph = buildConflictGraph(students, courseSections)
+    const facultyConstraints = {
+      'Planning:A1': ['A1'],
+      'Planning:B1': ['B1'],
+      'Planning:C1': ['C1'],
+      'Planning:D1': ['D1'],
+    }
+
+    const result = runScheduler(courseSections, conflictGraph, facultyConstraints, undefined, {
+      randomSeed: 7,
+      poolWorkers: 1,
+      effort: 'fast',
+    })
+
+    expect(result.feasible).toBe(true)
+    expect(result.total_clash_weight).toBe(0)
+    const days = Object.values(result.slot_assignments)
+    expect(new Set(days).size).toBe(4)
+  })
 })
 
 describe('reduceSeedRuns', () => {

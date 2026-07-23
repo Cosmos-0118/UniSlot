@@ -56,8 +56,8 @@ Ideal outcome:
 | Max Courses per Student | 5 |
 | Working Days | Monday–Friday |
 | Time Window | 5:00 PM – 7:00 PM |
-| Preferred Parallel Courses per Slot | 11 |
-| Total Weekly Slots | 55 |
+| Preferred Parallel Courses per Weekday | 11 |
+| Total Weekly Sessions | 5 |
 
 ---
 
@@ -85,29 +85,21 @@ Courses can only occur during:
 
 ## Slot Structure
 
-The week contains:
+The week contains five real scheduling choices:
 
 ```text
-55 total scheduling slots
+Monday · Tuesday · Wednesday · Thursday · Friday
 ```
 
-Approximate representation:
+Each weekday has one simultaneous evening session from 5:00 PM – 7:00 PM.
+
+Parallel lanes are display-only labels for courses running at the same time on that weekday.
+They are not distinct times. The comfortable target is about 11 simultaneous courses per weekday;
+the scheduler may exceed that when enrollment density requires it.
 
 ```text
-Monday:
-  S1, S2, S3 ... S11
-
-Tuesday:
-  S12 ... S22
-
-Wednesday:
-  S23 ... S33
-
-Thursday:
-  S34 ... S44
-
-Friday:
-  S45 ... S55
+Monday 5:00–7:00 PM:
+  Parallel lane 1, Parallel lane 2, ...
 ```
 
 ---
@@ -123,21 +115,21 @@ Each course can occur only once per week.
 ### Valid
 
 ```text
-CS101 -> Slot 12
+CS101 -> Monday
 ```
 
 ### Invalid
 
 ```text
-CS101 -> Slot 12
-CS101 -> Slot 30
+CS101 -> Monday
+CS101 -> Wednesday
 ```
 
 ---
 
-### Rule 2 — One Slot Per Course Section
+### Rule 2 — One Weekday Per Course Section
 
-Each course section must occupy exactly one slot.
+Each course section must occupy exactly one weekday.
 
 ---
 
@@ -145,14 +137,14 @@ Each course section must occupy exactly one slot.
 
 ### Rule 3 — Faculty Collision Constraint
 
-A faculty member cannot teach multiple classes simultaneously.
+A faculty member cannot teach multiple classes on the same weekday.
 
 ### Invalid Example
 
 ```text
 Faculty A:
-  CS101 -> Slot 15
-  CS205 -> Slot 15
+  CS101 -> Monday
+  CS205 -> Monday
 ```
 
 ---
@@ -170,11 +162,32 @@ Maximum: 5 courses
 
 ---
 
-### Rule 5 — Student Collision Constraint
+### Rule 5 — One Course Per Student Per Weekday
+
+A student can attend at most one enrolled course on any weekday.
+
+This is a hard constraint: every course on a weekday shares the same 5–7 PM session,
+so a student cannot attend more than one course that day.
+
+### Invalid Example
+
+```text
+Student:
+  MA101 -> Monday, band 2
+  CS205 -> Monday, band 8
+
+Result:
+  Invalid — two courses on Monday
+```
+
+---
+
+### Rule 6 — Student Collision Constraint
 
 A student cannot attend multiple courses at the same time.
 
-If unavoidable:
+Same-time collisions are therefore also invalid. If an existing or provisional schedule contains
+either type of student conflict:
 
 ```text
 Student Status = RED
@@ -184,8 +197,8 @@ Student Status = RED
 
 ```text
 Student:
-  MA101 -> Slot 20
-  CS205 -> Slot 20
+  MA101 -> Tuesday
+  CS205 -> Tuesday
 
 Result:
   RED (Clash Detected)
@@ -195,13 +208,13 @@ Result:
 
 ## 5.4 Parallel Course Constraint
 
-At any slot:
+On any weekday evening session:
 
 ```text
 Preferred maximum parallel courses = 11
 ```
 
-This limit may exceed if necessary, but should remain near 11 whenever possible.
+This limit may exceed if necessary (dense enrollments often require ~70 simultaneous sections per weekday), but the solver prefers balancing load and staying near 11 when possible.
 
 ---
 
@@ -342,12 +355,12 @@ Splitting increases:
 
 ---
 
-## 10.3 Limited Slot Availability
+## 10.3 Limited Weekday Availability
 
 Only:
 
 ```text
-55 slots
+5 weekday evening sessions
 ```
 
 must accommodate:
@@ -356,7 +369,7 @@ must accommodate:
 306+ courses
 ```
 
-This creates a dense optimization problem.
+with simultaneous parallel lanes on each weekday. This creates a dense optimization problem.
 
 ---
 
@@ -437,13 +450,12 @@ Avoid oversized sections.
 
 ---
 
-## Priority 4 — Balance Slot Distribution
+## Priority 4 — Balance Weekday Distribution
 
 Maintain balanced:
 
 - Day usage
-- Slot usage
-- Parallel course count
+- Parallel course count per weekday (comfort target ≈ 11, may exceed when needed)
 
 ---
 
@@ -458,7 +470,7 @@ Hard constraints must NEVER be violated.
 ### Faculty overlap forbidden
 
 ```text
-Same faculty cannot teach multiple courses simultaneously
+Same faculty cannot teach multiple courses on the same weekday
 ```
 
 ---
@@ -488,10 +500,19 @@ Sections must respect maximum size
 
 ---
 
+### Student daily attendance enforced
+
+```text
+Each student may attend at most one course per weekday
+```
+
+---
+
 ### Split section rules enforced
 
 ```text
 Different faculty required
+All split sections of a course share one weekday
 ```
 
 ---

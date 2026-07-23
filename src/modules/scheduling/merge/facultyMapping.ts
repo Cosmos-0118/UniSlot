@@ -1,5 +1,6 @@
 import { auditScheduleHardConstraints, parallelHardCap } from '../solver/scheduler'
 import { buildSchedule } from '../solver/scheduleOutput'
+import { INDEX_TO_DAY } from '../solver/timeModel'
 import { extractFacultyConstraints } from '../preprocess/preprocessing'
 import { cloneSchedulingSnapshot, type SchedulingSnapshot } from './snapshot'
 import type { Schedule, Section } from '../types'
@@ -33,16 +34,17 @@ export type FacultyMappingRow = {
 }
 
 export function listFacultyMappingRows(snapshot: SchedulingSnapshot): FacultyMappingRow[] {
+  const normalized = cloneSchedulingSnapshot(snapshot)
   const rows: FacultyMappingRow[] = []
-  for (const secs of Object.values(snapshot.courseSections)) {
+  for (const secs of Object.values(normalized.courseSections)) {
     for (const sec of secs) {
       if (!isPlanningFacultyLabel(sec.faculty)) continue
-      const slot = snapshot.slot_assignments[sec.section_id] ?? 0
+      const slot = normalized.slot_assignments[sec.section_id] ?? 0
       rows.push({
         section_id: sec.section_id,
         course_code: sec.course_code,
         section_number: sec.section_number,
-        daySlotLabel: `slot ${slot}`,
+        daySlotLabel: INDEX_TO_DAY[slot] ?? `weekday ${slot}`,
         current_faculty: sec.faculty ?? '',
         slot_index: slot,
       })
@@ -81,11 +83,12 @@ export function auditSnapshotSchedule(snapshot: SchedulingSnapshot): {
   feasible: boolean
   violations: string[]
 } {
-  const flat = Object.values(snapshot.courseSections).flat()
-  const facultyConstraints = extractFacultyConstraints(snapshot.courseSections)
+  const normalized = cloneSchedulingSnapshot(snapshot)
+  const flat = Object.values(normalized.courseSections).flat()
+  const facultyConstraints = extractFacultyConstraints(normalized.courseSections)
   return auditScheduleHardConstraints(
-    snapshot.courseSections,
-    snapshot.slot_assignments,
+    normalized.courseSections,
+    normalized.slot_assignments,
     parallelHardCap(flat.length),
     facultyConstraints,
   )
@@ -99,8 +102,9 @@ export function buildScheduleFromSnapshot(
   audit: { feasible: boolean; violations: string[] }
   planningCount: number
 } {
-  const audit = auditSnapshotSchedule(snapshot)
-  const schedule = buildSchedule(snapshot.courseSections, snapshot.slot_assignments, {
+  const normalized = cloneSchedulingSnapshot(snapshot)
+  const audit = auditSnapshotSchedule(normalized)
+  const schedule = buildSchedule(normalized.courseSections, normalized.slot_assignments, {
     solver_used: solverUsed,
     solver_time_seconds: 0,
     hard_constraints_feasible: audit.feasible,
@@ -110,7 +114,7 @@ export function buildScheduleFromSnapshot(
   return {
     schedule,
     audit,
-    planningCount: countPlanningFacultySections(snapshot.courseSections),
+    planningCount: countPlanningFacultySections(normalized.courseSections),
   }
 }
 
@@ -230,7 +234,7 @@ export function applyAndValidateFacultyMapping(
   }
   if (!built.audit.feasible) {
     warnings.push(
-      'Hard-constraint audit failed after applying faculty names. Resolve violations before publishing (e.g. faculty double-booking in the same slot).',
+      'Hard-constraint audit failed after applying faculty names. Resolve violations before publishing (e.g. faculty double-booking on the same weekday).',
     )
   }
   return {

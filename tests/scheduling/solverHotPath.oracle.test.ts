@@ -4,7 +4,7 @@ import { TOTAL_WEEKLY_SLOTS } from '../../src/modules/scheduling/solver/timeMode
 /**
  * Oracle checks for clash / parallel excess helpers used by the SA hot path.
  * Mirrors the micro-opt semantics in localSearchSolver (small-map student clash,
- * analytic parallel excess deltas).
+ * analytic parallel excess deltas) under the five-weekday model.
  */
 
 const TARGET_PARALLEL = 11
@@ -48,15 +48,15 @@ function parallelExcessPenalty(loads: number[]): number {
   return p
 }
 
-describe('student clash micro-opt vs Array(55) oracle', () => {
+describe('student clash micro-opt vs weekday oracle', () => {
   it('matches oracle for clash and clash-free enrollments', () => {
-    const slots: Record<string, number> = { a: 3, b: 3, c: 10 }
+    const slots: Record<string, number> = { a: 1, b: 1, c: 3 }
     const ids = ['a', 'b', 'c']
     const slotOf = (id: string) => slots[id]!
     expect(studentHasSlotClash(ids, slotOf, TOTAL_WEEKLY_SLOTS)).toBe(true)
     expect(studentHasSlotClashOracle(ids, slotOf, TOTAL_WEEKLY_SLOTS)).toBe(true)
 
-    slots.b = 4
+    slots.b = 2
     expect(studentHasSlotClash(ids, slotOf, TOTAL_WEEKLY_SLOTS)).toBe(false)
     expect(studentHasSlotClashOracle(ids, slotOf, TOTAL_WEEKLY_SLOTS)).toBe(false)
   })
@@ -78,11 +78,11 @@ describe('student clash micro-opt vs Array(55) oracle', () => {
 describe('parallel excess analytic delta vs full recompute', () => {
   it('matches move delta', () => {
     const loads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
-    loads[2] = 12
-    loads[5] = 10
+    loads[1] = 12
+    loads[3] = 10
     const k = 2
-    const oldSlot = 2
-    const newSlot = 5
+    const oldSlot = 1
+    const newSlot = 3
     const before = parallelExcessPenalty(loads)
     const analytic =
       parallelExcessAt(loads[oldSlot]! - k) +
@@ -98,11 +98,11 @@ describe('parallel excess analytic delta vs full recompute', () => {
   it('matches swap delta', () => {
     const loads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
     loads[1] = 14
-    loads[8] = 9
+    loads[4] = 9
     const ka = 3
     const kb = 1
     const sa = 1
-    const sb = 8
+    const sb = 4
     const before = parallelExcessPenalty(loads)
     const analytic =
       parallelExcessAt(loads[sa]! - ka + kb) +

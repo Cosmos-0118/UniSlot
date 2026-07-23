@@ -1,4 +1,7 @@
-import type { SchedulingSnapshot } from '@/modules/scheduling/merge/snapshot'
+import {
+  cloneSchedulingSnapshot,
+  type SchedulingSnapshot,
+} from '@/modules/scheduling/merge/snapshot'
 
 const STORAGE_KEY = 'unislot.savedRuns.v1'
 
@@ -17,7 +20,9 @@ export function loadSavedRuns(): SavedScheduleRun[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const arr = JSON.parse(raw) as SavedScheduleRun[]
-    return Array.isArray(arr) ? arr : []
+    return Array.isArray(arr)
+      ? arr.map((run) => ({ ...run, snapshot: cloneSchedulingSnapshot(run.snapshot) }))
+      : []
   } catch {
     return []
   }
@@ -37,7 +42,7 @@ export function createSavedRun(input: {
     createdAt: new Date().toISOString(),
     title: input.title,
     sourceFileName: input.sourceFileName,
-    snapshot: input.snapshot,
+    snapshot: cloneSchedulingSnapshot(input.snapshot),
   }
   const next = [run, ...loadSavedRuns()]
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
@@ -54,7 +59,7 @@ export function updateSavedRunSnapshot(
   const i = runs.findIndex((r) => r.id === id)
   if (i < 0) return null
   const prev = runs[i]!
-  runs[i] = { ...prev, ...patch, snapshot }
+  runs[i] = { ...prev, ...patch, snapshot: cloneSchedulingSnapshot(snapshot) }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(runs))
   window.dispatchEvent(new Event(SAVED_RUNS_CHANGED_EVENT))
   return runs[i]!

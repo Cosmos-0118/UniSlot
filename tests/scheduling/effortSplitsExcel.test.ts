@@ -206,8 +206,8 @@ describe('effort dial', () => {
 
 describe('excel roster + friendly timing', () => {
   it('formats friendly timing and builds roster sheet when snapshot is provided', async () => {
-    expect(friendlyTiming('Monday', 2)).toContain('Monday')
-    expect(friendlyTiming('Monday', 2)).toContain('Band 3')
+    expect(friendlyTiming('Monday', 2, 11)).toContain('Monday')
+    expect(friendlyTiming('Monday', 2, 11)).toContain('Parallel lane 2/11')
 
     const schedule: Schedule = {
       entries: [
@@ -217,9 +217,10 @@ describe('excel roster + friendly timing', () => {
           course_title: 'Course One',
           section_number: 1,
           day: 'Monday',
-          time: '5:00 PM – 7:00 PM · band 1/11',
+          time: '5:00 PM – 7:00 PM',
           slot_index: 0,
           slot_band: 1,
+          parallel_lane_count: 1,
           faculty: 'Dr. A',
           enrollment_count: 2,
           programs: 'CS',
@@ -273,7 +274,7 @@ describe('excel roster + friendly timing', () => {
     const names = wb.worksheets.map((w) => w.name)
     expect(names).toContain('Schedule')
     expect(names).toContain('Details')
-    expect(names).toContain('Students by Course & Slot')
+    expect(names).toContain('Students by Course & Weekday')
 
     const main = wb.getWorksheet('Schedule')!
     // Banner(5) + howto + legend + header
@@ -284,7 +285,7 @@ describe('excel roster + friendly timing', () => {
     expect(headers).not.toContain('Faculty ID No')
     expect(headers).not.toContain('Slot')
 
-    const roster = wb.getWorksheet('Students by Course & Slot')!
+    const roster = wb.getWorksheet('Students by Course & Weekday')!
     const text = roster.getSheetValues().flat().join(' ')
     expect(text).toContain('Alice')
     expect(text).toContain('R1')
@@ -301,6 +302,6 @@ describe('excel roster + friendly timing', () => {
     const buf = await scheduleToWorkbookBuffer(schedule)
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(buf)
-    expect(wb.worksheets.map((w) => w.name)).not.toContain('Students by Course & Slot')
+    expect(wb.worksheets.map((w) => w.name)).not.toContain('Students by Course & Weekday')
   })
 })

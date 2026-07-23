@@ -7,7 +7,7 @@ import type {
   Student,
   StudentClashReport,
 } from '../types'
-import { INDEX_TO_DAY, WEEKDAY_ORDER, formatSlotTime, slotIndexToBand } from './timeModel'
+import { INDEX_TO_DAY, WEEKDAY_ORDER, formatSlotTime } from './timeModel'
 
 const PROGRAM_ABBREVIATIONS: [string, string][] = [
   ['computer science and engineering', 'CSE'],
@@ -82,9 +82,10 @@ export function buildSchedule(
         course_title: section.course_title,
         section_number: section.section_number,
         day,
-        time: formatSlotTime(slotIdx),
+        time: formatSlotTime(),
         slot_index: slotIdx,
-        slot_band: slotIndexToBand(slotIdx),
+        slot_band: 0,
+        parallel_lane_count: 0,
         faculty: section.faculty,
         enrollment_count: section.enrolled_students.length,
         programs: formatPrograms(section.programs),
@@ -98,6 +99,17 @@ export function buildSchedule(
       a.course_code.localeCompare(b.course_code) ||
       a.section_number - b.section_number,
   )
+  const entriesByDay = new Map<DayName, ScheduleEntry[]>()
+  for (const entry of entries) {
+    if (!entriesByDay.has(entry.day)) entriesByDay.set(entry.day, [])
+    entriesByDay.get(entry.day)!.push(entry)
+  }
+  for (const dayEntries of entriesByDay.values()) {
+    for (let i = 0; i < dayEntries.length; i++) {
+      dayEntries[i]!.slot_band = i + 1
+      dayEntries[i]!.parallel_lane_count = dayEntries.length
+    }
+  }
 
   return {
     entries,
@@ -139,21 +151,23 @@ export function computeClashReport(
 
   for (const [studentId, student] of Object.entries(students)) {
     const sectionIds = studentSectionsMap.get(studentId) ?? []
-    const slotSections = new Map<number, string[]>()
+    const daySections = new Map<number, string[]>()
     for (const sid of sectionIds) {
       const slot = slotAssignments[sid] ?? -1
-      if (!slotSections.has(slot)) slotSections.set(slot, [])
-      slotSections.get(slot)!.push(sid)
+      if (slot < 0) continue
+      const day = slot
+      if (!daySections.has(day)) daySections.set(day, [])
+      daySections.get(day)!.push(sid)
     }
 
     const clashingPairs: [string, string][] = []
-    const clashingSlots: number[] = []
+    const clashingDayIndices: number[] = []
     const pairKeys = new Set<string>()
 
-    const sortedSlotEntries = [...slotSections.entries()].sort((a, b) => a[0] - b[0])
-    for (const [slot, sids] of sortedSlotEntries) {
-      if (sids.length > 1 && slot >= 0) {
-        clashingSlots.push(slot)
+    const sortedDayEntries = [...daySections.entries()].sort((a, b) => a[0] - b[0])
+    for (const [day, sids] of sortedDayEntries) {
+      if (sids.length > 1) {
+        clashingDayIndices.push(day)
         const courseCodes = sids.map((id) => sectionToCourse.get(id) ?? id)
         for (let i = 0; i < courseCodes.length; i++) {
           for (let j = i + 1; j < courseCodes.length; j++) {
@@ -172,7 +186,7 @@ export function computeClashReport(
 
     const dayRank = new Map<DayName, number>(WEEKDAY_ORDER.map((d, i) => [d, i] as [DayName, number]))
     const clashing_days: DayName[] = [
-      ...new Set(clashingSlots.map((s) => INDEX_TO_DAY[s]!).filter(Boolean)),
+      ...new Set(clashingDayIndices.map((d) => INDEX_TO_DAY[d]!).filter(Boolean)),
     ].sort((x, y) => (dayRank.get(x) ?? 99) - (dayRank.get(y) ?? 99))
     const clashing_day: DayName | null = clashing_days[0] ?? null
 

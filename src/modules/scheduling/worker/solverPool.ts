@@ -49,8 +49,6 @@ export async function runSchedulerWithPool(
     localSearchSeedPlan,
     parallelHardCap,
     finalizeSchedulerBest,
-    runPhase2RefineTask,
-    perturbEliteSlots,
   } = await import('../solver/localSearchSolver')
   const { resolveEffort } = await import('../solver/effort')
   const { createRng } = await import('../solver/rng')
@@ -105,7 +103,7 @@ export async function runSchedulerWithPool(
 
   try {
     push({
-      message: `Phase 1/2: ${runCount} seeds (${effortLevel}) across ${workerCount} workers (${TOTAL_WEEKLY_SLOTS} slots/week)`,
+      message: `Phase 1/2: ${runCount} seeds (${effortLevel}) across ${workerCount} workers (${TOTAL_WEEKLY_SLOTS} weekday sessions/week)`,
       etaSeconds: null,
       solverFraction: 0,
     })
@@ -252,35 +250,47 @@ export async function runSchedulerWithPool(
           etaSeconds: null,
           solverFraction: 0.9 + 0.05 * (round / effort.eliteRestartRounds),
         })
+        const eliteResults = await mapPoolJobs<SeedRunResult>({
+          pool,
+          jobCount: elites.length,
+          shouldAbort,
+          cancelAll,
+          dispatch: (worker, jobId, index) => {
+            const elite = elites[index]!
+            const perturbRng = createRng(
+              baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + index) >>> 0,
+            )
+            const partnerElite = elites[Math.floor(perturbRng() * elites.length)]!
+            worker.postMessage({
+              type: 'eliteRestart',
+              jobId,
+              round,
+              eliteIndex: index,
+              slotByCourse: elite.slotByCourse,
+              partnerSlotByCourse: partnerElite.slotByCourse,
+              baseSeed,
+              maxIterFactor: maxIterFactor * 1.1,
+              effort: effortLevel,
+            } satisfies SolverSeedRequest)
+          },
+          match: (data, jobId) => {
+            if (data.type === 'eliteResult' && data.jobId === jobId) {
+              return {
+                seedIndex: data.eliteIndex,
+                slotByCourse: data.slotByCourse,
+                clashWeight: data.clashWeight,
+                students: data.students,
+              }
+            }
+            if (data.type === 'error' && data.jobId === jobId) throw new Error(data.message)
+            if (data.type === 'cancelled' && data.jobId === jobId) throw new PipelineCancelledError()
+            return null
+          },
+          onProgressUnit: () => {},
+        })
+
         let improved = false
-        for (let ei = 0; ei < elites.length; ei++) {
-          const elite = elites[ei]!
-          const perturbRng = createRng(
-            baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + ei) >>> 0,
-          )
-          const kicked = perturbEliteSlots(
-            elite.slotByCourse,
-            courseCodes,
-            conflictGraph,
-            courseAdj,
-            sectionToCourse,
-            perturbRng,
-            4 + round,
-          )
-          const refined = runPhase2RefineTask(
-            kicked,
-            courseCodes,
-            sections,
-            conflictGraph,
-            courseAdj,
-            sectionCountByCourse,
-            parallelCap,
-            1000 + round * 50 + ei,
-            baseSeed,
-            maxIterFactor * 1.1,
-            shouldAbort,
-            effortLevel,
-          )
+        for (const refined of eliteResults) {
           if (
             refined.students < best.students ||
             (refined.students === best.students && refined.clashWeight < best.clashWeight)
@@ -306,7 +316,7 @@ export async function runSchedulerWithPool(
       {
         randomSeed: baseSeed,
         onProgress,
-        solverUsed: `bundle-sa-tabu-55-pool-${effortLevel}`,
+        solverUsed: `weekday-sa-tabu-pool-${effortLevel}`,
         elapsedAlreadySeconds: performance.now() / 1000 - t0,
       },
     )

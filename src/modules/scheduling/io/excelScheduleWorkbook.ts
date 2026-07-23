@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs'
 import type { Schedule, ScheduleEntry, Student } from '../types'
 import type { SchedulingSnapshot } from '../merge/snapshot'
-import { WEEKDAY_ORDER, SLOTS_PER_DAY, slotIndexToBand } from '../solver/timeModel'
+import { WEEKDAY_ORDER } from '../solver/timeModel'
 import {
   applyDataRow,
   ColumnWidthTracker,
@@ -71,17 +71,16 @@ const DETAIL_HEADERS = [
   'Section ID',
   'Day',
   'Timing',
-  'Slot',
-  'Band',
+  'Weekday Index',
+  'Parallel Lane',
   'Students',
   'Faculty',
   'Programs',
 ] as const
 
-/** Friendly timing: "Monday 5:00–7:00 PM (Band 3/11)". */
-export function friendlyTiming(day: string, slotIndex: number): string {
-  const band = slotIndexToBand(slotIndex)
-  return `${day} 5:00–7:00 PM (Band ${band}/${SLOTS_PER_DAY})`
+/** Friendly timing: "Monday 5:00–7:00 PM (Parallel lane 3/72)". */
+export function friendlyTiming(day: string, lane: number, laneCount: number): string {
+  return `${day} 5:00–7:00 PM (Parallel lane ${lane}/${laneCount})`
 }
 
 function timingForDisplay(e: ScheduleEntry | string): string {
@@ -90,7 +89,7 @@ function timingForDisplay(e: ScheduleEntry | string): string {
     const idx = t.indexOf('·')
     return idx > 0 ? t.slice(0, idx).trim() : t
   }
-  return friendlyTiming(e.day, e.slot_index)
+  return friendlyTiming(e.day, e.slot_band, e.parallel_lane_count)
 }
 
 function rowFillForEntry(e: ScheduleEntry, rowIndex: number): string {
@@ -174,13 +173,13 @@ function asciiBar(value: number, max: number, width: number): string {
 
 export type ScheduleWorkbookOptions = {
   branding?: ScheduleWorkbookBranding
-  /** When provided, adds the “Students by Course & Slot” roster sheet. */
+  /** When provided, adds the “Students by Course & Weekday” roster sheet. */
   snapshot?: SchedulingSnapshot | null
 }
 
 /**
  * Publication-style schedule workbook (multi-sheet):
- * Schedule · Details · By Day · By Program · Course Catalog · Summary · (optional) Students by Course & Slot
+ * Schedule · Details · By Day · By Program · Course Catalog · Summary · (optional) Students by Course & Weekday
  */
 export async function scheduleToWorkbookBuffer(
   schedule: Schedule,
@@ -240,7 +239,7 @@ function buildScheduleMainSheet(
   ws.mergeCells(r, 1, r, MAIN_COL_COUNT)
   const howto = ws.getCell(r, 1)
   howto.value =
-    'How to read this timetable: each row is one course section. Day row colors group weekdays. Technical IDs (Slot, Band, Section ID) are on the Details sheet.'
+    'How to read this timetable: each row is one course section. Day row colors group weekdays. Parallel lanes run simultaneously from 5–7 PM; technical IDs are on the Details sheet.'
   howto.font = { size: 10, italic: true, color: { argb: 'FF334155' } }
   howto.alignment = { wrapText: true, vertical: 'middle' }
   ws.getRow(r).height = 28
@@ -248,7 +247,7 @@ function buildScheduleMainSheet(
 
   ws.mergeCells(r, 1, r, MAIN_COL_COUNT)
   const legend = ws.getCell(r, 1)
-  legend.value = `Day legend: ${WEEKDAY_ORDER.join(' · ')}  |  Evening window: 5:00–7:00 PM · ${SLOTS_PER_DAY} bands/day`
+  legend.value = `Day legend: ${WEEKDAY_ORDER.join(' · ')}  |  One evening session each weekday: 5:00–7:00 PM`
   legend.font = { size: 10, color: { argb: 'FF475569' } }
   legend.alignment = { wrapText: true, vertical: 'middle' }
   ws.getRow(r).height = 22
@@ -317,7 +316,7 @@ function buildDetailsSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
   })
   styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'TECHNICAL DETAILS (Slot / Band / Section ID)'
+  ws.getCell(1, 1).value = 'TECHNICAL DETAILS (Weekday / Parallel Lane / Section ID)'
   ws.getRow(2).height = 8
 
   const headerRowIndex = 3
@@ -380,11 +379,11 @@ function buildStudentsByCourseSlotSheet(
   snapshot: SchedulingSnapshot,
 ) {
   const lastCol = 6
-  const ws = wb.addWorksheet('Students by Course & Slot', {
+  const ws = wb.addWorksheet('Students by Course & Weekday', {
     views: [{ state: 'frozen', ySplit: 2, activeCell: 'A3', topLeftCell: 'A3' }],
   })
   styleBannerRow(ws, 1, lastCol, 15)
-  ws.getCell(1, 1).value = 'STUDENTS BY COURSE & SLOT'
+  ws.getCell(1, 1).value = 'STUDENTS BY COURSE & WEEKDAY'
   ws.getRow(2).height = 8
 
   const colWidths = new ColumnWidthTracker([
@@ -419,7 +418,7 @@ function buildStudentsByCourseSlotSheet(
         ws,
         r,
         lastCol,
-        `${code} · ${e.course_title} · ${timing} · Section ${e.section_number} · Slot ${e.slot_index} · ${roster.length} students`,
+        `${code} · ${e.course_title} · ${timing} · Section ${e.section_number} · Parallel lane ${e.slot_band}/${e.parallel_lane_count} · ${roster.length} students`,
       )
       r++
       applyHeaderRow(

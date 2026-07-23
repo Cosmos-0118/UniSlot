@@ -113,7 +113,8 @@ export function assignStudentsToSections(
           const chunk = remaining.slice(0, takeIdeal)
           const cross = crossEdgeScore(si, chunk)
           const bal = balancePenalty(si, chunk.length)
-          const score = cross * 1000 + bal
+          // We want to MAXIMIZE overlap (cross) to keep the graph sparse, so we subtract it.
+          const score = -cross * 1000 + bal
           if (score < bestScore) {
             bestScore = score
             bestSi = si
@@ -150,6 +151,88 @@ export function assignStudentsToSections(
 
     // Final pass: if any section is empty while another is oversized vs target, leave as-is —
     // capacity and exclusivity matter more than perfect ±1 when cohorts cannot split.
+
+    // Post-refinement: Local search to directly minimize conflict graph edges.
+    // The number of conflict edges for a section is the number of DISTINCT other courses its students take.
+    // We try moving a student to another section if it reduces the total number of distinct courses across both sections.
+    let improved = true
+    const maxPasses = 5
+    let passes = 0
+    
+    while (improved && passes < maxPasses) {
+      improved = false
+      passes++
+      for (let si = 0; si < sections.length; si++) {
+        const sec = sections[si]!
+        for (let j = 0; j < sec.enrolled_students.length; j++) {
+          const studentReg = sec.enrolled_students[j]!
+          const otherCourses = studentOtherCourses(studentReg, courseCode)
+          if (otherCourses.length === 0) continue
+
+          // Compute current distinct courses for si
+          const siCourses = new Map<string, number>()
+          for (const oid of sec.enrolled_students) {
+            for (const c of studentOtherCourses(oid, courseCode)) {
+              siCourses.set(c, (siCourses.get(c) ?? 0) + 1)
+            }
+          }
+
+          let bestNewSi = -1
+          let bestEdgeDelta = 0
+
+          for (let ti = 0; ti < sections.length; ti++) {
+            if (si === ti) continue
+            const targetSec = sections[ti]!
+            if (targetSec.enrolled_students.length >= targetSec.capacity) continue
+
+            // Compute current distinct courses for ti
+            const tiCourses = new Set<string>()
+            for (const oid of targetSec.enrolled_students) {
+              for (const c of studentOtherCourses(oid, courseCode)) tiCourses.add(c)
+            }
+
+            const currentEdges = siCourses.size + tiCourses.size
+
+            // Compute new distinct courses if we move the student
+            let newSiEdges = siCourses.size
+            for (const c of otherCourses) {
+              if (siCourses.get(c) === 1) newSiEdges--
+            }
+
+            let newTiEdges = tiCourses.size
+            for (const c of otherCourses) {
+              if (!tiCourses.has(c)) newTiEdges++
+            }
+
+            const newEdges = newSiEdges + newTiEdges
+            const delta = newEdges - currentEdges
+
+            if (delta < bestEdgeDelta) {
+              bestEdgeDelta = delta
+              bestNewSi = ti
+            }
+          }
+
+          if (bestNewSi !== -1) {
+            sec.enrolled_students.splice(j, 1)
+            sections[bestNewSi]!.enrolled_students.push(studentReg)
+            sectionLoads[si]--
+            sectionLoads[bestNewSi]++
+            improved = true
+            j--
+          }
+        }
+      }
+    }
+
+    // Rebuild the 'programs' array for each section just to keep the payload clean
+    for (const sec of sections) {
+      const progs = new Set<string>()
+      for (const reg of sec.enrolled_students) {
+        progs.add(students[reg]?.program ?? 'Unknown')
+      }
+      sec.programs = [...progs].sort()
+    }
   }
 
   return courseSections

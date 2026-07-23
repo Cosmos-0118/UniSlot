@@ -63,7 +63,7 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   wsSummary.mergeCells(`A${row}:D${row}`)
   const statusText =
     report.students_with_clashes === 0
-      ? 'ALL CLEAR — No Scheduling Conflicts!'
+      ? 'ALL CLEAR — At Most One Course Per Student Per Weekday'
       : `ATTENTION REQUIRED — ${report.students_with_clashes} Students Have Conflicts`
   const statusCell = wsSummary.getCell(`A${row}`)
   statusCell.value = statusText
@@ -235,7 +235,7 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   } else {
     wsC.mergeCells('A1:C1')
     const c = wsC.getCell('A1')
-    c.value = 'No clashes! All students have conflict-free schedules.'
+    c.value = 'No daily conflicts! Every student has at most one course per weekday.'
     c.font = { bold: true, size: 14, color: { argb: XL.success } }
     c.alignment = { horizontal: 'center', vertical: 'middle' }
   }

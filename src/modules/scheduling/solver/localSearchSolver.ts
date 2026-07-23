@@ -7,12 +7,12 @@ import {
 } from './conflictGraph'
 import { resolveEffort, type EffortLevel, type EffortParams } from './effort'
 import { createRng, type Rng } from './rng'
-import { SLOTS_PER_DAY, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
+import { PREFERRED_PARALLEL_SECTIONS, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT, slotIndexToDay } from './timeModel'
 
 export type { EffortLevel } from './effort'
 export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
 
-const TARGET_PARALLEL_SECTIONS = 11
+const TARGET_PARALLEL_SECTIONS = PREFERRED_PARALLEL_SECTIONS
 const PARALLEL_SOFT_WEIGHT = 100
 const DAY_BALANCE_WEIGHT = 6
 const LOAD_BALANCE_FACTOR = 4
@@ -27,7 +27,7 @@ function multiStartRunCount(
     Math.max(16, Math.ceil(Math.sqrt(courseCount) * 5)),
   )
   if (poolWorkers <= 1) return base
-  return Math.min(effort.runCountCap, base + 8 * (poolWorkers - 1))
+  return Math.min(effort.runCountCap, base + 12 * (poolWorkers - 1))
 }
 
 function solutionPoolSize(runCount: number, effort: EffortParams = resolveEffort('balanced')): number {
@@ -72,9 +72,9 @@ function formatEtaSeconds(sec: number): string {
   return `~${m}m ${s}s`
 }
 
-/** Hard ceiling for sections per slot (solvability); soft objective still pushes toward 11. */
+/** Parallel lanes may expand as needed; 11 is a soft weekday comfort target only. */
 export function parallelHardCap(totalSections: number): number {
-  return Math.min(36, Math.max(TARGET_PARALLEL_SECTIONS, Math.ceil((totalSections * 1.35) / TOTAL_WEEKLY_SLOTS) + 6))
+  return totalSections
 }
 
 function buildEnrollmentIndex(sections: Section[]) {
@@ -143,8 +143,7 @@ function dayL1Penalty(dayTotals: number[], idealPerDay: number): number {
 function buildDayTotals(slotLoads: number[]): number[] {
   const dayTotals = new Array(WEEKDAY_COUNT).fill(0)
   for (let s = 0; s < TOTAL_WEEKLY_SLOTS; s++) {
-    const di = Math.floor(s / SLOTS_PER_DAY)
-    dayTotals[di] = (dayTotals[di] ?? 0) + (slotLoads[s] ?? 0)
+    dayTotals[s] = (dayTotals[s] ?? 0) + (slotLoads[s] ?? 0)
   }
   return dayTotals
 }
@@ -160,8 +159,8 @@ function deltaDayL1Move(
   dayTotals: number[],
   idealPerDay: number,
 ): number {
-  const dOld = Math.floor(oldSlot / SLOTS_PER_DAY)
-  const dNew = Math.floor(newSlot / SLOTS_PER_DAY)
+  const dOld = oldSlot
+  const dNew = newSlot
   if (dOld === dNew) return 0
   const before =
     Math.abs(dayTotals[dOld]! - idealPerDay) + Math.abs(dayTotals[dNew]! - idealPerDay)
@@ -178,8 +177,8 @@ function deltaDayL1Swap(
   dayTotals: number[],
   idealPerDay: number,
 ): number {
-  const da = Math.floor(sa / SLOTS_PER_DAY)
-  const db = Math.floor(sb / SLOTS_PER_DAY)
+  const da = sa
+  const db = sb
   if (da === db) return 0
   const before =
     Math.abs(dayTotals[da]! - idealPerDay) + Math.abs(dayTotals[db]! - idealPerDay)
@@ -316,11 +315,11 @@ function clashDeltaSwapCourses(
   return d
 }
 
-/** Post-solve audit for Constraints.md §13 hard rules (bundle same-slot, faculty, capacity, parallel cap, slot range). */
+/** Post-solve audit for Constraints.md §13 hard rules (bundle weekday, faculty, capacity, student day, range). */
 export function auditScheduleHardConstraints(
   courseSections: Record<string, Section[]>,
   slotAssignments: Record<string, number>,
-  parallelCap: number,
+  _parallelCap: number,
   facultyConstraints: Record<string, string[]>,
 ): { feasible: boolean; violations: string[] } {
   const violations: string[] = []
@@ -348,23 +347,34 @@ export function auditScheduleHardConstraints(
     }
   }
 
+  const studentDayCourses = new Map<string, Map<number, Set<string>>>()
+  for (const sec of sections) {
+    const slot = slotAssignments[sec.section_id]
+    if (slot === undefined || slot < 0 || slot >= TOTAL_WEEKLY_SLOTS) continue
+    const day = slot
+    for (const studentId of sec.enrolled_students) {
+      if (!studentDayCourses.has(studentId)) studentDayCourses.set(studentId, new Map())
+      const coursesByDay = studentDayCourses.get(studentId)!
+      if (!coursesByDay.has(day)) coursesByDay.set(day, new Set())
+      coursesByDay.get(day)!.add(sec.course_code)
+    }
+  }
+  for (const [studentId, coursesByDay] of studentDayCourses) {
+    for (const [day, courses] of coursesByDay) {
+      if (courses.size > 1) {
+        violations.push(
+          `Student ${studentId}: ${[...courses].sort().join(', ')} scheduled on ${slotIndexToDay(day)}; maximum one course per weekday`,
+        )
+      }
+    }
+  }
+
   const slotByCourse: Record<string, number> = {}
   for (const sec of sections) {
     slotByCourse[sec.course_code] = slotAssignments[sec.section_id] ?? 0
   }
   if (!facultySlotsFeasible(sections, slotByCourse)) {
-    violations.push('Faculty overlap: same faculty in multiple sections at one time slot')
-  }
-
-  const slotLoads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
-  for (const sec of sections) {
-    const sl = slotAssignments[sec.section_id] ?? 0
-    if (sl >= 0 && sl < TOTAL_WEEKLY_SLOTS) slotLoads[sl] = (slotLoads[sl] ?? 0) + 1
-  }
-  for (let s = 0; s < slotLoads.length; s++) {
-    if (slotLoads[s]! > parallelCap) {
-      violations.push(`Slot ${s}: ${slotLoads[s]} sections exceed parallel hard cap ${parallelCap}`)
-    }
+    violations.push('Faculty overlap: same faculty in multiple sections on one weekday')
   }
 
   for (const [facLabel, secIds] of Object.entries(facultyConstraints)) {
@@ -491,8 +501,8 @@ function hybridSATabuImprove(
     slotLoads[oldSlot] = (slotLoads[oldSlot] ?? 0) - k
     slotLoads[newSlot] = (slotLoads[newSlot] ?? 0) + k
     slotByCourse[course] = newSlot
-    const dOld = Math.floor(oldSlot / SLOTS_PER_DAY)
-    const dNew = Math.floor(newSlot / SLOTS_PER_DAY)
+    const dOld = oldSlot
+    const dNew = newSlot
     if (dOld !== dNew) {
       dayTotals[dOld] = (dayTotals[dOld] ?? 0) - k
       dayTotals[dNew] = (dayTotals[dNew] ?? 0) + k
@@ -559,8 +569,8 @@ function hybridSATabuImprove(
     slotLoads[sb] = (slotLoads[sb] ?? 0) - kb + ka
     slotByCourse[ca] = sb
     slotByCourse[cb] = sa
-    const da = Math.floor(sa / SLOTS_PER_DAY)
-    const db = Math.floor(sb / SLOTS_PER_DAY)
+    const da = sa
+    const db = sb
     if (da !== db) {
       dayTotals[da] = dayTotals[da]! - ka + kb
       dayTotals[db] = dayTotals[db]! - kb + ka
@@ -776,7 +786,12 @@ function hybridSATabuImprove(
       if (options?.shouldAbort?.()) throw new PipelineCancelledError()
       if (performance.now() - tStart > deadlineMs) break
     }
-    if (iter > 0 && iter % coolPeriod === 0) temperature *= 0.992
+    if (iter > 0 && iter % coolPeriod === 0) {
+      // Adaptive cooling: faster when making progress, slower when stagnating.
+      const progressRatio = iterSinceGlobalBest / stagnationReheat
+      const coolRate = progressRatio < 0.3 ? 0.988 : progressRatio < 0.7 ? 0.992 : 0.996
+      temperature *= coolRate
+    }
 
     const tenure = baseTenure + (iter % 5)
     const roll = rng()
@@ -819,7 +834,8 @@ function hybridSATabuImprove(
         dayPenalty = dayL1Penalty(dayTotals, idealPerDay)
         rebuildConflictCourses()
       }
-    } else if (roll < 0.58 + effort.focusProb * 0.15) {
+    } else if (roll < 0.50 + effort.focusProb * 0.15) {
+      // Single-course move (~50% + focus bias)
       let course: string
       if (conflictCourses.size > 0 && rng() < effort.focusProb) {
         const arr = [...conflictCourses]
@@ -846,7 +862,8 @@ function hybridSATabuImprove(
       dayPenalty += dDay
       registerTabu(course, oldSlot, iter, tenure)
       if (dE !== 0 || dS !== 0) rebuildConflictCourses()
-    } else {
+    } else if (roll < 0.92) {
+      // Pairwise swap (~34%)
       const ca = courseCodes[Math.floor(rng() * n)]!
       const cb = courseCodes[Math.floor(rng() * n)]!
       if (ca === cb) continue
@@ -870,6 +887,58 @@ function hybridSATabuImprove(
       registerTabu(ca, sa, iter, tenure)
       registerTabu(cb, sb, iter, tenure)
       if (dE !== 0 || dS !== 0) rebuildConflictCourses()
+    } else {
+      // 3-opt cyclic rotation (~8%): pick 3 courses in different slots and rotate A→B’s slot, B→C’s slot, C→A’s slot.
+      if (n < 3) continue
+      const ca = courseCodes[Math.floor(rng() * n)]!
+      const cb = courseCodes[Math.floor(rng() * n)]!
+      const cc = courseCodes[Math.floor(rng() * n)]!
+      if (ca === cb || ca === cc || cb === cc) continue
+      const sa = slotByCourse[ca]!
+      const sb = slotByCourse[cb]!
+      const sc = slotByCourse[cc]!
+      if (sa === sb || sb === sc || sa === sc) continue
+
+      // Check feasibility of the 3-way rotation.
+      if (!feasibleCourseMove(ca, sb)) continue
+      if (!feasibleCourseMove(cb, sc)) continue
+      // For cc→sa, we need to check after applying the first two moves.
+      // Use a lightweight feasibility check on the trial state.
+      const trial = { ...slotByCourse, [ca]: sb, [cb]: sc, [cc]: sa }
+      if (!facultySlotsFeasible(sections, trial)) continue
+      const trialLoads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
+      let overCap = false
+      for (let i = 0; i < trialLoads.length; i++) {
+        if ((trialLoads[i] ?? 0) > parallelCap) { overCap = true; break }
+      }
+      if (overCap) continue
+
+      // Compute delta by full recomputation (3-opt is rare enough).
+      const trialSecSlots = sectionSlotsFromBundle(sections, trial)
+      const newClash = computeClashWeight(conflictGraph, trialSecSlots)
+      const newStudents = countStudentsWithSlotClashes(studentToSections, trialSecSlots, TOTAL_WEEKLY_SLOTS)
+      const newParallel = parallelExcessPenalty(trialLoads)
+      const trialDayTotals = buildDayTotals(trialLoads)
+      const newDay = dayL1Penalty(trialDayTotals, idealPerDay)
+      const dE = newClash - totalClash
+      const dS = newStudents - studentClash
+      const dP = newParallel - parallelPenalty
+      const dDay = newDay - dayPenalty
+      const tabuBlocked = isTabu(ca, sb, iter) || isTabu(cb, sc, iter) || isTabu(cc, sa, iter)
+      if (!canAccept(dS, dE, dP, dDay, tabuBlocked)) continue
+
+      // Apply the rotation.
+      applyCourseMove(ca, sb)
+      applyCourseMove(cb, sc)
+      applyCourseMove(cc, sa)
+      totalClash = newClash
+      studentClash = newStudents
+      parallelPenalty = newParallel
+      dayPenalty = newDay
+      registerTabu(ca, sa, iter, tenure)
+      registerTabu(cb, sb, iter, tenure)
+      registerTabu(cc, sc, iter, tenure)
+      rebuildConflictCourses()
     }
 
     if (
@@ -894,6 +963,25 @@ function hybridSATabuImprove(
       iterSinceGlobalBest++
       if (iterSinceGlobalBest >= stagnationReheat) {
         temperature = Math.min(t0 * 1.45, temperature * 1.3)
+        // Conflict-directed perturbation: relocate 2–3 clashing courses to random feasible slots.
+        if (conflictCourses.size > 0) {
+          const perturbCount = Math.min(3, conflictCourses.size)
+          const perturbArr = [...conflictCourses]
+          for (let pi = 0; pi < perturbCount; pi++) {
+            const pc = perturbArr[Math.floor(rng() * perturbArr.length)]!
+            const newSlot = Math.floor(rng() * TOTAL_WEEKLY_SLOTS)
+            if (feasibleCourseMove(pc, newSlot)) {
+              applyCourseMove(pc, newSlot)
+            }
+          }
+          // Recompute state after perturbation.
+          const perturbSlotMap = sectionSlotsFromBundle(sections, slotByCourse)
+          totalClash = computeClashWeight(conflictGraph, perturbSlotMap)
+          studentClash = countStudentsWithSlotClashes(studentToSections, perturbSlotMap, TOTAL_WEEKLY_SLOTS)
+          parallelPenalty = parallelExcessPenalty(slotLoads)
+          dayPenalty = dayL1Penalty(dayTotals, idealPerDay)
+          rebuildConflictCourses()
+        }
         iterSinceGlobalBest = 0
       }
     }
@@ -918,6 +1006,43 @@ function solveGreedySeed(
   const effort = options?.effort ?? resolveEffort('balanced')
   const useDsatur = options?.useDsatur === true
 
+  // Pre-build enrollment index for student-aware slot scoring.
+  const greedyStudentToSections = new Map<string, string[]>()
+  const greedySectionToStudents = new Map<string, string[]>()
+  for (const sec of sections) {
+    greedySectionToStudents.set(sec.section_id, sec.enrolled_students)
+    for (const st of sec.enrolled_students) {
+      if (!greedyStudentToSections.has(st)) greedyStudentToSections.set(st, [])
+      greedyStudentToSections.get(st)!.push(sec.section_id)
+    }
+  }
+  const sectionIdToCourseGreedy = new Map<string, string>()
+  for (const sec of sections) sectionIdToCourseGreedy.set(sec.section_id, sec.course_code)
+
+  // Identify top-N heaviest courses (by conflict density) for student-aware scoring.
+  const topHeavyThreshold = Math.max(20, Math.floor(courseCodes.length * 0.15))
+  const courseConflictWeight = new Map<string, number>()
+  for (const code of courseCodes) {
+    let w = 0
+    const adj = courseAdj.get(code)
+    if (adj) for (const [, ew] of adj) w += ew
+    courseConflictWeight.set(code, w)
+  }
+  const sortedByWeight = [...courseCodes].sort(
+    (a, b) => (courseConflictWeight.get(b) ?? 0) - (courseConflictWeight.get(a) ?? 0),
+  )
+  const heavyCourses = new Set(sortedByWeight.slice(0, topHeavyThreshold))
+
+  // Pre-compute per-course enrollment for tiebreaking.
+  const courseEnrollment = new Map<string, number>()
+  for (const code of courseCodes) {
+    let total = 0
+    for (const sec of sections) {
+      if (sec.course_code === code) total += sec.enrolled_students.length
+    }
+    courseEnrollment.set(code, total)
+  }
+
   function staticPriority(code: string): number {
     const secs = sections.filter((s) => s.course_code === code)
     let score = 0
@@ -939,6 +1064,30 @@ function solveGreedySeed(
   const FACULTY_VIOL = 1_000_000_000
   const CAP_HARD = 100_000_000
 
+  /**
+   * Fast student-clash delta estimate for greedy scoring.
+   * Counts how many students of `code` already have another course assigned to `slot`.
+   */
+  function studentClashEstimate(code: string, slot: number): number {
+    let clashes = 0
+    for (const sec of sections) {
+      if (sec.course_code !== code) continue
+      for (const st of sec.enrolled_students) {
+        const otherSecs = greedyStudentToSections.get(st)
+        if (!otherSecs) continue
+        for (const osid of otherSecs) {
+          const oc = sectionIdToCourseGreedy.get(osid)
+          if (!oc || oc === code) continue
+          if (slotByCourse[oc] === slot) {
+            clashes++
+            break // One clash per student is enough to count them
+          }
+        }
+      }
+    }
+    return clashes
+  }
+
   function scoreSlot(code: string, slot: number, k: number, faculties: string[]): number {
     let violation = 0
     if (slotLoads[slot]! + k > parallelCap) {
@@ -958,6 +1107,11 @@ function solveGreedySeed(
         if (slotByCourse[other] === slot) conflictCost += w
       }
     }
+    // For heavy courses, add direct student-clash estimate (more expensive but much more accurate).
+    let studentClashCost = 0
+    if (heavyCourses.has(code)) {
+      studentClashCost = studentClashEstimate(code, slot) * 50
+    }
     const totalAssigned = slotLoads.reduce((a: number, b: number) => a + b, 0)
     const targetLoad = TOTAL_WEEKLY_SLOTS ? totalAssigned / TOTAL_WEEKLY_SLOTS : 0
     const L = (slotLoads[slot] ?? 0) + k
@@ -966,7 +1120,7 @@ function solveGreedySeed(
     const trialLoads = [...slotLoads]
     trialLoads[slot] = (trialLoads[slot] ?? 0) + k
     const daySoft = dayL1PenaltyFromSlotLoads(trialLoads, idealPerDay) * 3
-    let score = violation + conflictCost + parallelSoft + loadPenalty + daySoft
+    let score = violation + conflictCost + studentClashCost + parallelSoft + loadPenalty + daySoft
     if (randomize) score += rng() * (conflictCost > 0 ? conflictCost * 0.4 + 3 : 3)
     return score
   }
@@ -976,10 +1130,12 @@ function solveGreedySeed(
       const sorted = [...remaining].sort((a, b) => staticPriority(b) - staticPriority(a))
       return sorted[0]!
     }
-    // DSATUR: max saturation (distinct neighbor slots already used), then weighted degree.
+    // DSATUR: max saturation (distinct neighbor slots already used), then weighted degree,
+    // then enrollment size as third-level tiebreaker — larger courses are harder to place later.
     let best: string | null = null
     let bestSat = -1
     let bestDeg = -1
+    let bestEnroll = -1
     for (const code of remaining) {
       const used = new Set<number>()
       const adj = courseAdj.get(code)
@@ -991,9 +1147,15 @@ function solveGreedySeed(
         }
       }
       const sat = used.size
-      if (sat > bestSat || (sat === bestSat && deg > bestDeg)) {
+      const enroll = courseEnrollment.get(code) ?? 0
+      if (
+        sat > bestSat ||
+        (sat === bestSat && deg > bestDeg) ||
+        (sat === bestSat && deg === bestDeg && enroll > bestEnroll)
+      ) {
         bestSat = sat
         bestDeg = deg
+        bestEnroll = enroll
         best = code
       }
     }
@@ -1137,7 +1299,9 @@ export function runPhase1SeedTask(
     seedIndex > 0,
     rng,
     shouldAbort,
-    { useDsatur: seedIndex % 2 === 0, effort },
+    // Use DSATUR on 60% of seeds (first 60%); random-priority on the rest.
+    // DSATUR produces tighter initial colorings for dense conflict graphs.
+    { useDsatur: seedIndex === 0 || rng() < 0.6, effort },
   )
   const { studentToSections } = buildEnrollmentIndex(sections)
   const slotMap = sectionSlotsFromBundle(sections, r.slotByCourse)
@@ -1205,6 +1369,7 @@ export function perturbEliteSlots(
   sectionToCourse: Map<string, string>,
   rng: Rng,
   kicks = 6,
+  partnerSlotByCourse?: Record<string, number>,
 ): Record<string, number> {
   const next = { ...slotByCourse }
   const conflict: string[] = []
@@ -1216,6 +1381,17 @@ export function perturbEliteSlots(
       conflict.push(ca, cb)
     }
   }
+
+  // Cross-elite recombination: courses with conflicts take their slot from the partner.
+  if (partnerSlotByCourse) {
+    const conflictSet = new Set(conflict)
+    for (const c of conflictSet) {
+      if (partnerSlotByCourse[c] !== undefined) {
+        next[c] = partnerSlotByCourse[c]!
+      }
+    }
+  }
+
   const pool = conflict.length > 0 ? conflict : courseCodes
   for (let i = 0; i < kicks; i++) {
     const c = pool[Math.floor(rng() * pool.length)]!
@@ -1302,7 +1478,7 @@ export function finalizeSchedulerBest(
 
   return {
     slot_assignments,
-    solver_used: options?.solverUsed ?? 'bundle-sa-tabu-55',
+    solver_used: options?.solverUsed ?? 'weekday-sa-tabu',
     solver_time_seconds: performance.now() / 1000 - t0,
     total_clash_weight: best.clashWeight,
     feasible: audit.feasible,
@@ -1362,7 +1538,7 @@ function runSchedulerInProcess(
   const tPhase1 = performance.now()
 
   push({
-    message: `Phase 1/2: ${runCount} seeds (${effort.effort}) × ${options.poolWorkers} worker(s) · ${TOTAL_WEEKLY_SLOTS} slots/week`,
+    message: `Phase 1/2: ${runCount} seeds (${effort.effort}) × ${options.poolWorkers} worker(s) · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
     etaSeconds: null,
     solverFraction: 0,
   })
@@ -1492,6 +1668,7 @@ function runSchedulerInProcess(
         const perturbRng = createRng(
           baseSeed === undefined ? undefined : (baseSeed + 20_000 + round * 100 + ei) >>> 0,
         )
+        const partnerElite = elites[Math.floor(perturbRng() * elites.length)]!
         const kicked = perturbEliteSlots(
           elite.slotByCourse,
           courseCodes,
@@ -1499,7 +1676,8 @@ function runSchedulerInProcess(
           courseAdj,
           sectionToCourse,
           perturbRng,
-          4 + round,
+          Math.floor(3 + 3 * Math.log2(round + 1)), // graduated kick strength
+          partnerElite.slotByCourse,
         )
         const refined = runPhase2RefineTask(
           kicked,
@@ -1542,8 +1720,8 @@ function runSchedulerInProcess(
       onProgress,
       solverUsed:
         options.poolWorkers > 1
-          ? `bundle-sa-tabu-55-pool-${effort.effort}`
-          : `bundle-sa-tabu-55-${effort.effort}`,
+          ? `weekday-sa-tabu-pool-${effort.effort}`
+          : `weekday-sa-tabu-${effort.effort}`,
       elapsedAlreadySeconds: performance.now() / 1000 - t0,
     },
   )

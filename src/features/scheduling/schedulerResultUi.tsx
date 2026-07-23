@@ -18,8 +18,8 @@ export function HardConstraintAuditNotice({ schedule }: { schedule: Schedule }) 
         <div>
           <p className="font-medium">Hard-constraint audit reported issues</p>
           <p className="mt-1 text-xs opacity-90">
-            The timetable may still violate Constraints.md rules (faculty overlap, capacity, parallel cap, or split-section
-            alignment). Treat exports as provisional until resolved.
+            The timetable may still violate Constraints.md rules (student daily attendance, faculty overlap, capacity,
+            parallel cap, or split-section alignment). Treat exports as provisional until resolved.
           </p>
           {items.length > 0 && (
             <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 font-mono text-[11px] leading-snug opacity-95">
@@ -68,9 +68,9 @@ export function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
             <tr className="border-b border-border text-xs uppercase tracking-wider text-text-muted">
               <th className="px-4 py-3 font-medium">Course</th>
               <th className="px-4 py-3 font-medium">Section</th>
-              <th className="px-4 py-3 font-medium">Slot</th>
               <th className="px-4 py-3 font-medium">Day</th>
               <th className="px-4 py-3 font-medium">Time</th>
+              <th className="px-4 py-3 font-medium">Parallel lane</th>
               <th className="px-4 py-3 font-medium">Enrollment</th>
               <th className="px-4 py-3 font-medium">Programs</th>
             </tr>
@@ -86,9 +86,6 @@ export function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
                   <div className="text-xs text-text-muted">{e.course_title}</div>
                 </td>
                 <td className="px-4 py-3 font-mono text-text-muted">{e.section_number}</td>
-                <td className="px-4 py-3 font-mono text-xs text-text-muted" title="Global evening slot index (0–54)">
-                  {e.slot_index}
-                </td>
                 <td className="px-4 py-3">
                   <span className="theme-chip-brand px-2.5 py-1 text-xs font-medium">
                     <CalendarDays className="size-3.5 opacity-70" aria-hidden />
@@ -96,6 +93,9 @@ export function SchedulePreview({ entries }: { entries: ScheduleEntry[] }) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-text-muted">{e.time}</td>
+                <td className="px-4 py-3 font-mono text-xs text-text-muted">
+                  {e.slot_band}/{e.parallel_lane_count}
+                </td>
                 <td className="px-4 py-3 text-text-muted">{e.enrollment_count}</td>
                 <td className="max-w-[200px] truncate px-4 py-3 text-xs text-text-muted" title={e.programs}>
                   {e.programs || '—'}
@@ -117,7 +117,7 @@ export function ClashPreview({ reports }: { reports: StudentClashReport[] }) {
         <CheckCircle2 className="size-6 shrink-0" aria-hidden />
         <div>
           <p className="font-medium">No student clashes detected</p>
-          <p className="text-sm opacity-80">Every student has at most one evening slot per day.</p>
+          <p className="text-sm opacity-80">Every student has at most one course per weekday (5–7 PM).</p>
         </div>
       </div>
     )

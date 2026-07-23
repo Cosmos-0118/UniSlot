@@ -15,6 +15,7 @@ import type { PipelineExportKind } from '@/modules/scheduling/pipeline/exports'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/shared/utils/cn'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
+import type { EffortLevel } from '@/modules/scheduling/solver/effort'
 import type { ValidationError } from '@/modules/scheduling/types'
 import { useAppDialog } from '@/contexts/appDialog/useAppDialog'
 import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
@@ -88,7 +89,7 @@ export function Scheduler() {
   const [drag, setDrag] = useState(false)
   const [runSeedInput, setRunSeedInput] = useState('')
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
-  const [effortLevel, setEffortLevel] = useState<'fast' | 'balanced' | 'max'>('balanced')
+  const [effortLevel, setEffortLevel] = useState<EffortLevel>('auto')
   const [exportBusy, setExportBusy] = useState<PipelineExportKind | null>(null)
   const [snapshotBusy, setSnapshotBusy] = useState(false)
   const [entriesBusy, setEntriesBusy] = useState(false)
@@ -325,6 +326,7 @@ export function Scheduler() {
                 <div className="mt-2 inline-flex rounded-xl border border-border bg-bg p-1">
                   {(
                     [
+                      ['auto', 'Auto'],
                       ['fast', 'Fast'],
                       ['balanced', 'Balanced'],
                       ['max', 'Max'],
@@ -346,11 +348,13 @@ export function Scheduler() {
                   ))}
                 </div>
                 <p className="mt-1.5 text-xs text-text-muted">
-                  {effortLevel === 'fast'
-                    ? 'Quick pass — fewer seeds and shorter refine.'
-                    : effortLevel === 'max'
-                      ? 'Longest search — more seeds, Kempe escapes, and elite restarts.'
-                      : 'Default — solid quality vs time (recommended).'}
+                  {effortLevel === 'auto'
+                    ? 'Adaptive (recommended) — automatically scales effort to fully utilize your device.'
+                    : effortLevel === 'fast'
+                      ? 'Quick pass — fewer seeds and shorter refine.'
+                      : effortLevel === 'max'
+                        ? 'Longest search — more seeds, Kempe escapes, and elite restarts.'
+                        : 'Balanced pass — solid quality vs time.'}
                 </p>
               </div>
               <label className="block text-sm">
@@ -479,9 +483,9 @@ export function Scheduler() {
               </p>
               {result.stats?.scheduling && (
                 <p className="mt-1 text-xs text-text-muted/90">
-                  Load: peak {result.stats.scheduling.max_parallel_sections_in_slot} parallel sections in one slot ·
-                  avg {result.stats.scheduling.average_parallel_sections_per_slot} per slot ·{' '}
-                  {result.stats.scheduling.slots_with_zero_courses} unused slots (of {result.stats.scheduling.total_weekly_slots})
+                  Weekday load: peak {result.stats.scheduling.max_parallel_sections_in_slot} simultaneous sections ·
+                  avg {result.stats.scheduling.average_parallel_sections_per_slot} per weekday ·{' '}
+                  {result.stats.scheduling.slots_with_zero_courses} unused weekdays (of {result.stats.scheduling.total_weekly_slots})
                   {' · '}
                   weekday balance (L1) {result.stats.scheduling.weekday_balance_l1}
                 </p>
@@ -675,7 +679,7 @@ export function Scheduler() {
               <div>
                 <h2 className="mb-3 text-xl font-semibold text-text">Clash overview</h2>
                 <p className="mb-4 text-sm text-text-muted">
-                  {result.clashReport.students_with_clashes} students with overlaps (
+                  {result.clashReport.students_with_clashes} students with daily conflicts (
                   {result.clashReport.clash_percentage}%)
                 </p>
                 <ClashPreview reports={result.clashReport.reports} />

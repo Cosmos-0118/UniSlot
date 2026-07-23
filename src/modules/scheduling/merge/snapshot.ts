@@ -1,7 +1,12 @@
 import type { EnrollmentRow, Section, Student } from '../types'
+import { legacySlotToWeekday } from '../solver/timeModel'
+
+export const WEEKDAY_SLOT_MODEL = 'weekday-v2'
 
 /** Serializable state needed to attach late registrations without re-solving slots. */
 export type SchedulingSnapshot = {
+  /** Absent on saved runs created before weekdays replaced intra-day time bands. */
+  slot_model?: typeof WEEKDAY_SLOT_MODEL
   slot_assignments: Record<string, number>
   courseSections: Record<string, Section[]>
   students: Record<string, Student>
@@ -31,8 +36,14 @@ export function deepCloneCourseSections(cs: Record<string, Section[]>): Record<s
 }
 
 export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapshot {
+  const legacy = s.slot_model !== WEEKDAY_SLOT_MODEL
+  const slotAssignments: Record<string, number> = {}
+  for (const [sectionId, slot] of Object.entries(s.slot_assignments)) {
+    slotAssignments[sectionId] = legacy ? legacySlotToWeekday(slot) : slot
+  }
   return {
-    slot_assignments: { ...s.slot_assignments },
+    slot_model: WEEKDAY_SLOT_MODEL,
+    slot_assignments: slotAssignments,
     courseSections: deepCloneCourseSections(s.courseSections),
     students: cloneStudents(s.students),
     enrollmentRows: s.enrollmentRows.map((r) => ({ ...r })),

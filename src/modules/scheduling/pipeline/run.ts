@@ -14,6 +14,7 @@ import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, Validation
 import {
   cloneStudents,
   deepCloneCourseSections,
+  WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
 } from '../merge/snapshot'
 import { throwIfAborted } from '../worker/cancellation'
@@ -252,7 +253,7 @@ export async function runPipeline(
   const seedPlan = localSearchSeedPlan(courseCount, poolWorkers, effort)
   emit({
     stage: 'schedule',
-    message: `Local search (${seedPlan.effort}): ${seedPlan.runCount} seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} slots/week`,
+    message: `Local search (${seedPlan.effort}): ${seedPlan.runCount} seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
     fraction: SCHEDULE_LO,
     etaSeconds: null,
   })
@@ -295,6 +296,7 @@ export async function runPipeline(
     : null
 
   const schedulingSnapshot: SchedulingSnapshot = {
+    slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...sched.slot_assignments },
     courseSections: deepCloneCourseSections(courseSections),
     students: cloneStudents(students),

@@ -9,6 +9,7 @@ import { buildClashXlsxBuffer, buildScheduleXlsxBuffer } from '../pipeline/expor
 import {
   cloneSchedulingSnapshot,
   deepCloneCourseSections,
+  WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
 } from './snapshot'
 
@@ -264,6 +265,7 @@ export async function mergeLateEnrollmentIntoSnapshot(
     : null
 
   const nextSnapshot: SchedulingSnapshot = {
+    slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...snap.slot_assignments },
     courseSections: deepCloneCourseSections(courseSections),
     students: (() => {
@@ -274,6 +276,7 @@ export async function mergeLateEnrollmentIntoSnapshot(
       return o
     })(),
     enrollmentRows: mergedDeduped.map((r) => ({ ...r })),
+    facultyOverrides: snap.facultyOverrides ? { ...snap.facultyOverrides } : undefined,
   }
 
   const scheduleXlsx = allowScheduleXlsx

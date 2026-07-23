@@ -32,6 +32,17 @@ export type SolverSeedRequest =
       maxIterFactor: number
       effort?: EffortLevel
     }
+  | {
+      type: 'eliteRestart'
+      jobId: number
+      round: number
+      eliteIndex: number
+      slotByCourse: Record<string, number>
+      partnerSlotByCourse?: Record<string, number>
+      baseSeed?: number
+      maxIterFactor: number
+      effort?: EffortLevel
+    }
   | { type: 'cancel' }
 
 export type SolverSeedResponse =
@@ -47,6 +58,15 @@ export type SolverSeedResponse =
       type: 'refineResult'
       jobId: number
       refineIndex: number
+      slotByCourse: Record<string, number>
+      clashWeight: number
+      students: number
+    }
+  | {
+      type: 'eliteResult'
+      jobId: number
+      round: number
+      eliteIndex: number
       slotByCourse: Record<string, number>
       clashWeight: number
       students: number

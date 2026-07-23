@@ -16,4 +16,4 @@ export {
 export type { SchedulerRunResult, SchedulerRunOptions, SeedRunResult, EffortLevel } from './localSearchSolver'
 export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
 export { buildSchedule, computeClashReport } from './scheduleOutput'
-export { INDEX_TO_DAY, TOTAL_WEEKLY_SLOTS, SLOTS_PER_DAY } from './timeModel'
+export { INDEX_TO_DAY, TOTAL_WEEKLY_SLOTS, PREFERRED_PARALLEL_SECTIONS } from './timeModel'
