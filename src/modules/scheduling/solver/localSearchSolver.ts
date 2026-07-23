@@ -853,7 +853,11 @@ function hybridSATabuImprove(
       return rng() < Math.exp(-deltaF / temperature)
     }
 
-    if (options?.enableKempe && roll < effort.kempeProb) {
+    // Dynamic Kempe Escalation: Ramp up probability if we are stuck to force a breakout
+    const stagnationRatio = Math.min(1, iterSinceGlobalBest / stagnationReheat)
+    const dynamicKempeProb = effort.kempeProb * (0.5 + 2.5 * stagnationRatio)
+
+    if (options?.enableKempe && roll < dynamicKempeProb) {
       if (tryKempeChain()) {
         const slotMap = sectionSlotsFromBundle(sections, slotByCourse)
         totalClash = computeClashWeight(conflictGraph, slotMap)
@@ -991,6 +995,9 @@ function hybridSATabuImprove(
       if (globalBestStudents === 0 && globalBestEdges === 0) break
     } else {
       iterSinceGlobalBest++
+      if (iterSinceGlobalBest > maxIter * 0.25) {
+        break // Dynamic Early-Exit: completely stagnant, abort to save compute
+      }
       if (iterSinceGlobalBest >= stagnationReheat) {
         temperature = Math.min(t0 * 1.45, temperature * 1.3)
         // Conflict-directed perturbation: relocate 2–3 clashing courses to random feasible slots.
@@ -1439,9 +1446,34 @@ export function perturbEliteSlots(
     const c = pool[Math.floor(rng() * pool.length)]!
     // Non-math courses can only go to Mon–Fri (slots 0–4)
     const slotRange = isMathCourse(c) ? TOTAL_WEEKLY_SLOTS : TOTAL_WEEKLY_SLOTS - 1
-    next[c] = Math.floor(rng() * slotRange)
+    
+    // Intelligent Ruin & Recreate: Evaluate a few random slots and pick the best one
+    let bestSlot = Math.floor(rng() * slotRange)
+    let bestScore = Infinity
+    
+    // Sample 3 random slots to find a locally better placement
+    for (let sample = 0; sample < 3; sample++) {
+      const trialSlot = Math.floor(rng() * slotRange)
+      let trialScore = 0
+      
+      // Basic conflict evaluation
+      const adj = courseAdj.get(c)
+      if (adj) {
+        for (const [other, weight] of adj) {
+          if (next[other] === trialSlot) {
+            trialScore += weight
+          }
+        }
+      }
+      
+      if (trialScore < bestScore) {
+        bestScore = trialScore
+        bestSlot = trialSlot
+      }
+    }
+    
+    next[c] = bestSlot
   }
-  void courseAdj
   return next
 }
 
