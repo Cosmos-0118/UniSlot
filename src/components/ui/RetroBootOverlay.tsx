@@ -41,7 +41,10 @@ export function RetroBootOverlay({ landingReady, onComplete }: Props) {
   const [mounted, setMounted] = useState(true)
   const landingReadyRef = useRef(landingReady)
   const finishedRef = useRef(false)
-  landingReadyRef.current = landingReady
+
+  useEffect(() => {
+    landingReadyRef.current = landingReady
+  }, [landingReady])
 
   const finish = useCallback(() => {
     if (finishedRef.current) return

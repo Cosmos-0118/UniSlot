@@ -278,12 +278,24 @@ export async function runPipeline(
     },
   )
   throwIfAborted(signal)
+  const flatSectionsEarly = Object.values(courseSections).flat()
+  const schedulingStatsPreview = computeSchedulingStats(
+    flatSectionsEarly,
+    sched.slot_assignments,
+    conflictGraph,
+    { courseSections, students },
+  )
+  const lb = schedulingStatsPreview.lower_bounds
   let schedule = buildSchedule(courseSections, sched.slot_assignments, {
     solver_used: sched.solver_used,
     solver_time_seconds: sched.solver_time_seconds,
     hard_constraints_feasible: sched.feasible,
     hard_constraint_violations: sched.hard_constraint_violations,
     solver_primary_metrics_zero: sched.optimal,
+    min_red_students_lower_bound: lb?.min_red_students_lower_bound,
+    min_clash_weight_lower_bound: lb?.min_clash_weight_lower_bound,
+    zero_clash_structurally_impossible: lb?.zero_clash_structurally_impossible,
+    lower_bound_notes: lb?.notes,
   })
   const clashReport = computeClashReport(students, courseSections, sched.slot_assignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
@@ -337,8 +349,7 @@ export async function runPipeline(
   }
 
   const sectionCountForStats = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
-  const flatSections = Object.values(courseSections).flat()
-  const schedulingStats = computeSchedulingStats(flatSections, sched.slot_assignments, conflictGraph)
+  const schedulingStats = schedulingStatsPreview
 
   emit({
     stage: 'done',

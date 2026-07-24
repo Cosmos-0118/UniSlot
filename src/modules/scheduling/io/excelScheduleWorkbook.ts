@@ -742,7 +742,22 @@ function buildSummarySheet(wb: ExcelJS.Workbook, schedule: Schedule, entries: Sc
     solverRows.push(['Hard constraints feasible', schedule.hard_constraints_feasible ? 'Yes' : 'No'])
   }
   if (schedule.solver_primary_metrics_zero !== undefined) {
-    solverRows.push(['Solver primary metrics zero', schedule.solver_primary_metrics_zero ? 'Yes' : 'No'])
+    solverRows.push([
+      'Primary metrics zero (heuristic, not global optimality)',
+      schedule.solver_primary_metrics_zero ? 'Yes' : 'No',
+    ])
+  }
+  if (schedule.min_red_students_lower_bound != null && schedule.min_red_students_lower_bound > 0) {
+    solverRows.push(['RED students lower bound (structural)', schedule.min_red_students_lower_bound])
+  }
+  if (schedule.min_clash_weight_lower_bound != null && schedule.min_clash_weight_lower_bound > 0) {
+    solverRows.push(['Clash weight lower bound (structural)', schedule.min_clash_weight_lower_bound])
+  }
+  if (schedule.zero_clash_structurally_impossible !== undefined) {
+    solverRows.push([
+      'Zero-clash structurally impossible',
+      schedule.zero_clash_structurally_impossible ? 'Yes' : 'No',
+    ])
   }
   if (schedule.hard_constraint_violations?.length) {
     solverRows.push(['Hard constraint violations (count)', schedule.hard_constraint_violations.length])

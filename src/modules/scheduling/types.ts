@@ -105,6 +105,17 @@ export interface Schedule {
   hard_constraint_violations?: string[]
   /** True when hard audit passes and solver best had zero RED students and zero clash weight (not a global optimality proof). */
   solver_primary_metrics_zero?: boolean
+  /**
+   * Structural lower bound on RED students (pigeonhole / clique). When > 0, zero-RED is impossible
+   * for this enrollment — not a solver failure.
+   */
+  min_red_students_lower_bound?: number
+  /** Structural lower bound on clash edge weight from conflict-graph clique vs 6 weekdays. */
+  min_clash_weight_lower_bound?: number
+  /** True when a clash-free coloring is structurally impossible. */
+  zero_clash_structurally_impossible?: boolean
+  /** Short notes explaining lower-bound findings for the UI. */
+  lower_bound_notes?: string[]
 }
 
 export type ClashStatus = 'Green' | 'Red'

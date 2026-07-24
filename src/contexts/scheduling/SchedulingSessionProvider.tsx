@@ -78,11 +78,16 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
   const [fileName, setFileName] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<SchedulerViewMode>('idle')
   const [backgroundThrottled, setBackgroundThrottled] = useState(false)
-  const [displayEtaSeconds, setDisplayEtaSeconds] = useState<number | null>(null)
 
   const baseTitleRef = useRef(
     typeof document !== 'undefined' ? document.title || DEFAULT_TITLE : DEFAULT_TITLE,
   )
+
+  const displayEtaSeconds = useMemo(() => {
+    if (!running) return null
+    const eta = progress?.etaSeconds ?? null
+    return eta != null && Number.isFinite(eta) && eta > 0 ? eta : null
+  }, [running, progress?.etaSeconds])
 
   const {
     lines: terminalLines,
@@ -152,18 +157,9 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
   }, [running, flushTerminalLog])
 
   useEffect(() => {
+    const baseTitle = baseTitleRef.current || DEFAULT_TITLE
     if (!running) {
-      setDisplayEtaSeconds(null)
-      return
-    }
-    if (document.visibilityState === 'hidden') return
-    const eta = progress?.etaSeconds ?? null
-    setDisplayEtaSeconds(eta != null && Number.isFinite(eta) && eta > 0 ? eta : null)
-  }, [running, progress?.etaSeconds])
-
-  useEffect(() => {
-    if (!running) {
-      document.title = baseTitleRef.current || DEFAULT_TITLE
+      document.title = baseTitle
       return
     }
     const frac = progress?.fraction
@@ -173,7 +169,7 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
         : null
     document.title = pct != null ? `(${pct}%) ${DEFAULT_TITLE}` : `Running… ${DEFAULT_TITLE}`
     return () => {
-      document.title = baseTitleRef.current || DEFAULT_TITLE
+      document.title = baseTitle
     }
   }, [running, progress?.fraction])
 
@@ -187,41 +183,35 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [running])
 
-  const fileNameRef = useRef(fileName)
-  fileNameRef.current = fileName
-  const viewModeRef = useRef(viewMode)
-  viewModeRef.current = viewMode
-  const resultRef = useRef(result)
-  resultRef.current = result
-
   // Keep IndexedDB draft viewMode in sync when user toggles actions ↔ details.
   useEffect(() => {
     if (viewMode !== 'actions' && viewMode !== 'details') return
-    const r = resultRef.current
-    if (!r) return
+    if (!result) return
     void saveLiveSession({
       savedAt: new Date().toISOString(),
       viewMode,
-      fileName: fileNameRef.current,
-      result: r,
+      fileName,
+      result,
     }).catch((e) => console.warn('Failed to update live session viewMode', e))
-  }, [viewMode])
+  }, [viewMode, result, fileName])
 
-  const setResultPersisted = useCallback((r: PipelineOutput | null) => {
-    setResult(r)
-    if (!r) {
-      void clearLiveSession()
-      return
-    }
-    const mode = viewModeRef.current
-    if (mode !== 'actions' && mode !== 'details') return
-    void saveLiveSession({
-      savedAt: new Date().toISOString(),
-      viewMode: mode,
-      fileName: fileNameRef.current,
-      result: r,
-    }).catch((e) => console.warn('Failed to update live session', e))
-  }, [])
+  const setResultPersisted = useCallback(
+    (r: PipelineOutput | null) => {
+      setResult(r)
+      if (!r) {
+        void clearLiveSession()
+        return
+      }
+      if (viewMode !== 'actions' && viewMode !== 'details') return
+      void saveLiveSession({
+        savedAt: new Date().toISOString(),
+        viewMode,
+        fileName,
+        result: r,
+      }).catch((e) => console.warn('Failed to update live session', e))
+    },
+    [viewMode, fileName],
+  )
 
   const persistCompleted = useCallback(
     async (out: PipelineOutput, mode: 'actions' | 'details', name: string | null) => {
@@ -251,7 +241,6 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
     setResult(null)
     setFileName(null)
     setViewMode('idle')
-    setDisplayEtaSeconds(null)
     setBackgroundThrottled(false)
     resetTerminalLog()
     void clearLiveSession()
@@ -260,7 +249,6 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
   const beginNewRun = useCallback(() => {
     setResult(null)
     setViewMode('idle')
-    setDisplayEtaSeconds(null)
     resetTerminalLog()
     void clearLiveSession()
   }, [resetTerminalLog])
@@ -271,7 +259,6 @@ export function SchedulingSessionProvider({ children }: { children: ReactNode })
       setFileName(file.name)
       setResult(null)
       setViewMode('processing')
-      setDisplayEtaSeconds(null)
       void clearLiveSession()
 
       try {

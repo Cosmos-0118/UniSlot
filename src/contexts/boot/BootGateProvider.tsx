@@ -1,7 +1,7 @@
 import { RetroBootOverlay } from '@/components/ui/RetroBootOverlay'
 import { BootGateContext } from '@/contexts/boot/BootGateContext'
 import { isLandingPath, removeBootVeil } from '@/shared/boot/bootVeil'
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 export function BootGateProvider({ children }: { children: ReactNode }) {
@@ -10,23 +10,25 @@ export function BootGateProvider({ children }: { children: ReactNode }) {
 
   const [isBooting, setIsBooting] = useState(onLanding)
   const [landingReady, setLandingReady] = useState(false)
-  const landingReadyRef = useRef(false)
+  const [prevOnLanding, setPrevOnLanding] = useState(onLanding)
 
-  useEffect(() => {
+  // Adjust boot state when route enters/leaves landing (React "adjust state when prop changes").
+  if (onLanding !== prevOnLanding) {
+    setPrevOnLanding(onLanding)
     if (onLanding) {
       setIsBooting(true)
       setLandingReady(false)
-      landingReadyRef.current = false
     } else {
       setIsBooting(false)
-      removeBootVeil()
     }
+  }
+
+  useEffect(() => {
+    if (!onLanding) removeBootVeil()
   }, [onLanding])
 
   const signalLandingReady = useCallback(() => {
-    if (landingReadyRef.current) return
-    landingReadyRef.current = true
-    setLandingReady(true)
+    setLandingReady((prev) => (prev ? prev : true))
   }, [])
 
   const completeBoot = useCallback(() => {

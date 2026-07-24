@@ -40,6 +40,7 @@ export {
   isPlanningFacultyLabel,
   listFacultyMappingRows,
   parseFacultyMappingTable,
+  repairFacultyCollisionsInSnapshot,
   type ParseFacultyMappingResult,
 } from './merge/facultyMapping'
 export type { ScheduleWorkbookBranding } from './io/excelScheduleWorkbook'

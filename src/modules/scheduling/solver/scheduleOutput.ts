@@ -68,6 +68,10 @@ export function buildSchedule(
     hard_constraints_feasible?: boolean
     hard_constraint_violations?: string[]
     solver_primary_metrics_zero?: boolean
+    min_red_students_lower_bound?: number
+    min_clash_weight_lower_bound?: number
+    zero_clash_structurally_impossible?: boolean
+    lower_bound_notes?: string[]
   },
 ): Schedule {
   const entries: ScheduleEntry[] = []
@@ -120,6 +124,10 @@ export function buildSchedule(
     hard_constraints_feasible: solverMeta.hard_constraints_feasible,
     hard_constraint_violations: solverMeta.hard_constraint_violations,
     solver_primary_metrics_zero: solverMeta.solver_primary_metrics_zero,
+    min_red_students_lower_bound: solverMeta.min_red_students_lower_bound,
+    min_clash_weight_lower_bound: solverMeta.min_clash_weight_lower_bound,
+    zero_clash_structurally_impossible: solverMeta.zero_clash_structurally_impossible,
+    lower_bound_notes: solverMeta.lower_bound_notes,
   }
 }
 

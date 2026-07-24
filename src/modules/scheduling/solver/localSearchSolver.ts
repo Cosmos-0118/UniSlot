@@ -7,21 +7,26 @@ import {
 } from './conflictGraph'
 import { resolveEffort, type EffortLevel, type EffortParams } from './effort'
 import { createRng, type Rng } from './rng'
-import { PREFERRED_PARALLEL_SECTIONS, TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT, slotIndexToDay } from './timeModel'
+import {
+  PREFERRED_PARALLEL_SECTIONS,
+  TOTAL_WEEKLY_SLOTS,
+  WEEKDAY_COUNT,
+  isMathCourse,
+  slotIndexToDay,
+} from './timeModel'
+import { fixAndOptimizeConflictedCourses } from './fixAndOptimize'
 
 export type { EffortLevel } from './effort'
 export { resolveEffort, EFFORT_LEVELS, effortLabel } from './effort'
+export { isMathCourse } from './timeModel'
+export type { SchedulingLowerBounds } from './lowerBounds'
+export { computeSchedulingLowerBounds } from './lowerBounds'
 
 const TARGET_PARALLEL_SECTIONS = PREFERRED_PARALLEL_SECTIONS
-const PARALLEL_SOFT_WEIGHT = 0.01
+/** Soft only — never fences moves. Kept well below student-clash lex weight. */
+const PARALLEL_SOFT_WEIGHT = 2
 const DAY_BALANCE_WEIGHT = 0.001
 const LOAD_BALANCE_FACTOR = 4
-
-function isMathCourse(code: string): boolean {
-  const upper = code.toUpperCase()
-  // Matches '21MAB101T', '21MAC503T', 'MA101', 'MAT201', etc.
-  return /^[0-9]*MA/.test(upper) || upper.startsWith('MAT')
-}
 
 function multiStartRunCount(
   courseCount: number,
@@ -78,7 +83,11 @@ function formatEtaSeconds(sec: number): string {
   return `~${m}m ${s}s`
 }
 
-/** Parallel lanes may expand as needed; 11 is a soft weekday comfort target only. */
+/**
+ * Legacy API name kept for call sites. Parallel load is a soft comfort target (~11),
+ * not a hard fence — returns total section count so callers that still pass a "cap"
+ * into search never block RED-reducing moves.
+ */
 export function parallelHardCap(totalSections: number): number {
   return totalSections
 }
@@ -414,7 +423,7 @@ function hybridSATabuImprove(
   conflictGraph: ConflictGraph,
   courseAdj: Map<string, Map<string, number>>,
   sectionCountByCourse: Map<string, number>,
-  parallelCap: number,
+  _parallelCap: number,
   options?: {
     maxIterFactor?: number
     shouldAbort?: () => boolean
@@ -485,14 +494,11 @@ function hybridSATabuImprove(
     const oldSlot = slotByCourse[course]!
     if (oldSlot === newSlot) return false
     if (newSlot < 0 || newSlot >= TOTAL_WEEKLY_SLOTS) return false
-    
+
     // Domain Constraint: Saturday (slot 5) is strictly reserved for Mathematics courses.
     if (newSlot === 5 && !isMathCourse(course)) return false
 
-    const k = sectionCountByCourse.get(course) ?? 1
-    const loadAfter = (slotLoads[newSlot] ?? 0) + k
-    if (loadAfter > parallelCap) return false
-
+    // Parallel load is soft (penalized in the objective) — never hard-reject here.
     for (const sec of sections) {
       if (sec.course_code !== course) continue
       const f = sec.faculty
@@ -539,10 +545,7 @@ function hybridSATabuImprove(
     if (sb === 5 && !isMathCourse(ca)) return false
     if (sa === 5 && !isMathCourse(cb)) return false
 
-    const ka = sectionCountByCourse.get(ca) ?? 1
-    const kb = sectionCountByCourse.get(cb) ?? 1
-    if ((slotLoads[sa] ?? 0) - ka + kb > parallelCap) return false
-    if ((slotLoads[sb] ?? 0) - kb + ka > parallelCap) return false
+    // Parallel load is soft — never hard-reject swaps for weekday packing.
     // Faculty check without cloning slotByCourse: ca→sb, cb→sa.
     for (const sec of sections) {
       if (sec.course_code === ca) {
@@ -794,10 +797,7 @@ function hybridSATabuImprove(
     if (sa === 5) { for (const c of chainB) if (!isMathCourse(c)) return false }
 
     if (!facultySlotsFeasible(sections, trial)) return false
-    const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
-    for (let i = 0; i < loads.length; i++) {
-      if ((loads[i] ?? 0) > parallelCap) return false
-    }
+    // Parallel load is soft — Kempe chains may temporarily pack denser weekdays.
 
     for (const c of chainA) {
       if (slotByCourse[c] !== sb) applyCourseMove(c, sb)
@@ -941,11 +941,6 @@ function hybridSATabuImprove(
       const trial = { ...slotByCourse, [ca]: sb, [cb]: sc, [cc]: sa }
       if (!facultySlotsFeasible(sections, trial)) continue
       const trialLoads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
-      let overCap = false
-      for (let i = 0; i < trialLoads.length; i++) {
-        if ((trialLoads[i] ?? 0) > parallelCap) { overCap = true; break }
-      }
-      if (overCap) continue
 
       // Compute delta by full recomputation (3-opt is rare enough).
       const trialSecSlots = sectionSlotsFromBundle(sections, trial)
@@ -1034,7 +1029,7 @@ function solveGreedySeed(
   courseAdj: Map<string, Map<string, number>>,
   sectionCountByCourse: Map<string, number>,
   conflictDensity: Record<string, number>,
-  parallelCap: number,
+  _parallelCap: number,
   randomize: boolean,
   rng: Rng,
   shouldAbort?: () => boolean,
@@ -1087,7 +1082,6 @@ function solveGreedySeed(
   const remaining = new Set(courseCodes)
 
   const FACULTY_VIOL = 1_000_000_000
-  const CAP_HARD = 100_000_000
 
   /**
    * Fast student-clash delta estimate for greedy scoring.
@@ -1116,10 +1110,7 @@ function solveGreedySeed(
   function scoreSlot(code: string, slot: number, k: number, faculties: string[]): number {
     let violation = 0
     if (slot === 5 && !isMathCourse(code)) {
-      violation += CAP_HARD * 10
-    }
-    if (slotLoads[slot]! + k > parallelCap) {
-      violation += CAP_HARD * (slotLoads[slot]! + k - parallelCap)
+      violation += FACULTY_VIOL
     }
     for (const f of faculties) {
       for (const sec of sections) {
@@ -1215,7 +1206,7 @@ function solveGreedySeed(
     conflictGraph,
     courseAdj,
     sectionCountByCourse,
-    parallelCap,
+    _parallelCap,
     { shouldAbort, effort, enableKempe: false, deadlineMs: effort.perTaskMs },
     rng,
   )
@@ -1225,12 +1216,11 @@ function solveGreedySeed(
 }
 
 /** Greedy bundle moves to eliminate same-faculty double-booking across courses (post-SA polish). */
-function tryRepairFacultyBundleOverlaps(
+export function tryRepairFacultyBundleOverlaps(
   courseCodes: string[],
   sections: Section[],
   slotByCourse: Record<string, number>,
-  sectionCountByCourse: Map<string, number>,
-  parallelCap: number,
+  _sectionCountByCourse: Map<string, number>,
   rng: Rng,
   maxIterations: number,
 ): Record<string, number> | null {
@@ -1251,15 +1241,7 @@ function tryRepairFacultyBundleOverlaps(
         if (newSlot === 5 && !isMathCourse(code)) continue
         const trial = { ...cur, [code]: newSlot }
         if (!facultySlotsFeasible(sections, trial)) continue
-        const loads = slotLoadsFromBundleSlots(courseCodes, trial, sectionCountByCourse)
-        let bad = false
-        for (let i = 0; i < loads.length; i++) {
-          if ((loads[i] ?? 0) > parallelCap) {
-            bad = true
-            break
-          }
-        }
-        if (bad) continue
+        // Parallel load is soft — allow denser weekdays to clear faculty collisions.
         cur = trial
         progressed = true
         break
@@ -1519,6 +1501,34 @@ export function finalizeSchedulerBest(
     solverFraction: 0.96,
   })
 
+  // Exact polish on a small conflicted window (pure JS fix-and-optimize over 6 weekdays).
+  if (best.students > 0 || best.clashWeight > 0) {
+    push({
+      message: 'Post-process: fix-and-optimize on conflicted courses…',
+      etaSeconds: null,
+      solverFraction: 0.97,
+    })
+    const polished = fixAndOptimizeConflictedCourses(
+      best.slotByCourse,
+      courseCodes,
+      sections,
+      conflictGraph,
+      { windowSize: 5 },
+    )
+    if (polished.improved) {
+      best = {
+        slotByCourse: polished.slotByCourse,
+        clashWeight: polished.clashWeight,
+        students: polished.students,
+      }
+      push({
+        message: `Fix-and-optimize improved to ${best.students} RED · clash weight ${best.clashWeight}.`,
+        etaSeconds: null,
+        solverFraction: 0.975,
+      })
+    }
+  }
+
   if (!facultySlotsFeasible(sections, best.slotByCourse)) {
     push({
       message: 'Post-process: resolving faculty bundle double-bookings (slot moves)…',
@@ -1530,7 +1540,6 @@ export function finalizeSchedulerBest(
       sections,
       best.slotByCourse,
       sectionCountByCourse,
-      parallelCap,
       repairRng,
       800,
     )

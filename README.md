@@ -27,9 +27,9 @@ Enrollment .xlsx
   → Excel exports             (schedule, clash report, course emails)
 ```
 
-**Time model:** Monday–Friday, 5:00 PM–7:00 PM, 55 weekly slots total (~11 parallel sections per slot as the soft target).
+**Time model:** Monday–Saturday evenings, 5:00 PM–7:00 PM — **6 weekday sessions** total (one simultaneous session per day). Saturday is reserved for mathematics courses. Prefer about **11 parallel sections** per weekday as a soft comfort target (the solver may exceed this).
 
-**Solver:** `localSearchSolver.ts` runs many seeded passes, keeps a solution pool, and optimizes for minimal student timetable clashes while balancing day load and parallel section counts. Optional reproducible runs via a user-supplied seed.
+**Solver:** `localSearchSolver.ts` runs multi-start greedy (+ DSATUR) seeds, hybrid SA/Tabu improvement, elite restarts, and a pure-JS fix-and-optimize polish on conflicted courses. It minimizes student timetable clashes (RED students) while balancing day load; parallel packing is soft. Success with zero RED is a heuristic certificate of primary metrics — **not** a proof of global optimality. Structural lower bounds (conflict cliques / pigeonhole) are reported when zero-clash is impossible for the instance.
 
 **Worker:** Heavy work runs in `scheduling.worker.ts` (ESM worker with manual chunking for ExcelJS and solver code). Large artifacts (full snapshot, schedule entries) can be deferred and fetched on demand to keep the main thread responsive.
 

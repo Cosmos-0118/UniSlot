@@ -1,6 +1,12 @@
-import type { ConflictGraph, Section } from '../types'
+import type { ConflictGraph, Section, Student } from '../types'
 import { computeClashWeight } from './conflictGraph'
+import {
+  computeSchedulingLowerBounds,
+  type SchedulingLowerBounds,
+} from './lowerBounds'
 import { TOTAL_WEEKLY_SLOTS, WEEKDAY_COUNT } from './timeModel'
+
+export type { SchedulingLowerBounds }
 
 export interface SchedulingStats {
   total_sections: number
@@ -11,12 +17,18 @@ export interface SchedulingStats {
   total_clash_weight: number
   /** L1 distance of per-weekday section counts from even spread (Constraints §2). Lower is better. */
   weekday_balance_l1: number
+  /** Structural lower bounds (clique / pigeonhole) — not a solver claim of optimality. */
+  lower_bounds?: SchedulingLowerBounds
 }
 
 export function computeSchedulingStats(
   sections: Section[],
   slotAssignments: Record<string, number>,
   conflictGraph: ConflictGraph,
+  options?: {
+    courseSections?: Record<string, Section[]>
+    students?: Record<string, Student>
+  },
 ): SchedulingStats {
   const loads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
   for (const sec of sections) {
@@ -35,6 +47,15 @@ export function computeSchedulingStats(
     0,
   )
 
+  let lower_bounds: SchedulingLowerBounds | undefined
+  if (options?.courseSections) {
+    lower_bounds = computeSchedulingLowerBounds(
+      options.courseSections,
+      conflictGraph,
+      options.students,
+    )
+  }
+
   return {
     total_sections: sections.length,
     total_weekly_slots: TOTAL_WEEKLY_SLOTS,
@@ -43,5 +64,6 @@ export function computeSchedulingStats(
     slots_with_zero_courses: emptySlots,
     total_clash_weight: computeClashWeight(conflictGraph, slotAssignments),
     weekday_balance_l1: Math.round(weekdayBalanceL1 * 1000) / 1000,
+    lower_bounds,
   }
 }

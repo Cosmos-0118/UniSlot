@@ -64,12 +64,53 @@ B_SEC1,Dr Jones`
       ],
       { A_SEC1: 5, B_SEC1: 5 },
     )
+    const out = applyAndValidateFacultyMapping(
+      snap,
+      {
+        A_SEC1: 'Dr Lee',
+        B_SEC1: 'Dr Lee',
+      },
+      { autoRepairSlots: false },
+    )
+    expect(out.audit.feasible).toBe(false)
+    expect(out.audit.violations.some((v) => v.includes('Faculty overlap'))).toBe(true)
+  })
+
+  it('auto-repairs faculty double-booking by moving a course bundle', () => {
+    const snap = makeSnapshot(
+      [
+        {
+          section_id: 'A_SEC1',
+          course_code: 'A',
+          course_title: 'A',
+          section_number: 1,
+          faculty: 'Planning:A_SEC1',
+          capacity: 50,
+          enrolled_students: [],
+          programs: [],
+        },
+        {
+          section_id: 'B_SEC1',
+          course_code: 'B',
+          course_title: 'B',
+          section_number: 1,
+          faculty: 'Planning:B_SEC1',
+          capacity: 50,
+          enrolled_students: [],
+          programs: [],
+        },
+      ],
+      { A_SEC1: 2, B_SEC1: 2 },
+    )
     const out = applyAndValidateFacultyMapping(snap, {
       A_SEC1: 'Dr Lee',
       B_SEC1: 'Dr Lee',
     })
-    expect(out.audit.feasible).toBe(false)
-    expect(out.audit.violations.some((v) => v.includes('Faculty overlap'))).toBe(true)
+    expect(out.audit.feasible).toBe(true)
+    expect(out.repairedSlots).toBe(true)
+    const slotA = out.snapshot.slot_assignments.A_SEC1
+    const slotB = out.snapshot.slot_assignments.B_SEC1
+    expect(slotA).not.toBe(slotB)
   })
 
   it('passes audit when same faculty teaches sections in different slots', () => {

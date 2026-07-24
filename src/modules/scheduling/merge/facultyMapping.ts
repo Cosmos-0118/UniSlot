@@ -1,4 +1,9 @@
-import { auditScheduleHardConstraints, parallelHardCap } from '../solver/scheduler'
+import {
+  auditScheduleHardConstraints,
+  parallelHardCap,
+  tryRepairFacultyBundleOverlaps,
+} from '../solver/scheduler'
+import { createRng } from '../solver/rng'
 import { buildSchedule } from '../solver/scheduleOutput'
 import { INDEX_TO_DAY } from '../solver/timeModel'
 import { extractFacultyConstraints } from '../preprocess/preprocessing'
@@ -190,10 +195,58 @@ export function facultyMappingTemplateCsv(snapshot: SchedulingSnapshot): string 
   return [header, ...body].join('\n')
 }
 
+/**
+ * When faculty remapping creates same-weekday double-booking, try minimal course-bundle
+ * moves to clear collisions while keeping Saturday maths-only. Updates slot_assignments
+ * on the snapshot when repair succeeds.
+ */
+export function repairFacultyCollisionsInSnapshot(
+  snapshot: SchedulingSnapshot,
+  options?: { maxIterations?: number; randomSeed?: number },
+): {
+  snapshot: SchedulingSnapshot
+  repaired: boolean
+  audit: { feasible: boolean; violations: string[] }
+} {
+  const next = cloneSchedulingSnapshot(snapshot)
+  const sections = Object.values(next.courseSections).flat()
+  const courseCodes = Object.keys(next.courseSections)
+  const sectionCountByCourse = new Map<string, number>()
+  for (const c of courseCodes) {
+    sectionCountByCourse.set(c, next.courseSections[c]!.length)
+  }
+
+  const slotByCourse: Record<string, number> = {}
+  for (const sec of sections) {
+    slotByCourse[sec.course_code] = next.slot_assignments[sec.section_id] ?? 0
+  }
+
+  const rng = createRng(options?.randomSeed)
+  const fixed = tryRepairFacultyBundleOverlaps(
+    courseCodes,
+    sections,
+    slotByCourse,
+    sectionCountByCourse,
+    rng,
+    options?.maxIterations ?? 800,
+  )
+
+  if (!fixed) {
+    return { snapshot: next, repaired: false, audit: auditSnapshotSchedule(next) }
+  }
+
+  for (const sec of sections) {
+    next.slot_assignments[sec.section_id] = fixed[sec.course_code] ?? 0
+  }
+  const audit = auditSnapshotSchedule(next)
+  return { snapshot: next, repaired: audit.feasible, audit }
+}
+
 /** Apply overrides and validate section ids exist in snapshot. */
 export function applyAndValidateFacultyMapping(
   snapshot: SchedulingSnapshot,
   overrides: Record<string, string>,
+  options?: { autoRepairSlots?: boolean },
 ): {
   snapshot: SchedulingSnapshot
   schedule: Schedule
@@ -201,9 +254,11 @@ export function applyAndValidateFacultyMapping(
   planningCount: number
   errors: string[]
   warnings: string[]
+  repairedSlots?: boolean
 } {
   const errors: string[] = []
   const warnings: string[] = []
+  const autoRepair = options?.autoRepairSlots !== false
   const allIds = new Set(
     Object.values(snapshot.courseSections)
       .flat()
@@ -224,8 +279,25 @@ export function applyAndValidateFacultyMapping(
       warnings,
     }
   }
-  const next = applyFacultyOverridesToSnapshot(snapshot, overrides)
-  const built = buildScheduleFromSnapshot(next)
+  let next = applyFacultyOverridesToSnapshot(snapshot, overrides)
+  let built = buildScheduleFromSnapshot(next)
+  let repairedSlots = false
+
+  if (!built.audit.feasible && autoRepair) {
+    const facultyFail = built.audit.violations.some((v) => /faculty overlap/i.test(v))
+    if (facultyFail) {
+      const repaired = repairFacultyCollisionsInSnapshot(next)
+      if (repaired.repaired) {
+        next = repaired.snapshot
+        built = buildScheduleFromSnapshot(next)
+        repairedSlots = true
+        warnings.push(
+          'Faculty double-booking was cleared by moving one or more course bundles to another weekday (minimal repair). Review the updated timetable before publishing.',
+        )
+      }
+    }
+  }
+
   const remaining = built.planningCount
   if (remaining > 0) {
     warnings.push(
@@ -244,6 +316,7 @@ export function applyAndValidateFacultyMapping(
     planningCount: remaining,
     errors,
     warnings,
+    repairedSlots,
   }
 }
 

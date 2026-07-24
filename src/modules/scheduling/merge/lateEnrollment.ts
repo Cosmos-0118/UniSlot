@@ -246,6 +246,11 @@ export async function mergeLateEnrollmentIntoSnapshot(
   const flatSections = Object.values(courseSections).flat()
   const parallelCap = parallelHardCap(flatSections.length)
   const audit = auditScheduleHardConstraints(courseSections, snap.slot_assignments, parallelCap, facultyConstraints)
+  const schedulingStats = computeSchedulingStats(flatSections, snap.slot_assignments, conflictGraph, {
+    courseSections,
+    students: mergedStudents,
+  })
+  const lb = schedulingStats.lower_bounds
 
   let schedule = buildSchedule(courseSections, snap.slot_assignments, {
     solver_used: 'late-enrollment-merge',
@@ -253,6 +258,10 @@ export async function mergeLateEnrollmentIntoSnapshot(
     hard_constraints_feasible: audit.feasible,
     hard_constraint_violations: audit.violations,
     solver_primary_metrics_zero: false,
+    min_red_students_lower_bound: lb?.min_red_students_lower_bound,
+    min_clash_weight_lower_bound: lb?.min_clash_weight_lower_bound,
+    zero_clash_structurally_impossible: lb?.zero_clash_structurally_impossible,
+    lower_bound_notes: lb?.notes,
   })
   const clashReport = computeClashReport(mergedStudents, courseSections, snap.slot_assignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
@@ -284,8 +293,6 @@ export async function mergeLateEnrollmentIntoSnapshot(
     : null
   const clashXlsx = await buildClashXlsxBuffer(clashReport)
   const courseEmailsXlsx = null
-
-  const schedulingStats = computeSchedulingStats(flatSections, snap.slot_assignments, conflictGraph)
 
   const validation: ValidationResult = {
     is_valid: true,

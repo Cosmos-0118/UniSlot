@@ -23,6 +23,7 @@ import { ProcessingTerminal } from '@/components/ui/ProcessingTerminal'
 import { createSavedRun } from '@/features/scheduling/storage/savedRunsStorage'
 import { downloadArrayBuffer } from '@/shared/lib/downloadArrayBuffer'
 import {
+  ClashLowerBoundNotice,
   ClashPreview,
   HardConstraintAuditNotice,
   ScheduleExportBlockedNotice,
@@ -473,6 +474,7 @@ export function Scheduler() {
         <section className="mb-10">
           <div className="results-panel">
             {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
+            {result.schedule && <ClashLowerBoundNotice schedule={result.schedule} />}
             <ScheduleExportBlockedNotice
               blocked={result.schedule_export_blocked}
               reason={result.schedule_export_block_reason}
@@ -494,6 +496,11 @@ export function Scheduler() {
                   {result.stats.scheduling.slots_with_zero_courses} unused weekdays (of {result.stats.scheduling.total_weekly_slots})
                   {' · '}
                   weekday balance (L1) {result.stats.scheduling.weekday_balance_l1}
+                  {result.stats.scheduling.lower_bounds &&
+                  (result.stats.scheduling.lower_bounds.min_red_students_lower_bound > 0 ||
+                    result.stats.scheduling.lower_bounds.zero_clash_structurally_impossible)
+                    ? ` · lower bound ≥ ${result.stats.scheduling.lower_bounds.min_red_students_lower_bound} RED`
+                    : null}
                 </p>
               )}
             </div>
@@ -563,6 +570,7 @@ export function Scheduler() {
       {showDetails && result && (
         <section className="space-y-10 pb-20">
           {result.schedule && <HardConstraintAuditNotice schedule={result.schedule} />}
+          {result.schedule && <ClashLowerBoundNotice schedule={result.schedule} />}
           <ScheduleExportBlockedNotice
             blocked={result.schedule_export_blocked}
             reason={result.schedule_export_block_reason}

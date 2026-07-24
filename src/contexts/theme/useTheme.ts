@@ -1,15 +1,16 @@
 import { useTheme as useNextTheme } from 'next-themes'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import { applyThemeTransition, type ThemeTransitionSource } from './applyThemeTransition'
 import type { Theme } from './context'
 
 export type { ThemeTransitionSource }
 
+const emptySubscribe = () => () => {}
+
 export function useTheme() {
   const { theme, setTheme: setNextTheme, resolvedTheme } = useNextTheme()
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => setMounted(true), [])
+  // Client-only mount gate without setState-in-effect (avoids hydration flash).
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false)
 
   const setTheme = useCallback(
     (next: Theme, source: ThemeTransitionSource = 'center') => {

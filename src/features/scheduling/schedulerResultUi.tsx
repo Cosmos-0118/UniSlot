@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarDays, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, CalendarDays, CheckCircle2, Info } from 'lucide-react'
 import type { Schedule, ScheduleEntry, StudentClashReport } from '@/modules/scheduling/types'
 
 export function HardConstraintAuditNotice({ schedule }: { schedule: Schedule }) {
@@ -19,12 +19,65 @@ export function HardConstraintAuditNotice({ schedule }: { schedule: Schedule }) 
           <p className="font-medium">Hard-constraint audit reported issues</p>
           <p className="mt-1 text-xs opacity-90">
             The timetable may still violate Constraints.md rules (student daily attendance, faculty overlap, capacity,
-            parallel cap, or split-section alignment). Treat exports as provisional until resolved.
+            or split-section alignment). Parallel weekday load is a soft comfort target (~11), not a hard audit
+            failure. Treat exports as provisional until hard rules are resolved.
           </p>
           {items.length > 0 && (
             <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 font-mono text-[11px] leading-snug opacity-95">
               {items.map((v, i) => (
                 <li key={i}>{v}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Surfaces structural clash/RED lower bounds so zero-RED looks impossible rather than “solver failed”. */
+export function ClashLowerBoundNotice({ schedule }: { schedule: Schedule }) {
+  const minRed = schedule.min_red_students_lower_bound ?? 0
+  const impossible = schedule.zero_clash_structurally_impossible === true
+  const notes = schedule.lower_bound_notes ?? []
+  if (!impossible && minRed <= 0) return null
+
+  const parts: string[] = []
+  if (impossible) {
+    parts.push(
+      'A completely clash-free timetable is impossible for this enrollment (conflict clique or Saturday maths-only pigeonhole).',
+    )
+  }
+  if (minRed > 0) {
+    parts.push(
+      `At least ${minRed} student(s) must have a timetable clash given the current course loads.`,
+    )
+  }
+  if (schedule.min_clash_weight_lower_bound != null && schedule.min_clash_weight_lower_bound > 0) {
+    parts.push(`Clash-weight lower bound: ${schedule.min_clash_weight_lower_bound}.`)
+  }
+  parts.push(
+    'Reaching zero RED is not expected — this is an instance limit, not a solver failure. Heuristic search still minimizes clashes; it does not prove global optimality.',
+  )
+
+  return (
+    <div
+      className="mb-6 rounded-2xl border px-4 py-3 text-left text-sm"
+      style={{
+        borderColor: 'var(--border)',
+        background: 'color-mix(in srgb, var(--accent-info) 10%, var(--bg-secondary))',
+        color: 'var(--text)',
+      }}
+    >
+      <div className="flex gap-3">
+        <Info className="size-5 shrink-0" style={{ color: 'var(--accent-info)' }} aria-hidden />
+        <div>
+          <p className="font-medium">Structural clash lower bound</p>
+          <p className="mt-1 text-xs opacity-90">{parts.join(' ')}</p>
+          {notes.length > 0 && (
+            <ul className="mt-2 max-h-32 list-disc space-y-1 overflow-y-auto pl-4 text-[11px] leading-snug opacity-90">
+              {notes.slice(0, 6).map((n, i) => (
+                <li key={i}>{n}</li>
               ))}
             </ul>
           )}
