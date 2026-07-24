@@ -13,7 +13,7 @@ export {
   sectionSlotsFromCourseSlots,
 } from './cpsatInstance'
 export type { CpsatInstance, CpsatSolution, CpsatProgressEvent } from './cpsatInstance'
-export { runCpsatScheduler, spawnCpsatSolve, resolveCpsatPython, CPSAT_DIR } from './cpsatBridge'
+export { runCpsatScheduler, spawnCpsatSolve, resolveCpsatPython, killAllCpsatChildren, CPSAT_DIR } from './cpsatBridge'
 export { buildGreedyHint } from './greedyHint'
 export type { GreedyHintResult } from './greedyHint'
 export {

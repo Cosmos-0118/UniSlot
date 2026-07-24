@@ -11,8 +11,10 @@ import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts
 import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
+  killAllCpsatChildren,
   resolveCpsatPython,
 } from '../src/modules/scheduling/solver/cpsatBridge.ts'
+import { PipelineCancelledError } from '../src/modules/scheduling/pipeline/cancellation.ts'
 import { runPipeline } from '../src/modules/scheduling/pipeline/run.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -132,19 +134,38 @@ async function runSolve(opts: {
   )
 
   const ac = new AbortController()
-  const onSigInt = () => {
-    p.log.warn('Cancelling…')
-    ac.abort()
-  }
-  process.once('SIGINT', onSigInt)
-
+  let forceQuit = false
+  let quitting = false
   const spin = createSolveSpinner(opts.workers && opts.workers > 0 ? opts.workers : cpus().length)
+
+  const onSigInt = () => {
+    if (forceQuit) {
+      // Second Ctrl+C — hard kill every solver child and exit.
+      void killAllCpsatChildren().finally(() => {
+        spin.cancel()
+        p.cancel('Force quit.')
+        process.exit(130)
+      })
+      return
+    }
+    forceQuit = true
+    if (!quitting) {
+      quitting = true
+      p.log.warn('Cancelling… stopping solver processes (Ctrl+C again to force quit)')
+      ac.abort()
+      void killAllCpsatChildren()
+    }
+  }
+  process.on('SIGINT', onSigInt)
+  process.on('SIGTERM', onSigInt)
+
   spin.start('Reading enrollment workbook…')
 
   try {
     const result = await runPipeline(
       arrayBuffer,
       (evt) => {
+        if (ac.signal.aborted) return
         if (evt.cpsat) {
           spin.applyCpsat(evt.cpsat)
           return
@@ -166,6 +187,7 @@ async function runSolve(opts: {
     )
 
     process.off('SIGINT', onSigInt)
+    process.off('SIGTERM', onSigInt)
 
     if (!result.validation.is_valid || !result.schedule) {
       spin.stop('Validation failed')
@@ -240,11 +262,19 @@ async function runSolve(opts: {
     return 0
   } catch (err) {
     process.off('SIGINT', onSigInt)
-    spin.stop('Failed')
-    if (ac.signal.aborted) {
-      p.cancel('Solve cancelled.')
+    process.off('SIGTERM', onSigInt)
+    await killAllCpsatChildren().catch(() => undefined)
+
+    const cancelled =
+      ac.signal.aborted || err instanceof PipelineCancelledError
+
+    if (cancelled) {
+      spin.cancel()
+      p.cancel('Solve cancelled — solver processes stopped.')
       return 130
     }
+
+    spin.stop('Failed')
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }

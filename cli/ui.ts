@@ -12,9 +12,7 @@ export type LiveSolveState = {
   bestClash: number | null
   bestRed: number | null
   bound: number | null
-  /** Last elapsed reported by the solver (may stall between heartbeats). */
   solverElapsed: number
-  /** Wall clock when solverElapsed was last updated. */
   solverElapsedAt: number
   workers: number
   solutions: number
@@ -36,25 +34,21 @@ type RaceLane = {
   done: boolean
 }
 
+type Stage = 'pipeline' | 'race' | 'prove'
+
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+const PULSE = ['·', '◦', '●', '◦'] as const
+/** Paint / animation rate — keep low to avoid flicker. */
+const TICK_MS = 100
+/** Pad every frame to this many columns so leftovers never ghost. */
+const COLS = 88
+
 function formatDuration(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '0.0s'
   if (sec < 60) return `${sec.toFixed(1)}s`
   const m = Math.floor(sec / 60)
   const s = sec - m * 60
   return `${m}m ${s.toFixed(0).padStart(2, '0')}s`
-}
-
-function activityText(activity: LiveSolveState['activity'], idle: number): string {
-  switch (activity) {
-    case 'improving':
-      return chalk.green('improving')
-    case 'proving':
-      return chalk.yellow(`proving (${formatDuration(idle)} since last improve)`)
-    case 'searching':
-      return chalk.cyan('searching')
-    default:
-      return chalk.dim('…')
-  }
 }
 
 function laneStatus(activity: LiveSolveState['activity'], idle: number, done: boolean): string {
@@ -75,13 +69,103 @@ function liveOf(elapsed: number, elapsedAt: number): number {
   return elapsed + Math.max(0, (Date.now() - elapsedAt) / 1000)
 }
 
-function padClash(n: number | null): string {
-  if (n == null) return chalk.dim('—'.padStart(4))
-  return chalk.bold(String(n).padStart(4))
+function padNum(n: number | null, width = 4): string {
+  if (n == null) return chalk.dim('—'.padStart(width))
+  return chalk.bold(String(n).padStart(width))
+}
+
+/** Visible length ignoring ANSI CSI sequences. */
+function visibleLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').length
+}
+
+function padLine(s: string, width = COLS): string {
+  const len = visibleLen(s)
+  if (len >= width) return s
+  return s + ' '.repeat(width - len)
+}
+
+/**
+ * Smooth in-place panel: fixed-height, line-diff updates, no full-screen erase.
+ * (Full `\x1b[0J` clears caused visible flicker against the terminal background.)
+ */
+function createLivePanel() {
+  let prev: string[] = []
+  let hidden = false
+  const out = process.stdout
+  const isTty = Boolean(out.isTTY)
+
+  const hideCursor = () => {
+    if (isTty && !hidden) {
+      out.write('\x1b[?25l')
+      hidden = true
+    }
+  }
+
+  const showCursor = () => {
+    if (isTty && hidden) {
+      out.write('\x1b[?25h')
+      hidden = false
+    }
+  }
+
+  const clear = () => {
+    if (!isTty || prev.length === 0) {
+      prev = []
+      return
+    }
+    out.write(`\x1b[${prev.length}A`)
+    for (let i = 0; i < prev.length; i++) {
+      out.write('\x1b[2K\n')
+    }
+    out.write(`\x1b[${prev.length}A`)
+    prev = []
+  }
+
+  const paint = (rawLines: string[]) => {
+    hideCursor()
+    const lines = rawLines.map((l) => padLine(l))
+    if (!isTty) {
+      out.write(lines.join('\n') + '\n')
+      return
+    }
+
+    if (prev.length > 0) {
+      out.write(`\x1b[${prev.length}A`)
+    }
+
+    const height = Math.max(prev.length, lines.length)
+    const nextFrame: string[] = []
+    for (let i = 0; i < height; i++) {
+      const next = lines[i] ?? padLine('')
+      nextFrame.push(next)
+      if (prev[i] === next) {
+        out.write('\x1b[1B')
+      } else {
+        out.write(`\x1b[2K\r${next}\n`)
+      }
+    }
+    prev = nextFrame.slice(0, Math.max(lines.length, 1))
+  }
+
+  return {
+    paint,
+    clear,
+    finish(finalLine?: string) {
+      clear()
+      showCursor()
+      if (finalLine) p.log.step(finalLine)
+    },
+    discard() {
+      clear()
+      showCursor()
+    },
+    isTty,
+  }
 }
 
 export function createSolveSpinner(workers = cpus().length) {
-  const spin = p.spinner()
+  const panel = createLivePanel()
   const state: LiveSolveState = {
     phase: 'starting',
     phaseLabel: 'Starting',
@@ -96,23 +180,32 @@ export function createSolveSpinner(workers = cpus().length) {
     secondsSinceImprove: 0,
   }
 
-  /** Portfolio race lanes (null when not racing). */
+  let stage: Stage = 'pipeline'
   let race: {
     size: number
     memberWorkers: number
     raceSeconds: number
+    startedAt: number
     lanes: Map<number, RaceLane>
     bestClash: number | null
     bestRed: number | null
   } | null = null
 
-  /** raw = one-off pipeline message; cpsat = live solver line (ticker refreshes). */
-  let mode: 'raw' | 'cpsat' = 'raw'
-  let rawMessage = 'Working…'
-  let tickTimer: ReturnType<typeof setInterval> | null = null
+  /** Snapshot kept after race so prove panel keeps seed rows visible. */
+  let warmClash: number | null = null
+  let warmRed: number | null = null
 
-  const clearRace = () => {
-    race = null
+  let rawMessage = 'Working…'
+  let tick = 0
+  let tickTimer: ReturnType<typeof setInterval> | null = null
+  let dirty = true
+  let lastNonTtyKey = ''
+
+  /** Fixed panel height so race → prove never collapses (no “rows vanished” jump). */
+  const panelHeight = () => {
+    const seeds = race?.size ?? 0
+    // header + meta + N lanes (+ blank pad to at least 3)
+    return 2 + Math.max(seeds, 1)
   }
 
   const ensureLane = (meta: CpsatPortfolioMeta): RaceLane => {
@@ -121,6 +214,7 @@ export function createSolveSpinner(workers = cpus().length) {
         size: meta.size,
         memberWorkers: meta.member_workers,
         raceSeconds: meta.race_seconds ?? 0,
+        startedAt: Date.now(),
         lanes: new Map(),
         bestClash: null,
         bestRed: null,
@@ -166,98 +260,197 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 
   const liveElapsed = () => liveOf(state.solverElapsed, state.solverElapsedAt)
+  const spinGlyph = () => chalk.magenta(SPINNER[tick % SPINNER.length])
+  const pulseGlyph = () => chalk.magenta(PULSE[Math.floor(tick / 2) % PULSE.length])
 
-  const proveLabel = () => {
-    const clash = state.bestClash == null ? '—' : chalk.bold(String(state.bestClash))
-    const red = state.bestRed == null ? '—' : chalk.bold(String(state.bestRed))
-    let gap = ''
-    if (state.bound != null && state.bestClash != null) {
-      const g = state.bestClash - state.bound
-      gap =
-        g <= 0
-          ? chalk.dim(' · gap 0')
-          : chalk.dim(` · bound ${state.bound} · gap ${g}`)
+  const sparkRow = (n: number, activeHint?: number): string => {
+    const cells: string[] = []
+    const traveling = tick % Math.max(1, n)
+    for (let i = 0; i < n; i++) {
+      if (activeHint != null && i + 1 === activeHint) cells.push(chalk.green('●'))
+      else if (i === traveling && stage === 'race') cells.push(chalk.magenta('●'))
+      else cells.push(chalk.dim('·'))
     }
-    return (
-      `${chalk.cyan(state.phaseLabel)}  ` +
-      `clash ${clash}  RED ${red}${gap}  ` +
-      `${activityText(state.activity, state.secondsSinceImprove)}  ` +
-      chalk.dim(`${formatDuration(liveElapsed())} · ${state.workers}w`)
-    )
+    return cells.join(' ')
   }
 
-  const portfolioLabel = (): string => {
-    if (!race) return proveLabel()
-    const headerBest =
-      race.bestClash == null
-        ? chalk.dim('best —')
-        : `best clash ${chalk.bold(String(race.bestClash))}  RED ${chalk.bold(String(race.bestRed ?? '—'))}`
-    const budget =
-      race.raceSeconds > 0 ? chalk.dim(` · ${race.raceSeconds}s budget`) : ''
-    const totalW = race.size * race.memberWorkers
-    const lines: string[] = [
-      `${chalk.magenta('Portfolio race')} · ${race.size} seeds × ${race.memberWorkers}w` +
-        chalk.dim(` (${totalW} workers)`) +
-        `${budget}  ${headerBest}`,
-    ]
+  const bestLaneIndex = (): number | undefined => {
+    if (!race || race.bestClash == null) return undefined
+    for (const lane of race.lanes.values()) {
+      if (lane.clash === race.bestClash && (lane.red ?? null) === (race.bestRed ?? null)) {
+        return lane.index
+      }
+    }
+    return undefined
+  }
 
+  const laneLines = (): string[] => {
+    if (!race) return [chalk.dim('  (waiting for solver…)')]
     const ordered = [...race.lanes.values()].sort((a, b) => a.index - b.index)
     const width = Math.max(1, String(race.size).length)
-
-    for (const lane of ordered) {
+    return ordered.map((lane) => {
       const isBest =
         lane.clash != null &&
-        race.bestClash != null &&
-        lane.clash === race.bestClash &&
-        (lane.red ?? null) === (race.bestRed ?? null)
+        race!.bestClash != null &&
+        lane.clash === race!.bestClash &&
+        (lane.red ?? null) === (race!.bestRed ?? null)
       const tag = String(lane.index).padStart(width)
       const seedLabel = `seed ${lane.seed}`.padEnd(10)
-      const mark = isBest ? chalk.green('★') : ' '
+      const mark = isBest ? chalk.green('★') : chalk.dim('·')
       const status = laneStatus(lane.activity, lane.secondsSinceImprove, lane.done)
       const time = formatDuration(liveOf(lane.elapsed, lane.elapsedAt)).padStart(6)
-      lines.push(
-        `  ${mark}${chalk.dim(`#${tag}`)} ${seedLabel}  ` +
-          `clash ${padClash(lane.clash)}  RED ${padClash(lane.red)}  ` +
-          `${status}  ` +
-          chalk.dim(`${time} · ${lane.workers}w`),
+      return (
+        `  ${mark} ${chalk.dim(`#${tag}`)} ${seedLabel} ` +
+        `clash ${padNum(lane.clash)}  RED ${padNum(lane.red)}  ` +
+        `${status}  ` +
+        chalk.dim(`${time} · ${lane.workers}w`)
       )
-    }
-    return lines.join('\n')
+    })
   }
 
-  const cpsatLabel = () => (race ? portfolioLabel() : proveLabel())
+  const buildFrame = (): string[] => {
+    if (stage === 'pipeline') {
+      const lines = [`${spinGlyph()} ${rawMessage}`]
+      while (lines.length < panelHeight()) lines.push('')
+      return lines
+    }
+
+    if (!race) {
+      const lines = [
+        `${spinGlyph()} ${chalk.cyan(state.phaseLabel)} ${pulseGlyph()} ` +
+          chalk.dim(`${state.workers}w · ${formatDuration(liveElapsed())}`),
+        `  clash ${padNum(state.bestClash)}  RED ${padNum(state.bestRed)}`,
+      ]
+      while (lines.length < panelHeight()) lines.push('')
+      return lines
+    }
+
+    const lanes = laneLines()
+    const bestIdx = bestLaneIndex()
+
+    if (stage === 'race') {
+      const wall = (Date.now() - race.startedAt) / 1000
+      const budget =
+        race.raceSeconds > 0
+          ? chalk.dim(
+              ` · ${formatDuration(Math.min(wall, race.raceSeconds))} / ${race.raceSeconds}s`,
+            )
+          : chalk.dim(` · ${formatDuration(wall)}`)
+      const headerBest =
+        race.bestClash == null
+          ? chalk.dim('best —')
+          : `best ${chalk.bold.green(String(race.bestClash))} / RED ${chalk.bold.green(String(race.bestRed ?? '—'))}`
+      const totalW = race.size * race.memberWorkers
+      return [
+        `${spinGlyph()} ${chalk.magenta('Portfolio race')} ${pulseGlyph()} ` +
+          `${race.size} seeds × ${race.memberWorkers}w` +
+          chalk.dim(` (${totalW} workers)`) +
+          `${budget}`,
+        `  ${sparkRow(race.size, bestIdx)}   ${headerBest}`,
+        ...lanes,
+      ]
+    }
+
+    // Prove — keep seed rows (frozen) so the panel never collapses.
+    const clash = state.bestClash
+    const red = state.bestRed
+    let gapPart = chalk.dim('gap —')
+    if (state.bound != null && clash != null) {
+      const g = clash - state.bound
+      gapPart =
+        g <= 0
+          ? chalk.green('gap 0')
+          : chalk.dim(`bound ${state.bound} · gap ${g}`)
+    }
+    const act =
+      state.activity === 'improving'
+        ? chalk.green('improving')
+        : state.activity === 'proving'
+          ? chalk.yellow(`proving ${formatDuration(state.secondsSinceImprove)}`)
+          : chalk.cyan('searching')
+    const warm =
+      warmClash != null
+        ? chalk.dim(`warm ${warmClash}/${warmRed ?? '—'}`)
+        : chalk.dim('warm —')
+
+    return [
+      `${spinGlyph()} ${chalk.cyan('Prove')} ${pulseGlyph()} ` +
+        `${state.phaseLabel}` +
+        chalk.dim(` · ${state.workers}w · ${formatDuration(liveElapsed())}`),
+      `  ${sparkRow(race.size, bestIdx)}   ${warm}  →  ` +
+        `clash ${padNum(clash)}  RED ${padNum(red)}  ${gapPart}  ${act}`,
+      ...lanes,
+    ]
+  }
+
+  const paint = () => {
+    if (!dirty && stage !== 'race' && stage !== 'prove' && stage !== 'pipeline') return
+    // Always paint on tick while live so spinner/pulse animate; dirty forces immediate.
+    const lines = buildFrame()
+    if (!panel.isTty) {
+      const key = lines.join('\n').replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·◦●]/g, '')
+      if (key === lastNonTtyKey) return
+      lastNonTtyKey = key
+    }
+    panel.paint(lines)
+    dirty = false
+  }
+
+  const markDirty = () => {
+    dirty = true
+  }
+
+  const freezeRaceForProve = () => {
+    if (!race) return
+    warmClash = race.bestClash
+    warmRed = race.bestRed
+    for (const lane of race.lanes.values()) {
+      lane.done = true
+      lane.activity = 'idle'
+    }
+    stage = 'prove'
+    // Seed prove metrics from warm start until first progress arrives.
+    if (state.bestClash == null && warmClash != null) state.bestClash = warmClash
+    if (state.bestRed == null && warmRed != null) state.bestRed = warmRed
+    markDirty()
+  }
 
   const refresh = () => {
-    if (mode === 'cpsat') spin.message(cpsatLabel())
-    else spin.message(rawMessage)
+    tick++
+    dirty = true // animate spinner/pulse every tick
+    paint()
   }
 
   return {
     start(message = 'CP-SAT searching…') {
-      mode = 'raw'
+      stage = 'pipeline'
       rawMessage = message
-      spin.start(message)
+      markDirty()
       if (!tickTimer) {
-        tickTimer = setInterval(refresh, 250)
+        tickTimer = setInterval(refresh, TICK_MS)
         tickTimer.unref?.()
       }
+      paint()
     },
     updateFromPipeline(message: string) {
-      mode = 'raw'
+      stage = 'pipeline'
       rawMessage = message
-      spin.message(message)
+      markDirty()
+      // Don't paint here — timer will pick it up (smoother).
     },
     applyCpsat(evt: CpsatProgressEvent) {
-      mode = 'cpsat'
-
       if (evt.type === 'phase' && evt.phase === 'portfolio_race') {
         const seeds = evt.portfolio_seeds ?? []
         const memberWorkers = evt.portfolio_member_workers ?? 2
         const raceSeconds = evt.portfolio_race_seconds ?? 0
+        stage = 'race'
         race = {
-          size: seeds.length || (evt.workers ? Math.max(1, Math.floor((evt.workers ?? 2) / memberWorkers)) : 5),
+          size:
+            seeds.length ||
+            (evt.workers ? Math.max(1, Math.floor((evt.workers ?? 2) / memberWorkers)) : 5),
           memberWorkers,
           raceSeconds,
+          startedAt: Date.now(),
           lanes: new Map(),
           bestClash: null,
           bestRed: null,
@@ -281,7 +474,7 @@ export function createSolveSpinner(workers = cpus().length) {
         state.phaseLabel = evt.phase_label ?? evt.phase
         state.workers = evt.workers ?? race.size * memberWorkers
         state.activity = 'searching'
-        refresh()
+        markDirty()
         return
       }
 
@@ -289,14 +482,19 @@ export function createSolveSpinner(workers = cpus().length) {
         if (race) {
           race.bestClash = evt.clash_weight ?? race.bestClash
           race.bestRed = evt.red_students ?? race.bestRed
+          warmClash = race.bestClash
+          warmRed = race.bestRed
+          for (const lane of race.lanes.values()) {
+            lane.done = true
+          }
         }
         state.phaseLabel = evt.phase_label ?? 'Portfolio best'
-        refresh()
+        markDirty()
         return
       }
 
-      // Leaving the race → prove phase (events without portfolio meta).
       if (evt.portfolio) {
+        stage = 'race'
         const lane = ensureLane(evt.portfolio)
         if (evt.type === 'progress' || evt.type === 'heartbeat') {
           if (evt.best_clash !== undefined) lane.clash = evt.best_clash
@@ -318,13 +516,15 @@ export function createSolveSpinner(workers = cpus().length) {
           if (evt.red_students != null) lane.red = evt.red_students
           recomputeRaceBest()
         }
-        refresh()
+        markDirty()
         return
       }
 
-      // Normal prove / single-solver path
+      // Prove-phase events (no portfolio meta) — keep seed rows, switch header.
       if (race && (evt.type === 'start' || evt.type === 'phase' || evt.type === 'model_ready')) {
-        clearRace()
+        freezeRaceForProve()
+      } else if (!race) {
+        stage = 'prove'
       }
 
       if (evt.type === 'phase') {
@@ -336,7 +536,7 @@ export function createSolveSpinner(workers = cpus().length) {
           state.solverElapsed = evt.elapsed
           state.solverElapsedAt = Date.now()
         }
-        refresh()
+        markDirty()
         return
       }
       if (evt.type === 'progress' || evt.type === 'heartbeat') {
@@ -351,20 +551,20 @@ export function createSolveSpinner(workers = cpus().length) {
         state.solutions = evt.solutions
         state.activity = evt.activity ?? state.activity
         state.secondsSinceImprove = evt.seconds_since_improve ?? state.secondsSinceImprove
-        refresh()
+        markDirty()
         return
       }
       if (evt.type === 'start') {
         state.phaseLabel = 'Building model'
         state.activity = 'searching'
         state.workers = evt.workers
-        refresh()
+        markDirty()
         return
       }
       if (evt.type === 'model_ready') {
         state.phaseLabel = '1/3 Minimizing clashes'
         state.activity = 'searching'
-        refresh()
+        markDirty()
       }
     },
     stop(finalMessage?: string) {
@@ -372,7 +572,24 @@ export function createSolveSpinner(workers = cpus().length) {
         clearInterval(tickTimer)
         tickTimer = null
       }
-      spin.stop(finalMessage ?? (mode === 'cpsat' ? cpsatLabel() : rawMessage))
+      let summary = finalMessage
+      if (!summary) {
+        if (stage === 'race' && race) {
+          summary = `Portfolio · best clash ${race.bestClash ?? '—'} · RED ${race.bestRed ?? '—'}`
+        } else if (stage === 'prove') {
+          summary = `${state.phaseLabel} · clash ${state.bestClash ?? '—'} · RED ${state.bestRed ?? '—'} · ${state.workers}w`
+        } else {
+          summary = rawMessage
+        }
+      }
+      panel.finish(summary)
+    },
+    cancel() {
+      if (tickTimer) {
+        clearInterval(tickTimer)
+        tickTimer = null
+      }
+      panel.discard()
     },
     state,
   }

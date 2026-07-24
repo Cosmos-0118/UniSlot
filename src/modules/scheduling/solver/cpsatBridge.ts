@@ -5,6 +5,7 @@ import { cpus, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ConflictGraph, Section, Student } from '../types'
+import { PipelineCancelledError } from '../pipeline/cancellation'
 import {
   buildCpsatInstance,
   sectionSlotsFromCourseSlots,
@@ -25,6 +26,11 @@ export const DEFAULT_PORTFOLIO_SIZE = 5
 export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
 /** Workers per portfolio race member. */
 export const DEFAULT_PORTFOLIO_MEMBER_WORKERS = 2
+
+const SIGTERM_GRACE_MS = 1500
+
+/** Live Python solver children — for Ctrl+C / force-quit cleanup. */
+const activeChildren = new Set<ChildProcess>()
 
 export type RunCpsatOptions = {
   timeLimitSeconds?: number
@@ -96,6 +102,76 @@ export async function ensureCpsatReady(pythonPath?: string): Promise<{ python: s
   return { python }
 }
 
+/** Send signal to the child process group (Unix) or the process tree (Windows). */
+function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid || child.killed) return
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+    } catch {
+      try {
+        child.kill(signal)
+      } catch {
+        /* already gone */
+      }
+    }
+    return
+  }
+  try {
+    // Negative PID → process group (spawned with detached: true).
+    process.kill(-child.pid, signal)
+  } catch {
+    try {
+      child.kill(signal)
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/**
+ * Graceful terminate → escalate to SIGKILL if the OR-Tools process
+ * is stuck inside native Solve().
+ */
+export function terminateChild(child: ChildProcess, graceMs = SIGTERM_GRACE_MS): Promise<void> {
+  return new Promise((resolve) => {
+    if (!child.pid || child.exitCode != null || child.signalCode) {
+      activeChildren.delete(child)
+      resolve()
+      return
+    }
+
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      activeChildren.delete(child)
+      resolve()
+    }
+
+    child.once('exit', done)
+    child.once('error', done)
+
+    signalChildTree(child, 'SIGTERM')
+
+    const timer = setTimeout(() => {
+      signalChildTree(child, 'SIGKILL')
+      // Final safety: resolve shortly even if exit event is lost.
+      setTimeout(done, 250).unref?.()
+    }, graceMs)
+    timer.unref?.()
+  })
+}
+
+/** Force-kill every tracked CP-SAT child (second Ctrl+C / hard quit). */
+export async function killAllCpsatChildren(): Promise<void> {
+  const kids = [...activeChildren]
+  await Promise.all(kids.map((c) => terminateChild(c, 200)))
+}
+
 type SpawnSolveOpts = RunCpsatOptions & {
   seed?: number
   clashOnly?: boolean
@@ -118,6 +194,13 @@ function betterSolution(a: CpsatSolution, b: CpsatSolution): CpsatSolution {
   return a
 }
 
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof PipelineCancelledError ||
+    (err instanceof Error && (err.name === 'AbortError' || /abort/i.test(err.message)))
+  )
+}
+
 /**
  * Spawn the Python CP-SAT solver on a prepared instance.
  * Progress NDJSON is read from stderr.
@@ -130,16 +213,27 @@ export function spawnCpsatSolve(
     void (async () => {
       let workDir: string | undefined
       let child: ChildProcess | undefined
+      let aborted = Boolean(options?.signal?.aborted)
+
       const onAbort = () => {
-        child?.kill('SIGTERM')
+        aborted = true
+        if (child) void terminateChild(child)
       }
 
       try {
+        if (options?.signal?.aborted) {
+          throw new PipelineCancelledError()
+        }
+
         const { python } = await ensureCpsatReady(options?.pythonPath)
         workDir = await mkdtemp(path.join(tmpdir(), 'unislot-cpsat-'))
         const instancePath = path.join(workDir, 'instance.json')
         const outputPath = path.join(workDir, 'solution.json')
         await writeFile(instancePath, JSON.stringify(instance), 'utf8')
+
+        if (options?.signal?.aborted) {
+          throw new PipelineCancelledError()
+        }
 
         const args = [
           CPSAT_SOLVE_PY,
@@ -165,18 +259,23 @@ export function spawnCpsatSolve(
           cwd: CPSAT_DIR,
           stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env },
+          // Own process group so Ctrl+C is owned by Node and we can kill the tree.
+          detached: process.platform !== 'win32',
+          windowsHide: true,
         })
+        activeChildren.add(child)
 
         if (options?.signal) {
           if (options.signal.aborted) {
-            child.kill('SIGTERM')
-            throw new Error('Aborted')
+            await terminateChild(child)
+            throw new PipelineCancelledError()
           }
           options.signal.addEventListener('abort', onAbort, { once: true })
         }
 
         const rl = createInterface({ input: child.stderr! })
         rl.on('line', (line) => {
+          if (aborted) return
           const evt = parseProgressLine(line)
           if (!evt) return
           if (options?.portfolioMeta) {
@@ -192,6 +291,12 @@ export function spawnCpsatSolve(
         })
 
         options?.signal?.removeEventListener('abort', onAbort)
+        activeChildren.delete(child)
+        rl.close()
+
+        if (aborted || options?.signal?.aborted) {
+          throw new PipelineCancelledError()
+        }
 
         let solution: CpsatSolution
         try {
@@ -215,8 +320,14 @@ export function spawnCpsatSolve(
 
         resolve(solution)
       } catch (err) {
-        reject(err)
+        if (child) await terminateChild(child).catch(() => undefined)
+        if (aborted || options?.signal?.aborted || isAbortError(err)) {
+          reject(new PipelineCancelledError())
+        } else {
+          reject(err)
+        }
       } finally {
+        options?.signal?.removeEventListener('abort', onAbort)
         if (workDir) {
           await rm(workDir, { recursive: true, force: true }).catch(() => undefined)
         }
@@ -234,6 +345,8 @@ async function runPortfolioRace(
   raceSeconds: number,
   memberWorkers: number,
 ): Promise<CpsatSolution | null> {
+  if (options.signal?.aborted) throw new PipelineCancelledError()
+
   const seeds = PORTFOLIO_SEEDS.slice(0, Math.max(1, k))
   options.onProgress?.({
     type: 'phase',
@@ -245,7 +358,7 @@ async function runPortfolioRace(
     portfolio_race_seconds: raceSeconds,
   })
 
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     seeds.map(async (seed, i) => {
       const portfolioMeta = {
         index: i + 1,
@@ -254,20 +367,33 @@ async function runPortfolioRace(
         member_workers: memberWorkers,
         race_seconds: raceSeconds,
       }
-      try {
-        return await spawnCpsatSolve(instance, {
-          ...options,
-          workers: memberWorkers,
-          timeLimitSeconds: raceSeconds,
-          seed,
-          clashOnly: true,
-          portfolioMeta,
-        })
-      } catch {
-        return null
-      }
+      return spawnCpsatSolve(instance, {
+        ...options,
+        workers: memberWorkers,
+        timeLimitSeconds: raceSeconds,
+        seed,
+        clashOnly: true,
+        portfolioMeta,
+      })
     }),
   )
+
+  if (options.signal?.aborted) throw new PipelineCancelledError()
+
+  const results: Array<CpsatSolution | null> = settled.map((s) => {
+    if (s.status === 'fulfilled') return s.value
+    if (isAbortError(s.reason)) return null
+    return null
+  })
+
+  // If every member aborted/failed because of cancel, surface it.
+  if (
+    settled.every(
+      (s) => s.status === 'rejected' && isAbortError(s.reason),
+    )
+  ) {
+    throw new PipelineCancelledError()
+  }
 
   let best: CpsatSolution | null = null
   for (const r of results) {
@@ -297,6 +423,8 @@ export async function runCpsatScheduler(
   const t0 = Date.now()
   const totalWorkers =
     options?.workers && options.workers > 0 ? options.workers : cpus().length
+
+  if (options?.signal?.aborted) throw new PipelineCancelledError()
 
   let hint = options?.hint
   const portfolioK =
@@ -328,11 +456,14 @@ export async function runCpsatScheduler(
       raceSeconds,
       DEFAULT_PORTFOLIO_MEMBER_WORKERS,
     )
+    if (options?.signal?.aborted) throw new PipelineCancelledError()
     if (raceBest?.slot_by_course) {
       hint = raceBest.slot_by_course
       instance.hint = hint
     }
   }
+
+  if (options?.signal?.aborted) throw new PipelineCancelledError()
 
   // Remaining time for full lex prove (if an overall limit was set).
   let proveLimit = options?.timeLimitSeconds
@@ -349,6 +480,8 @@ export async function runCpsatScheduler(
     seed: options?.seed,
     clashOnly: false,
   })
+
+  if (options?.signal?.aborted) throw new PipelineCancelledError()
 
   const slot_assignments = sectionSlotsFromCourseSlots(
     courseSections,

@@ -18,9 +18,24 @@ const runner = spawn(
   },
 )
 
+/** Forward stop signals to the tsx child; let it run the proper quit flow. */
+function forward(signal) {
+  if (!runner.killed && runner.pid) {
+    try {
+      runner.kill(signal)
+    } catch {
+      /* child already gone */
+    }
+  }
+}
+
+process.on('SIGINT', () => forward('SIGINT'))
+process.on('SIGTERM', () => forward('SIGTERM'))
+
 runner.on('exit', (code, signal) => {
   if (signal) {
-    process.kill(process.pid, signal)
+    // Prefer numeric exit for Ctrl+C so shells see 130.
+    process.exit(signal === 'SIGINT' || signal === 'SIGTERM' ? 130 : 1)
     return
   }
   process.exit(code ?? 1)
