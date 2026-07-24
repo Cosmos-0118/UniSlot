@@ -1,6 +1,6 @@
 /**
- * Evening scheduling domain: parse → preprocess → optimize → Excel.
- * Prefer `import { … } from '@/modules/scheduling'` in app code.
+ * Evening scheduling domain: parse → preprocess → CP-SAT → Excel.
+ * Prefer `import { … } from '@/modules/scheduling'` from the CLI.
  */
 export type {
   ClashReport,
@@ -19,28 +19,16 @@ export type {
   ValidationResult,
 } from './types'
 export type { SchedulingStats } from './solver/metrics'
-export type { PipelineResult } from './pipeline/run'
-export { runPipeline, computeCourseEmailGroups, type RunPipelineOptions } from './pipeline/run'
+export type { PipelineResult, RunPipelineOptions, PipelineProgressEvent } from './pipeline/run'
+export { runPipeline, computeCourseEmailGroups } from './pipeline/run'
+export { PipelineCancelledError, throwIfAborted } from './pipeline/cancellation'
 export type { SchedulingSnapshot } from './merge/snapshot'
 export { cloneSchedulingSnapshot } from './merge/snapshot'
-export {
-  mergeLateEnrollmentIntoSnapshot,
-  appendStudentToCourseSection,
-  type MergeLateEnrollmentResult,
-  type LateMergeSummary,
-} from './merge/lateEnrollment'
 export { parseExcelRows, loadAndValidate } from './parse/parser'
-export { runScheduler, auditScheduleHardConstraints } from './solver/scheduler'
 export {
-  applyAndValidateFacultyMapping,
-  applyFacultyOverridesToSnapshot,
-  buildScheduleFromSnapshot,
-  countPlanningFacultySections,
-  facultyMappingTemplateCsv,
-  isPlanningFacultyLabel,
-  listFacultyMappingRows,
-  parseFacultyMappingTable,
-  repairFacultyCollisionsInSnapshot,
-  type ParseFacultyMappingResult,
-} from './merge/facultyMapping'
-export type { ScheduleWorkbookBranding } from './io/excelScheduleWorkbook'
+  auditScheduleHardConstraints,
+  parallelHardCap,
+  runCpsatScheduler,
+  buildSchedule,
+  computeClashReport,
+} from './solver/scheduler'

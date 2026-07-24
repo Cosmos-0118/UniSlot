@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const entry = path.join(root, 'cli', 'index.ts')
-const tsconfig = path.join(root, 'cli', 'tsconfig.json')
+const tsconfig = path.join(root, 'tsconfig.json')
 const tsxCli = path.join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 
 const runner = spawn(

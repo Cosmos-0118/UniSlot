@@ -146,7 +146,6 @@ async function runSolve(opts: {
         }
       },
       {
-        solverBackend: 'cpsat',
         cpsatTimeLimitSeconds: opts.timeLimit,
         cpsatWorkers: opts.workers,
         eagerExports: true,
