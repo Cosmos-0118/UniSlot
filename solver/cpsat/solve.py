@@ -100,6 +100,20 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
                 "seconds_since_improve": round(max(0.0, idle), 3),
             }
 
+    def _objective_improved(self, clash: int, red: int, bal: int, excess: int) -> bool:
+        """True when the active lex objective strictly improved."""
+        if self._phase == "minimize_clash":
+            return self.best_clash is None or clash < self.best_clash
+        if self._phase == "minimize_red":
+            return self.best_red is None or red < self.best_red
+        if self._phase == "minimize_balance":
+            if self.best_balance is None:
+                return True
+            soft = bal * (10**6) + excess
+            prev = self.best_balance * (10**6) + (self.best_excess or 0)
+            return soft < prev
+        return self.best_clash is None or clash < self.best_clash
+
     def on_solution_callback(self) -> None:
         clash = int(self.Value(self._built.clash_weight))
         red = int(self.Value(self._built.red_students))
@@ -109,7 +123,7 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
         now = time.time()
         with self._lock:
             self.solution_count += 1
-            improved = self.best_clash is None or clash < self.best_clash
+            improved = self._objective_improved(clash, red, bal, excess)
             self.best_clash = clash
             self.best_red = red
             self.best_balance = bal
