@@ -9,6 +9,7 @@ import {
   safeCellString,
   thinBorder,
 } from './excelLayout'
+import { EXCEL_BRAND } from './excelBranding'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -25,7 +26,9 @@ function facultyDisplay(faculty: string | null | undefined): string {
 
 /** Optional banner text for the main “Schedule” sheet (edit in Excel or pass from your app later). */
 export type ScheduleWorkbookBranding = {
+  /** App name (top banner line). */
   institution?: string
+  /** College / university line under the app name. */
   college?: string
   sessionLabel?: string
   timetableTitle?: string
@@ -35,12 +38,12 @@ export type ScheduleWorkbookBranding = {
 }
 
 const DEFAULT_BRANDING: Required<ScheduleWorkbookBranding> = {
-  institution: 'INSTITUTE / UNIVERSITY NAME',
-  college: 'COLLEGE / SCHOOL NAME',
-  sessionLabel: 'EVENING SESSION · (set branding in export options or edit in Excel)',
-  timetableTitle: 'TIME TABLE (UNISLOT EXPORT)',
-  department: 'DEPARTMENT / PROGRAM OFFICE',
-  venuePlaceholder: '—',
+  institution: EXCEL_BRAND.appName,
+  college: EXCEL_BRAND.college,
+  sessionLabel: EXCEL_BRAND.sessionLabel,
+  timetableTitle: EXCEL_BRAND.timetableTitle,
+  department: EXCEL_BRAND.department,
+  venuePlaceholder: EXCEL_BRAND.venuePlaceholder,
 }
 
 function resolveBranding(b?: ScheduleWorkbookBranding): Required<ScheduleWorkbookBranding> {
@@ -149,6 +152,16 @@ function styleSectionTitle(ws: ExcelJS.Worksheet, rowIndex: number, lastCol: num
   ws.getRow(rowIndex).height = 24
 }
 
+/** UniSlot + SRMIST brand row, then sheet title. Returns first content row. */
+function writeSheetBrandTitle(ws: ExcelJS.Worksheet, lastCol: number, title: string): number {
+  styleBannerRow(ws, 1, lastCol, 14)
+  ws.getCell(1, 1).value = `${EXCEL_BRAND.appName} · ${EXCEL_BRAND.college}`
+  styleBannerRow(ws, 2, lastCol, 13)
+  ws.getCell(2, 1).value = title
+  ws.getRow(3).height = 8
+  return 4
+}
+
 function applyHeaderRow(
   row: ExcelJS.Row,
   labels: readonly string[],
@@ -218,20 +231,33 @@ function buildScheduleMainSheet(
   entries: ScheduleEntry[],
   brand: Required<ScheduleWorkbookBranding>,
 ) {
-  const ws = wb.addWorksheet('Schedule', {
-    views: [{ state: 'frozen', ySplit: 9, activeCell: 'A10', topLeftCell: 'A10' }],
-  })
-
   const bannerLines = [
     brand.institution,
     brand.college,
     brand.sessionLabel,
     brand.timetableTitle,
     brand.department,
-  ]
+  ].filter((line) => line.trim().length > 0)
+
+  // Banner + howto + legend + header — freeze below the header row.
+  const freezeAt = bannerLines.length + 3
+  const ws = wb.addWorksheet('Schedule', {
+    views: [
+      {
+        state: 'frozen',
+        ySplit: freezeAt,
+        activeCell: `A${freezeAt + 1}`,
+        topLeftCell: `A${freezeAt + 1}`,
+      },
+    ],
+  })
+
   let r = 1
-  for (const line of bannerLines) {
-    styleBannerRow(ws, r, MAIN_COL_COUNT, r === 4 ? 15 : 13)
+  for (let i = 0; i < bannerLines.length; i++) {
+    const line = bannerLines[i]!
+    const isApp = i === 0
+    const isTitle = line === brand.timetableTitle
+    styleBannerRow(ws, r, MAIN_COL_COUNT, isApp || isTitle ? 15 : 13)
     ws.getCell(r, 1).value = line
     r++
   }
@@ -313,13 +339,13 @@ function buildScheduleMainSheet(
 function buildDetailsSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
   const lastCol = DETAIL_HEADERS.length
   const ws = wb.addWorksheet('Details', {
-    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
+    views: [{ state: 'frozen', ySplit: 4, activeCell: 'A5', topLeftCell: 'A5' }],
   })
-  styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'TECHNICAL DETAILS (Weekday / Parallel Lane / Section ID)'
-  ws.getRow(2).height = 8
-
-  const headerRowIndex = 3
+  const headerRowIndex = writeSheetBrandTitle(
+    ws,
+    lastCol,
+    'TECHNICAL DETAILS (Weekday / Parallel Lane / Section ID)',
+  )
   applyHeaderRow(ws.getRow(headerRowIndex), DETAIL_HEADERS, lastCol)
 
   const colWidths = new ColumnWidthTracker([
@@ -337,7 +363,7 @@ function buildDetailsSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     { col: 12, width: 28, min: 18, max: 48 },
   ])
 
-  let r = 4
+  let r = headerRowIndex + 1
   let idx = 1
   for (const e of entries) {
     const row = ws.getRow(r)
@@ -380,11 +406,9 @@ function buildStudentsByCourseSlotSheet(
 ) {
   const lastCol = 6
   const ws = wb.addWorksheet('Students by Course & Weekday', {
-    views: [{ state: 'frozen', ySplit: 2, activeCell: 'A3', topLeftCell: 'A3' }],
+    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
   })
-  styleBannerRow(ws, 1, lastCol, 15)
-  ws.getCell(1, 1).value = 'STUDENTS BY COURSE & WEEKDAY'
-  ws.getRow(2).height = 8
+  let r = writeSheetBrandTitle(ws, lastCol, 'STUDENTS BY COURSE & WEEKDAY')
 
   const colWidths = new ColumnWidthTracker([
     { col: 1, width: 6, min: 5, max: 8 },
@@ -406,7 +430,6 @@ function buildStudentsByCourseSlotSheet(
     byCourse.get(e.course_code)!.push(e)
   }
 
-  let r = 3
   const courseCodes = [...byCourse.keys()].sort((a, b) => a.localeCompare(b))
   for (const code of courseCodes) {
     const courseEntries = byCourse.get(code)!
@@ -458,13 +481,11 @@ function buildStudentsByCourseSlotSheet(
 }
 
 function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
-  const ws = wb.addWorksheet('By Day', {
-    views: [{ state: 'frozen', ySplit: 4, activeCell: 'A5', topLeftCell: 'A5' }],
-  })
   const lastCol = 7
-  styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'SCHEDULE BY DAY'
-  ws.getRow(2).height = 8
+  const ws = wb.addWorksheet('By Day', {
+    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
+  })
+  let r = writeSheetBrandTitle(ws, lastCol, 'SCHEDULE BY DAY')
 
   const colWidths = new ColumnWidthTracker([
     { col: 1, width: 5, min: 4, max: 7 },
@@ -476,7 +497,6 @@ function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     { col: 7, width: 22, min: 18, max: 36 },
   ])
 
-  let r = 3
   for (const day of WEEKDAY_ORDER) {
     const dayEntries = entries.filter((e) => e.day === day)
     const enrollSum = dayEntries.reduce((a, e) => a + e.enrollment_count, 0)
@@ -518,13 +538,11 @@ function buildByDaySheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
 }
 
 function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
-  const ws = wb.addWorksheet('By Program', {
-    views: [{ state: 'frozen', ySplit: 4, activeCell: 'A5', topLeftCell: 'A5' }],
-  })
   const lastCol = 6
-  styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'SCHEDULE BY PROGRAM'
-  ws.getRow(2).height = 8
+  const ws = wb.addWorksheet('By Program', {
+    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
+  })
+  let r = writeSheetBrandTitle(ws, lastCol, 'SCHEDULE BY PROGRAM')
 
   const colWidths = new ColumnWidthTracker([
     { col: 1, width: 5, min: 4, max: 7 },
@@ -535,7 +553,6 @@ function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
     { col: 6, width: 11, min: 10, max: 14 },
   ])
 
-  let r = 3
   const tokensRaw = uniqueProgramTokens(entries)
   const tokens = tokensRaw.length ? tokensRaw : ['_ALL_']
   const hdr = ['#', 'Course Code', 'Course Title', 'Day', 'Time', 'Enrollment']
@@ -585,13 +602,11 @@ function buildByProgramSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
 }
 
 function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[]) {
-  const ws = wb.addWorksheet('Course Catalog', {
-    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4', topLeftCell: 'A4' }],
-  })
   const lastCol = 8
-  styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'COMPLETE COURSE CATALOG'
-  ws.getRow(2).height = 8
+  const ws = wb.addWorksheet('Course Catalog', {
+    views: [{ state: 'frozen', ySplit: 4, activeCell: 'A5', topLeftCell: 'A5' }],
+  })
+  let r = writeSheetBrandTitle(ws, lastCol, 'COMPLETE COURSE CATALOG')
 
   const hdr = [
     'S.No',
@@ -603,7 +618,6 @@ function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[])
     'Programs/Branches',
     'Faculty',
   ]
-  let r = 3
   applyHeaderRow(ws.getRow(r), hdr, lastCol)
   r++
 
@@ -690,13 +704,12 @@ function buildCourseCatalogSheet(wb: ExcelJS.Workbook, entries: ScheduleEntry[])
 }
 
 function buildSummarySheet(wb: ExcelJS.Workbook, schedule: Schedule, entries: ScheduleEntry[]) {
-  const ws = wb.addWorksheet('Summary', { views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4' }] })
   const lastCol = 4
-  styleBannerRow(ws, 1, lastCol, 16)
-  ws.getCell(1, 1).value = 'SCHEDULE SUMMARY'
-  ws.getRow(2).height = 8
+  const ws = wb.addWorksheet('Summary', {
+    views: [{ state: 'frozen', ySplit: 3, activeCell: 'A4' }],
+  })
+  let r = writeSheetBrandTitle(ws, lastCol, 'SCHEDULE SUMMARY')
 
-  let r = 3
   const sectionCount = entries.length
   const enrollmentSeats = entries.reduce((a, e) => a + e.enrollment_count, 0)
   const uniqueCourses = new Set(entries.map((e) => e.course_code)).size

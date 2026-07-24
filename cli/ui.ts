@@ -782,25 +782,38 @@ export function outroSuccess(lines: string[]): void {
   p.outro(lines.join('\n'))
 }
 
+function levelMark(ok: boolean): string {
+  return ok ? chalk.green('✓ proven') : chalk.yellow('best found (not proven)')
+}
+
 export function formatMetrics(opts: {
   clashWeight: number
   red: number
   proven: boolean
+  provenLevels?: string[]
   status: string
   seconds: number
   workers: number
   structuralImpossible?: boolean
 }): string {
-  const proof = opts.proven
-    ? chalk.green('proven optimal — clashes cannot be reduced further')
-    : chalk.yellow('best feasible (search not fully proven)')
+  const levels = new Set(opts.provenLevels ?? [])
+  const clashOk = levels.has('clash_weight') || opts.proven
+  const redOk = levels.has('red_students')
+  const balOk = levels.has('balance_and_parallel')
+  const fullLex = clashOk && redOk && balOk
+  const proof = fullLex
+    ? chalk.green('full lex optimal — clash, RED, and balance are all proven minimal')
+    : opts.proven
+      ? chalk.yellow('clash proven · later lex levels not fully proven')
+      : chalk.yellow('best feasible (clash not fully proven)')
   const structural = opts.structuralImpossible
     ? chalk.dim('\n  Note: structural lower bounds say zero-clash is impossible for this enrollment.')
     : ''
   return [
     `${chalk.bold('Status')}     ${opts.status}`,
-    `${chalk.bold('Clash wt')}   ${opts.clashWeight}`,
-    `${chalk.bold('RED')}        ${opts.red}`,
+    `${chalk.bold('Clash wt')}   ${opts.clashWeight}  ${levelMark(clashOk)}`,
+    `${chalk.bold('RED')}        ${opts.red}  ${levelMark(redOk)}`,
+    `${chalk.bold('Balance')}    ${levelMark(balOk)}`,
     `${chalk.bold('Proof')}      ${proof}`,
     `${chalk.bold('Time')}       ${opts.seconds.toFixed(2)}s · ${opts.workers} workers`,
     structural,

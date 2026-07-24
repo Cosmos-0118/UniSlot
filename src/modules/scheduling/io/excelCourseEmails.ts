@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
+import { writeExportBrandHeader } from './excelBranding'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { XL } from './excelStyleConstants'
 
@@ -39,18 +40,12 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
   }
 
   const wb = new ExcelJS.Workbook()
+  wb.creator = 'UniSlot'
+  wb.created = new Date()
   const ws = wb.addWorksheet('Course Emails')
 
-  ws.mergeCells('A1:E1')
-  const t1 = ws.getCell('A1')
-  t1.value = 'COURSE EMAIL GROUPS'
-  t1.font = { bold: true, size: 16, color: { argb: XL.white } }
-  t1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  t1.alignment = { horizontal: 'center', vertical: 'middle' }
-  ws.getRow(1).height = 30
-
+  const headerRow = writeExportBrandHeader(ws, 5, 'COURSE EMAIL GROUPS')
   const headers = ['Course Code', 'Course Title', 'Student Count', 'Email Count', 'Emails']
-  const headerRow = 3
   headers.forEach((h, i) => {
     const c = ws.getRow(headerRow).getCell(i + 1)
     c.value = h
@@ -97,58 +92,69 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
   }
 
   colWidths.apply(ws)
-  ws.views = [{ state: 'frozen', ySplit: headerRow, xSplit: 0, activeCell: 'A4', showGridLines: true }]
+  ws.views = [
+    {
+      state: 'frozen',
+      ySplit: headerRow,
+      xSplit: 0,
+      activeCell: `A${headerRow + 1}`,
+      showGridLines: true,
+    },
+  ]
 
   const m = wb.addWorksheet('Missing Emails')
-  m.mergeCells('A1:E1')
-  const t2 = m.getCell('A1')
-  t2.value = 'STUDENTS WITHOUT EMAIL'
-  t2.font = { bold: true, size: 16, color: { argb: XL.white } }
-  t2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  t2.alignment = { horizontal: 'center', vertical: 'middle' }
-  m.getRow(1).height = 30
+  const mHeaderRow = writeExportBrandHeader(m, 5, 'STUDENTS WITHOUT EMAIL')
 
   const mh = ['Course Code', 'Course Title', 'Register Number', 'Student Name', 'Program']
   mh.forEach((h, i) => {
-    const c = m.getRow(headerRow).getCell(i + 1)
+    const c = m.getRow(mHeaderRow).getCell(i + 1)
     c.value = h
     c.font = { bold: true, color: { argb: XL.white } }
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primaryLight } }
     c.alignment = { horizontal: 'center', vertical: 'middle' }
   })
-  m.getRow(headerRow).height = 28
+  m.getRow(mHeaderRow).height = 28
 
-  const missingColWidths = new ColumnWidthTracker([
+  const mWidths = new ColumnWidthTracker([
     { col: 1, width: 16, min: 14, max: 24 },
     { col: 2, width: 45, min: 28, max: 56 },
     { col: 3, width: 18, min: 14, max: 24 },
     { col: 4, width: 28, min: 20, max: 40 },
-    { col: 5, width: 24, min: 18, max: 44 },
+    { col: 5, width: 40, min: 24, max: 56 },
   ])
 
-  let mr = headerRow + 1
+  let mr = mHeaderRow + 1
   for (const code of [...courseMap.keys()].sort()) {
     const info = courseMap.get(code)!
-    for (const miss of info.missing) {
-      const rowFill = mr % 2 === 0 ? XL.rowAlt : XL.white
-      const row = m.getRow(mr)
+    for (const row of info.missing) {
+      const fillArgb = mr % 2 === 0 ? XL.rowAlt : XL.white
+      const excelRow = m.getRow(mr)
       const wrappedLines = applyDataRow(
-        row,
+        excelRow,
         [
           { col: 1, value: code },
           { col: 2, value: info.title, wrap: true },
-          { col: 3, value: miss.register_number },
-          { col: 4, value: miss.student_name },
-          { col: 5, value: miss.program, wrap: true },
+          { col: 3, value: row.register_number },
+          { col: 4, value: row.student_name, wrap: true },
+          { col: 5, value: row.program, wrap: true },
         ],
-        { fillArgb: rowFill, columnWidths: missingColWidths },
+        { fillArgb, columnWidths: mWidths },
       )
-      fitRowHeight(row, wrappedLines, true)
+      fitRowHeight(excelRow, wrappedLines, true)
       mr++
     }
   }
-  missingColWidths.apply(m)
-  m.views = [{ state: 'frozen', ySplit: headerRow, xSplit: 0, activeCell: 'A4', showGridLines: true }]
+
+  mWidths.apply(m)
+  m.views = [
+    {
+      state: 'frozen',
+      ySplit: mHeaderRow,
+      xSplit: 0,
+      activeCell: `A${mHeaderRow + 1}`,
+      showGridLines: true,
+    },
+  ]
 
   const buf = await wb.xlsx.writeBuffer()
   return writeBufferToArrayBuffer(buf)

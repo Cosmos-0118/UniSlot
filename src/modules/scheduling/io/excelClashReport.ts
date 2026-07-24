@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { ClashReport, StudentClashReport } from '../types'
+import { writeExportBrandHeader } from './excelBranding'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
@@ -47,19 +48,13 @@ function writeStudentClashRow(
  */
 export async function clashReportToRichWorkbookBuffer(report: ClashReport): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook()
+  wb.creator = 'UniSlot'
+  wb.created = new Date()
   const red = clashers(report)
 
   // ---------- Summary ----------
   const wsSummary = wb.addWorksheet('Summary')
-  wsSummary.mergeCells('A1:D1')
-  const title = wsSummary.getCell('A1')
-  title.value = 'CLASH REPORT'
-  title.font = { bold: true, size: 16, color: { argb: XL.white } }
-  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  title.alignment = { horizontal: 'center', vertical: 'middle' }
-  wsSummary.getRow(1).height = 35
-
-  let row = 3
+  let row = writeExportBrandHeader(wsSummary, 4, 'CLASH REPORT')
   wsSummary.mergeCells(`A${row}:D${row}`)
   const statusText =
     report.students_with_clashes === 0
@@ -179,15 +174,12 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
   // ---------- Clashes Only ----------
   const wsC = wb.addWorksheet('Clashes Only')
   if (red.length) {
-    wsC.mergeCells('A1:G1')
-    const h = wsC.getCell('A1')
-    h.value = `STUDENTS WITH SCHEDULING CONFLICTS (${red.length})`
-    h.font = { bold: true, size: 14, color: { argb: XL.white } }
-    h.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.danger } }
-    h.alignment = { horizontal: 'center', vertical: 'middle' }
-    wsC.getRow(1).height = 32
+    let r = writeExportBrandHeader(
+      wsC,
+      7,
+      `STUDENTS WITH SCHEDULING CONFLICTS (${red.length})`,
+    )
 
-    let r = 3
     const heads = ['S.No', 'Register No.', 'Student Name', 'Program', 'Enrolled Courses', 'Clashing Courses', 'Clash Day']
     heads.forEach((text, i) => {
       const c = wsC.getRow(r).getCell(i + 1)
@@ -233,8 +225,9 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
     })
     colWidths.apply(wsC)
   } else {
-    wsC.mergeCells('A1:C1')
-    const c = wsC.getCell('A1')
+    const r = writeExportBrandHeader(wsC, 3)
+    wsC.mergeCells(`A${r}:C${r}`)
+    const c = wsC.getCell(`A${r}`)
     c.value = 'No daily conflicts! Every student has at most one course per weekday.'
     c.font = { bold: true, size: 14, color: { argb: XL.success } }
     c.alignment = { horizontal: 'center', vertical: 'middle' }
@@ -242,14 +235,7 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
   // ---------- By Program ----------
   const wsP = wb.addWorksheet('By Program')
-  wsP.mergeCells('A1:E1')
-  const pTitle = wsP.getCell('A1')
-  pTitle.value = 'CLASHES BY PROGRAM'
-  pTitle.font = { bold: true, size: 16, color: { argb: XL.white } }
-  pTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  pTitle.alignment = { horizontal: 'center', vertical: 'middle' }
-  wsP.getRow(1).height = 35
-  let rp = 3
+  let rp = writeExportBrandHeader(wsP, 5, 'CLASHES BY PROGRAM')
   const byProgramColWidths = new ColumnWidthTracker([
     { col: 1, width: 5, min: 4, max: 8 },
     { col: 2, width: 18, min: 14, max: 24 },
@@ -311,14 +297,7 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
   // ---------- By Day ----------
   const wsD = wb.addWorksheet('By Day')
-  wsD.mergeCells('A1:E1')
-  const dTitle = wsD.getCell('A1')
-  dTitle.value = 'CLASHES BY DAY'
-  dTitle.font = { bold: true, size: 16, color: { argb: XL.white } }
-  dTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  dTitle.alignment = { horizontal: 'center', vertical: 'middle' }
-  wsD.getRow(1).height = 35
-  let rd = 3
+  let rd = writeExportBrandHeader(wsD, 5, 'CLASHES BY DAY')
   const byDayColWidths = new ColumnWidthTracker([
     { col: 1, width: 5, min: 4, max: 8 },
     { col: 2, width: 18, min: 14, max: 24 },
@@ -385,14 +364,7 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
   // ---------- By Course (pairs) ----------
   const wsPair = wb.addWorksheet('By Course')
-  wsPair.mergeCells('A1:D1')
-  const pairTitle = wsPair.getCell('A1')
-  pairTitle.value = 'CLASH ANALYSIS BY COURSE PAIR'
-  pairTitle.font = { bold: true, size: 16, color: { argb: XL.white } }
-  pairTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  pairTitle.alignment = { horizontal: 'center', vertical: 'middle' }
-  wsPair.getRow(1).height = 35
-  let rk = 3
+  let rk = writeExportBrandHeader(wsPair, 4, 'CLASH ANALYSIS BY COURSE PAIR')
   const pairColWidths = new ColumnWidthTracker([
     { col: 1, width: 6, min: 5, max: 8 },
     { col: 2, width: 35, min: 24, max: 48 },
@@ -441,15 +413,8 @@ export async function clashReportToRichWorkbookBuffer(report: ClashReport): Prom
 
   // ---------- Full Report ----------
   const wsF = wb.addWorksheet('Full Report')
-  wsF.mergeCells('A1:G1')
-  const fTitle = wsF.getCell('A1')
-  fTitle.value = 'COMPLETE STUDENT STATUS REPORT'
-  fTitle.font = { bold: true, size: 14, color: { argb: XL.white } }
-  fTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.primary } }
-  fTitle.alignment = { horizontal: 'center', vertical: 'middle' }
-  wsF.getRow(1).height = 32
+  let rf = writeExportBrandHeader(wsF, 7, 'COMPLETE STUDENT STATUS REPORT')
 
-  let rf = 3
   const fh = ['S.No', 'Register No.', 'Student Name', 'Program', 'Enrolled Courses', 'Status', 'Clash Details']
   fh.forEach((text, i) => {
     const c = wsF.getRow(rf).getCell(i + 1)

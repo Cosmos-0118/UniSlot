@@ -200,13 +200,20 @@ async function runSolve(opts: {
     const clashWeight = result.stats?.scheduling?.total_clash_weight ?? 0
     const red = result.clashReport?.students_with_clashes ?? 0
     const proven = Boolean(result.proven_optimal)
+    const provenLevels = result.proven_levels ?? []
+    const fullLex =
+      provenLevels.includes('clash_weight') &&
+      provenLevels.includes('red_students') &&
+      provenLevels.includes('balance_and_parallel')
     const workersUsed =
       Number(/(\d+)w$/.exec(result.schedule.solver_used)?.[1]) ||
       (opts.workers && opts.workers > 0 ? opts.workers : cpus().length)
     spin.stop(
-      proven
-        ? chalk.green('CP-SAT finished — clash weight proven optimal')
-        : chalk.yellow('CP-SAT finished — best feasible solution'),
+      fullLex
+        ? chalk.green('CP-SAT finished — full lex optimal (clash · RED · balance)')
+        : proven
+          ? chalk.green('CP-SAT finished — clash weight proven optimal')
+          : chalk.yellow('CP-SAT finished — best feasible solution'),
     )
 
     p.note(
@@ -214,6 +221,7 @@ async function runSolve(opts: {
         clashWeight,
         red,
         proven,
+        provenLevels,
         status: result.solver_status ?? result.schedule.solver_used,
         seconds: result.schedule.solver_time_seconds,
         workers: workersUsed,
@@ -255,9 +263,15 @@ async function runSolve(opts: {
     outroSuccess([
       chalk.green('Done.'),
       ...files.map((f) => chalk.dim('  · ') + f),
-      proven
-        ? chalk.green('Clash weight is proven minimal — it is not possible to reduce clashes further under this model.')
-        : chalk.yellow('Run again without --time-limit to chase a full optimality proof.'),
+      fullLex
+        ? chalk.green(
+            'Full lex optimal — clash, RED, and weekday balance are all proven best under this model.',
+          )
+        : proven
+          ? chalk.green(
+              'Clash weight is proven minimal — it is not possible to reduce clashes further under this model.',
+            )
+          : chalk.yellow('Run again without --time-limit to chase a full optimality proof.'),
     ])
     return 0
   } catch (err) {

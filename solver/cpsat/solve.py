@@ -366,6 +366,23 @@ def solve_lex(
         final_status = "FEASIBLE"
 
     primary_proven = "clash_weight" in proven_levels
+    full_lex = (
+        "clash_weight" in proven_levels
+        and "red_students" in proven_levels
+        and "balance_and_parallel" in proven_levels
+    )
+
+    if full_lex:
+        message = (
+            "Full lex optimal under the course→weekday CP-SAT model "
+            "(clash, RED, and balance/parallel all proven minimal)."
+        )
+    elif primary_proven:
+        message = (
+            "Clash weight proven minimal under the course→weekday CP-SAT model."
+        )
+    else:
+        message = "Best feasible solution found (clash weight not fully proven)."
 
     return {
         "status": final_status if primary_proven else status_name(last_status),
@@ -378,11 +395,7 @@ def solve_lex(
         "parallel_excess": excess,
         "solver_time_seconds": round(time.time() - t0, 4),
         "num_workers": workers,
-        "message": (
-            "Clash weight proven minimal under the course→weekday CP-SAT model."
-            if primary_proven
-            else "Best feasible solution found (clash weight not fully proven)."
-        ),
+        "message": message,
     }
 
 
