@@ -24,8 +24,8 @@ export const CPSAT_SOLVE_PY = path.join(CPSAT_DIR, 'solve.py')
 export const DEFAULT_PORTFOLIO_SIZE = 5
 /** Wall-clock budget for each portfolio race member (clash-only). */
 export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
-/** Workers per portfolio race member. */
-export const DEFAULT_PORTFOLIO_MEMBER_WORKERS = 2
+/** Minimum workers per portfolio race member (floor). */
+const MIN_PORTFOLIO_MEMBER_WORKERS = 2
 
 const SIGTERM_GRACE_MS = 1500
 
@@ -449,12 +449,18 @@ export async function runCpsatScheduler(
   )
 
   if (portfolioK > 0) {
+    // Distribute all available CPUs across race members instead of
+    // hardcoding 2 per seed — utilise the user's full hardware.
+    const memberWorkers = Math.max(
+      MIN_PORTFOLIO_MEMBER_WORKERS,
+      Math.floor(totalWorkers / portfolioK),
+    )
     const raceBest = await runPortfolioRace(
       instance,
       options ?? {},
       portfolioK,
       raceSeconds,
-      DEFAULT_PORTFOLIO_MEMBER_WORKERS,
+      memberWorkers,
     )
     if (options?.signal?.aborted) throw new PipelineCancelledError()
     if (raceBest?.slot_by_course) {

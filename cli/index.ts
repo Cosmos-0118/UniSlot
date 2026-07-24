@@ -97,8 +97,10 @@ async function runSolve(opts: {
   const workersLabel = opts.workers && opts.workers > 0 ? String(opts.workers) : String(cpuN)
   const portfolioK = opts.portfolio === undefined ? 5 : opts.portfolio
   if (portfolioK > 0) {
+    const totalW = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+    const memberW = Math.max(2, Math.floor(totalW / portfolioK))
     p.log.info(
-      `CPUs   · ${cpuN} logical · race ${portfolioK} seeds × 2 workers (${portfolioK * 2}w) → prove ${workersLabel}w`,
+      `CPUs   · ${cpuN} logical · race ${portfolioK} seeds × ${memberW} workers (${portfolioK * memberW}w) → prove ${workersLabel}w`,
     )
   } else {
     p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)

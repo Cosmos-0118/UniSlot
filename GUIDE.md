@@ -6,7 +6,7 @@ This guide explains how to install UniSlot and produce a clash-optimal evening t
 
 You need **Node.js 20+** and **Python 3.10+**.
 
-```bash
+```powershell
 cd UniSlot
 npm install
 npm run setup:cpsat
@@ -16,7 +16,7 @@ npm run setup:cpsat
 
 Verify:
 
-```bash
+```powershell
 npm run unislot -- doctor
 ```
 
@@ -37,7 +37,7 @@ Scheduling rules (Saturday maths-only, section splits, clash definition): [docs/
 
 ## 3. Interactive solve (recommended)
 
-```bash
+```powershell
 npm run unislot
 ```
 
@@ -67,10 +67,10 @@ Cancel anytime with **Ctrl+C**.
 
 Useful for scripts and CI:
 
-```bash
-npm run unislot -- solve \
-  -i path/to/enrollment.xlsx \
-  -o path/to/output-dir \
+```powershell
+npm run unislot -- solve `
+  -i path\to\enrollment.xlsx `
+  -o path\to\output-dir `
   -y
 ```
 
@@ -132,13 +132,13 @@ Long stretches on **proving** with an unchanged clash number are normal: CP-SAT 
 
 ## 8. Commands cheat sheet
 
-```bash
+```powershell
 npm install
 npm run setup:cpsat
 npm run unislot -- doctor
 npm run unislot
-npm run unislot -- solve -i enroll.xlsx -o ./unislot-out -y
-npm run unislot -- solve -i enroll.xlsx -o ./out -y --workers 8
+npm run unislot -- solve -i enroll.xlsx -o .\unislot-out -y
+npm run unislot -- solve -i enroll.xlsx -o .\out -y --workers 8
 npm test
 ```
 
