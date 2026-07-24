@@ -198,8 +198,8 @@ export function LandingPage() {
                 <div className="absolute -left-[40%] top-0 h-full w-[45%] skew-x-[-18deg] bg-gradient-to-r from-transparent via-white/14 to-transparent opacity-0 transition duration-700 ease-out group-hover:translate-x-[280%] group-hover:opacity-100" />
               </motion.div>
               <p className="relative z-10 px-5 py-5 text-balance text-lg leading-relaxed text-text md:px-7 md:py-6 md:text-xl">
-                Process large enrollment workbooks, surface clashes quickly, and build high-quality evening timetables
-                locally in your browser with transparent exports.
+                Process large enrollment workbooks and build clash-optimal evening timetables with the terminal
+                CP-SAT solver — proven minimal clashes on full machine resources, with transparent Excel exports.
               </p>
             </motion.div>
           </motion.div>

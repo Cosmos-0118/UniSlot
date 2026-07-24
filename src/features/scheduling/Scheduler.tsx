@@ -15,7 +15,6 @@ import type { PipelineExportKind } from '@/modules/scheduling/pipeline/exports'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/shared/utils/cn'
 import type { RunPipelineOptions } from '@/modules/scheduling/pipeline/run'
-import type { EffortLevel } from '@/modules/scheduling/solver/effort'
 import type { ValidationError } from '@/modules/scheduling/types'
 import { useAppDialog } from '@/contexts/appDialog/useAppDialog'
 import { useSchedulingSession } from '@/contexts/scheduling/useSchedulingSession'
@@ -90,7 +89,6 @@ export function Scheduler() {
   const [drag, setDrag] = useState(false)
   const [runSeedInput, setRunSeedInput] = useState('')
   const [allowProvisionalExport, setAllowProvisionalExport] = useState(false)
-  const [effortLevel, setEffortLevel] = useState<EffortLevel>('auto')
   const [exportBusy, setExportBusy] = useState<PipelineExportKind | null>(null)
   const [snapshotBusy, setSnapshotBusy] = useState(false)
   const [entriesBusy, setEntriesBusy] = useState(false)
@@ -239,7 +237,6 @@ export function Scheduler() {
           if (Number.isFinite(n)) pipelineOpts.randomSeed = Math.floor(n)
         }
         if (allowProvisionalExport) pipelineOpts.allowProvisionalScheduleExport = true
-        pipelineOpts.effort = effortLevel
         const keys = Object.keys(pipelineOpts) as (keyof RunPipelineOptions)[]
         await startRun(file, keys.length > 0 ? pipelineOpts : undefined)
       } catch (e) {
@@ -253,7 +250,7 @@ export function Scheduler() {
         })
       }
     },
-    [startRun, runSeedInput, allowProvisionalExport, effortLevel, showAlert],
+    [startRun, runSeedInput, allowProvisionalExport, showAlert],
   )
 
   const showUploader = viewMode === 'idle'
@@ -322,48 +319,11 @@ export function Scheduler() {
               Run options (determinism & exports)
             </summary>
             <div className="mt-4 space-y-4 border-t border-border/60 pt-4">
-              <div>
-                <span className="text-sm text-text-muted">Search effort</span>
-                <div className="mt-2 inline-flex rounded-xl border border-border bg-bg p-1">
-                  {(
-                    [
-                      ['auto', 'Auto'],
-                      ['fast', 'Fast'],
-                      ['balanced', 'Balanced'],
-                      ['max', 'Max'],
-                      ['extreme', 'Extreme'],
-                      ['unlimited', 'Unlimited'],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setEffortLevel(value)}
-                      className={`theme-focusable rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                        effortLevel === value
-                          ? 'bg-accent text-white'
-                          : 'text-text-muted hover:text-text'
-                      }`}
-                      aria-pressed={effortLevel === value}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-xs text-text-muted">
-                  {effortLevel === 'auto'
-                    ? 'Adaptive (recommended) — automatically scales effort to fully utilize your device.'
-                    : effortLevel === 'fast'
-                      ? 'Quick pass — fewer seeds and shorter refine.'
-                      : effortLevel === 'max'
-                        ? 'Long search — more seeds, Kempe escapes, and elite restarts.'
-                        : effortLevel === 'extreme'
-                          ? 'Maximum search — longest runtime, exhaustive search to minimize clashes.'
-                          : effortLevel === 'unlimited'
-                            ? 'Ultimate effort — huge search space, may take several minutes to complete.'
-                            : 'Balanced pass — solid quality vs time.'}
-                </p>
-              </div>
+              <p className="text-xs leading-relaxed text-text-muted">
+                For proven clash-optimal schedules on full machine resources, use the terminal CLI:{' '}
+                <code className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px]">npm run unislot</code>
+                . This browser path runs maximum local search only (no Fast/Balanced dial).
+              </p>
               <label className="block text-sm">
                 <span className="text-text-muted">Deterministic RNG seed (optional)</span>
                 <input

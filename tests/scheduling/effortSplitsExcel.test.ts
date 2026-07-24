@@ -8,7 +8,7 @@ import {
 import { assignStudentsToSections } from '../../src/modules/scheduling/solver/sectioning'
 import type { Course, EnrollmentRow, Student } from '../../src/modules/scheduling/types'
 import { localSearchSeedPlan, runScheduler } from '../../src/modules/scheduling/solver/scheduler'
-import { resolveEffort } from '../../src/modules/scheduling/solver/effort'
+import { resolveEffort, effortLabel } from '../../src/modules/scheduling/solver/effort'
 import { buildConflictGraph } from '../../src/modules/scheduling/preprocess/preprocessing'
 import type { Section } from '../../src/modules/scheduling/types'
 import { scheduleToWorkbookBuffer, friendlyTiming } from '../../src/modules/scheduling/io/excelScheduleWorkbook'
@@ -114,27 +114,30 @@ describe('sectioning balanced loads', () => {
 })
 
 describe('elite perturb + effort params', () => {
-  it('exposes plan-aligned effort budgets', () => {
-    expect(resolveEffort('fast').eliteRestartRounds).toBe(0)
-    expect(resolveEffort('balanced').eliteRestartRounds).toBe(2)
-    expect(resolveEffort('max').maxIterCap).toBeGreaterThan(resolveEffort('balanced').maxIterCap)
-    expect(resolveEffort('max').kempeProb).toBeGreaterThan(resolveEffort('fast').kempeProb)
+  it('always resolves to maximum local-search budgets (dial ignored)', () => {
+    const fast = resolveEffort('fast')
+    const bal = resolveEffort('balanced')
+    const max = resolveEffort('max')
+    expect(fast.eliteRestartRounds).toBe(bal.eliteRestartRounds)
+    expect(fast.maxIterCap).toBe(max.maxIterCap)
+    expect(fast.kempeProb).toBe(max.kempeProb)
+    expect(fast.runCountCap).toBe(800)
+    expect(effortLabel('fast')).toBe('Maximum')
   })
 })
 
 describe('effort dial', () => {
-  it('scales seed plan by effort level', () => {
+  it('seed plan ignores dial and uses maximum caps', () => {
     const fast = localSearchSeedPlan(40, 1, 'fast')
     const bal = localSearchSeedPlan(40, 1, 'balanced')
     const max = localSearchSeedPlan(40, 1, 'max')
-    expect(fast.runCount).toBeLessThanOrEqual(resolveEffort('fast').runCountCap)
-    expect(bal.runCount).toBeGreaterThanOrEqual(fast.runCount)
-    expect(max.runCount).toBeGreaterThanOrEqual(bal.runCount)
-    expect(max.poolSize).toBeGreaterThanOrEqual(bal.poolSize)
-    expect(bal.effort).toBe('balanced')
+    expect(fast.runCount).toBe(bal.runCount)
+    expect(bal.runCount).toBe(max.runCount)
+    expect(fast.runCount).toBeLessThanOrEqual(resolveEffort().runCountCap)
+    expect(fast.effort).toBe('unlimited')
   })
 
-  it('is deterministic for fixed seed at fast effort (poolWorkers=1)', () => {
+  it('is deterministic for fixed seed (poolWorkers=1)', () => {
     const courseSections: Record<string, Section[]> = {
       A: [
         {

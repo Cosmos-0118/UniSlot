@@ -1,4 +1,13 @@
-/** Search effort dial — Auto / Fast / Balanced / Max / Extreme / Unlimited. Default: auto. */
+/**
+ * Legacy local-search effort params.
+ *
+ * The supported product path is terminal CP-SAT (`npm run unislot`), which always
+ * uses all CPUs and proves clash optimality — no Fast/Balanced/Max dial.
+ *
+ * Browser local-search still accepts EffortLevel for API compatibility, but
+ * {@link resolveEffort} always returns maximum search parameters.
+ */
+
 export type EffortLevel = 'auto' | 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
 
 export type EffortParams = {
@@ -27,132 +36,40 @@ export type EffortParams = {
   kempeProb: number
 }
 
-const TABLE: Record<'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited', EffortParams> = {
-  fast: {
-    effort: 'fast',
-    runCountCap: 48,
-    poolSizeCap: 10,
-    phase2IterFactor: 1.6,
-    maxIterCap: 200_000,
-    perTaskMs: 2_000,
-    eliteRestartRounds: 0,
-    eliteStagnationStop: 1,
-    overallDeadlineMul: 1,
-    focusProb: 0.65,
-    minConflictSlotSample: 12,
-    kempeProb: 0.04,
-  },
-  balanced: {
-    effort: 'balanced',
-    runCountCap: 96,
-    poolSizeCap: 16,
-    phase2IterFactor: 2.1,
-    maxIterCap: 400_000,
-    perTaskMs: 5_000,
-    eliteRestartRounds: 2,
-    eliteStagnationStop: 2,
-    overallDeadlineMul: 3,
-    focusProb: 0.7,
-    minConflictSlotSample: 18,
-    kempeProb: 0.08,
-  },
-  max: {
-    effort: 'max',
-    runCountCap: 160,
-    poolSizeCap: 24,
-    phase2IterFactor: 3.0,
-    maxIterCap: 1_200_000,
-    perTaskMs: 20_000,
-    eliteRestartRounds: 8,
-    eliteStagnationStop: 3,
-    overallDeadlineMul: 10,
-    focusProb: 0.75,
-    minConflictSlotSample: 28,
-    kempeProb: 0.12,
-  },
-  extreme: {
-    effort: 'extreme',
-    runCountCap: 320,
-    poolSizeCap: 36,
-    phase2IterFactor: 6.0,
-    maxIterCap: 4_000_000,
-    perTaskMs: 60_000,
-    eliteRestartRounds: 16,
-    eliteStagnationStop: 5,
-    overallDeadlineMul: 20,
-    focusProb: 0.8,
-    minConflictSlotSample: 40,
-    kempeProb: 0.20,
-  },
-  unlimited: {
-    effort: 'unlimited',
-    runCountCap: 640,
-    poolSizeCap: 60,
-    phase2IterFactor: 12.0,
-    maxIterCap: 12_000_000,
-    perTaskMs: 180_000,
-    eliteRestartRounds: 32,
-    eliteStagnationStop: 8,
-    overallDeadlineMul: 40,
-    focusProb: 0.85,
-    minConflictSlotSample: 60,
-    kempeProb: 0.30,
-  },
+/** Always-on maximum local-search budget (legacy browser path only). */
+const MAX_EFFORT: EffortParams = {
+  effort: 'unlimited',
+  runCountCap: 800,
+  poolSizeCap: 48,
+  phase2IterFactor: 10.0,
+  maxIterCap: 12_000_000,
+  perTaskMs: 240_000,
+  eliteRestartRounds: 32,
+  eliteStagnationStop: 4,
+  overallDeadlineMul: 40,
+  focusProb: 0.85,
+  minConflictSlotSample: 48,
+  kempeProb: 0.2,
 }
 
-export function resolveEffort(effort?: EffortLevel | null): EffortParams {
-  const level = effort || 'auto'
-  
-  let baseLevel: 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
+/**
+ * Resolve effort parameters. Dial values are ignored — always maximum search.
+ * Prefer the CP-SAT CLI for proven optimality.
+ */
+export function resolveEffort(_effort?: EffortLevel | null): EffortParams {
   let hc = 4
   if (typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number') {
     hc = navigator.hardwareConcurrency
   }
 
-  if (level === 'auto') {
-    if (hc <= 2) baseLevel = 'fast'
-    else if (hc >= 8) baseLevel = 'max'
-    else baseLevel = 'balanced'
-  } else {
-    baseLevel = level as 'fast' | 'balanced' | 'max' | 'extreme' | 'unlimited'
-  }
-
-  const params = { ...TABLE[baseLevel], effort: level }
-  
-  // Scale perTaskMs with core count (more parallel workers = more time allowed per task)
+  const params = { ...MAX_EFFORT }
   const coreFactor = Math.max(1, Math.sqrt(hc / 4))
-  params.perTaskMs = Math.round(params.perTaskMs * coreFactor)
-  
-  // For 'max' and 'extreme', allow more time on powerful machines
-  if (baseLevel === 'max') {
-    params.perTaskMs = Math.max(params.perTaskMs, 45_000)
-    params.runCountCap = 240 // Raise runCountCap for max effort
-  } else if (baseLevel === 'extreme') {
-    params.perTaskMs = Math.max(params.perTaskMs, 90_000)
-    params.runCountCap = 400 // Raise runCountCap for extreme effort
-  } else if (baseLevel === 'unlimited') {
-    params.perTaskMs = Math.max(params.perTaskMs, 240_000)
-    params.runCountCap = 800
-  }
-
+  params.perTaskMs = Math.max(240_000, Math.round(params.perTaskMs * coreFactor))
   return params
 }
 
-export const EFFORT_LEVELS: EffortLevel[] = ['auto', 'fast', 'balanced', 'max', 'extreme', 'unlimited']
+export const EFFORT_LEVELS: EffortLevel[] = ['unlimited']
 
-export function effortLabel(level: EffortLevel): string {
-  switch (level) {
-    case 'auto':
-      return 'Auto'
-    case 'fast':
-      return 'Fast'
-    case 'balanced':
-      return 'Balanced'
-    case 'max':
-      return 'Max'
-    case 'extreme':
-      return 'Extreme'
-    case 'unlimited':
-      return 'Unlimited'
-  }
+export function effortLabel(_level: EffortLevel): string {
+  return 'Maximum'
 }

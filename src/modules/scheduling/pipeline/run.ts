@@ -68,6 +68,8 @@ export interface PipelineProgressEvent {
   message: string
   fraction?: number
   etaSeconds?: number | null
+  /** Structured CP-SAT progress (CLI uses this for live updates). */
+  cpsat?: import('../solver/cpsatInstance').CpsatProgressEvent
 }
 
 const READ_END = 0.08
@@ -81,11 +83,24 @@ function mapSolverFraction(solverFraction: number | undefined): number | undefin
   return SCHEDULE_LO + solverFraction * (SCHEDULE_HI - SCHEDULE_LO)
 }
 
+export type SolverBackend = 'cpsat' | 'local-search'
+
 export type RunPipelineOptions = {
   randomSeed?: number
   allowProvisionalScheduleExport?: boolean
-  /** Search effort: fast | balanced | max | extreme | unlimited. Default balanced. */
+  /**
+   * @deprecated Browser local-search only. CLI / recommended path ignores this and always
+   * runs max-resource CP-SAT (`solverBackend: 'cpsat'`).
+   */
   effort?: import('../solver/effort').EffortLevel
+  /**
+   * Solver backend. Default `local-search` for the browser worker; CLI sets `cpsat`.
+   */
+  solverBackend?: SolverBackend
+  /** Optional CP-SAT wall-clock limit (seconds). Omit for unbounded prove-to-optimal. */
+  cpsatTimeLimitSeconds?: number
+  /** CP-SAT search workers (0 / omit = all CPUs). */
+  cpsatWorkers?: number
   /**
    * When true, build .xlsx buffers during the run (higher memory, slower time-to-done).
    * Default false: exports are generated on demand in the worker after the solve completes.
@@ -114,6 +129,11 @@ export interface PipelineResult {
   schedule_export_block_reason?: string | null
   /** Present after a full solve so runs can be saved and extended with late registrations. */
   schedulingSnapshot: SchedulingSnapshot | null
+  /** CP-SAT: true when clash weight is proven minimal under the course→weekday model. */
+  proven_optimal?: boolean
+  proven_levels?: string[]
+  solver_status?: string
+  solver_message?: string
 }
 
 async function buildEagerExportsSequential(
@@ -242,62 +262,175 @@ export async function runPipeline(
     fraction: PRE_END,
   })
 
-  const { localSearchSeedPlan, runSchedulerAsync, buildSchedule, computeClashReport } = await import(
-    '../solver/scheduler',
-  )
+  const { buildSchedule, computeClashReport, auditScheduleHardConstraints, parallelHardCap } =
+    await import('../solver/scheduler')
   throwIfAborted(signal)
 
-  const { resolvePoolWorkerCount } = await import('../worker/solverPoolTypes')
-  const poolWorkers = resolvePoolWorkerCount()
-  const effort = options?.effort ?? 'balanced'
-  const seedPlan = localSearchSeedPlan(courseCount, poolWorkers, effort)
-  emit({
-    stage: 'schedule',
-    message: `Local search (${seedPlan.effort}): ${seedPlan.runCount} seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
-    fraction: SCHEDULE_LO,
-    etaSeconds: null,
-  })
+  const backend: SolverBackend = options?.solverBackend ?? 'local-search'
+  let slotAssignments: Record<string, number>
+  let solverUsed: string
+  let solverTimeSeconds: number
+  let feasible: boolean
+  let hardViolations: string[]
+  let primaryZero: boolean
+  let provenOptimal = false
+  let provenLevels: string[] = []
+  let solverStatus: string | undefined
+  let solverMessage: string | undefined
 
-  const sched = await runSchedulerAsync(
-    courseSections,
-    conflictGraph,
-    facultyConstraints,
-    (evt: SchedulerProgressEvent) => {
-      emit({
-        stage: 'schedule',
-        message: evt.message,
-        fraction: mapSolverFraction(evt.solverFraction),
-        etaSeconds: evt.etaSeconds,
-      })
-    },
-    {
-      randomSeed: options?.randomSeed,
-      shouldAbort: () => signal?.aborted === true,
-      poolWorkers,
-      effort,
-    },
-  )
-  throwIfAborted(signal)
+  if (backend === 'cpsat') {
+    const { runCpsatScheduler } = await import('../solver/cpsatBridge')
+    const { cpus } = await import('node:os')
+    const workers = options?.cpsatWorkers && options.cpsatWorkers > 0
+      ? options.cpsatWorkers
+      : cpus().length
+    emit({
+      stage: 'schedule',
+      message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
+      fraction: SCHEDULE_LO,
+      etaSeconds: null,
+    })
+    const cpsat = await runCpsatScheduler(
+      courseSections,
+      conflictGraph,
+      facultyConstraints,
+      students,
+      {
+        timeLimitSeconds: options?.cpsatTimeLimitSeconds,
+        workers: options?.cpsatWorkers,
+        signal,
+        onProgress: (evt) => {
+          if (evt.type === 'progress' || evt.type === 'heartbeat') {
+            const label = evt.phase_label ?? evt.phase
+            const clash = evt.best_clash == null ? '—' : String(evt.best_clash)
+            const red = evt.best_red == null ? '—' : String(evt.best_red)
+            const activity =
+              evt.activity === 'proving'
+                ? 'proving bound'
+                : evt.activity === 'improving'
+                  ? 'improving'
+                  : 'searching'
+            const boundPart =
+              evt.bound == null
+                ? ''
+                : evt.best_clash != null && evt.bound === evt.best_clash
+                  ? ` · gap 0`
+                  : ` · bound ${evt.bound}`
+            emit({
+              stage: 'schedule',
+              message: `${label}: clash ${clash} · RED ${red}${boundPart} · ${activity} · ${evt.elapsed.toFixed(1)}s · ${evt.workers} workers`,
+              fraction: mapSolverFraction(
+                Math.min(0.99, 0.15 + Math.min(0.7, evt.elapsed / 120)),
+              ),
+              etaSeconds: null,
+              cpsat: evt,
+            })
+          } else if (evt.type === 'phase') {
+            emit({
+              stage: 'schedule',
+              message: evt.phase_label ?? `CP-SAT phase: ${evt.phase}`,
+              fraction: SCHEDULE_LO + 0.05,
+              etaSeconds: null,
+              cpsat: evt,
+            })
+          } else if (evt.type === 'start') {
+            emit({
+              stage: 'schedule',
+              message: `Building CP-SAT model · ${evt.courses} courses · ${evt.edges ?? '?'} edges · ${evt.workers} workers`,
+              fraction: SCHEDULE_LO,
+              etaSeconds: null,
+              cpsat: evt,
+            })
+          } else if (evt.type === 'model_ready') {
+            emit({
+              stage: 'schedule',
+              message: `Model ready · starting search`,
+              fraction: SCHEDULE_LO + 0.02,
+              etaSeconds: null,
+              cpsat: evt,
+            })
+          }
+        },
+      },
+    )
+    throwIfAborted(signal)
+    slotAssignments = cpsat.slot_assignments
+    solverUsed = cpsat.solver_used
+    solverTimeSeconds = cpsat.solver_time_seconds
+    const audit = auditScheduleHardConstraints(
+      courseSections,
+      slotAssignments,
+      parallelHardCap(sectionCount),
+      facultyConstraints,
+    )
+    feasible = audit.feasible
+    hardViolations = audit.violations
+    primaryZero = cpsat.total_clash_weight === 0 && cpsat.red_students === 0
+    provenOptimal = cpsat.proven_optimal
+    provenLevels = cpsat.proven_levels
+    solverStatus = cpsat.status
+    solverMessage = cpsat.message
+  } else {
+    const { localSearchSeedPlan, runSchedulerAsync } = await import('../solver/scheduler')
+    const { resolvePoolWorkerCount } = await import('../worker/solverPoolTypes')
+    const poolWorkers = resolvePoolWorkerCount()
+    const effort = options?.effort ?? 'unlimited'
+    const seedPlan = localSearchSeedPlan(courseCount, poolWorkers, effort)
+    emit({
+      stage: 'schedule',
+      message: `Local search (${seedPlan.effort}): ${seedPlan.runCount} seeds → refine top ${seedPlan.poolSize} · ${seedPlan.poolWorkers} CPU workers · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
+      fraction: SCHEDULE_LO,
+      etaSeconds: null,
+    })
+
+    const sched = await runSchedulerAsync(
+      courseSections,
+      conflictGraph,
+      facultyConstraints,
+      (evt: SchedulerProgressEvent) => {
+        emit({
+          stage: 'schedule',
+          message: evt.message,
+          fraction: mapSolverFraction(evt.solverFraction),
+          etaSeconds: evt.etaSeconds,
+        })
+      },
+      {
+        randomSeed: options?.randomSeed,
+        shouldAbort: () => signal?.aborted === true,
+        poolWorkers,
+        effort,
+      },
+    )
+    throwIfAborted(signal)
+    slotAssignments = sched.slot_assignments
+    solverUsed = sched.solver_used
+    solverTimeSeconds = sched.solver_time_seconds
+    feasible = sched.feasible
+    hardViolations = sched.hard_constraint_violations
+    primaryZero = sched.optimal
+  }
+
   const flatSectionsEarly = Object.values(courseSections).flat()
   const schedulingStatsPreview = computeSchedulingStats(
     flatSectionsEarly,
-    sched.slot_assignments,
+    slotAssignments,
     conflictGraph,
     { courseSections, students },
   )
   const lb = schedulingStatsPreview.lower_bounds
-  let schedule = buildSchedule(courseSections, sched.slot_assignments, {
-    solver_used: sched.solver_used,
-    solver_time_seconds: sched.solver_time_seconds,
-    hard_constraints_feasible: sched.feasible,
-    hard_constraint_violations: sched.hard_constraint_violations,
-    solver_primary_metrics_zero: sched.optimal,
+  let schedule = buildSchedule(courseSections, slotAssignments, {
+    solver_used: solverUsed,
+    solver_time_seconds: solverTimeSeconds,
+    hard_constraints_feasible: feasible,
+    hard_constraint_violations: hardViolations,
+    solver_primary_metrics_zero: primaryZero,
     min_red_students_lower_bound: lb?.min_red_students_lower_bound,
     min_clash_weight_lower_bound: lb?.min_clash_weight_lower_bound,
     zero_clash_structurally_impossible: lb?.zero_clash_structurally_impossible,
     lower_bound_notes: lb?.notes,
   })
-  const clashReport = computeClashReport(students, courseSections, sched.slot_assignments)
+  const clashReport = computeClashReport(students, courseSections, slotAssignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
 
   // Always allow schedule export — clashes are soft warnings, not export blockers.
@@ -306,7 +439,7 @@ export async function runPipeline(
 
   const schedulingSnapshot: SchedulingSnapshot = {
     slot_model: WEEKDAY_SLOT_MODEL,
-    slot_assignments: { ...sched.slot_assignments },
+    slot_assignments: { ...slotAssignments },
     courseSections: deepCloneCourseSections(courseSections),
     students: cloneStudents(students),
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
@@ -351,9 +484,15 @@ export async function runPipeline(
   const sectionCountForStats = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
   const schedulingStats = schedulingStatsPreview
 
+  const provenNote =
+    backend === 'cpsat'
+      ? provenOptimal
+        ? ' · clash weight proven optimal'
+        : ' · best feasible (not fully proven)'
+      : ''
   emit({
     stage: 'done',
-    message: `Run complete · local search ${sched.solver_time_seconds.toFixed(2)}s · ${sectionCountForStats} sections · hard-constraint audit ${sched.feasible ? 'passed' : 'failed'}`,
+    message: `Run complete · ${solverUsed} ${solverTimeSeconds.toFixed(2)}s · ${sectionCountForStats} sections · hard-constraint audit ${feasible ? 'passed' : 'failed'}${provenNote}`,
     fraction: 1,
     etaSeconds: null,
   })
@@ -374,5 +513,9 @@ export async function runPipeline(
     schedule_export_blocked: scheduleExportBlocked,
     schedule_export_block_reason: scheduleExportBlockReason,
     schedulingSnapshot,
+    proven_optimal: backend === 'cpsat' ? provenOptimal : undefined,
+    proven_levels: backend === 'cpsat' ? provenLevels : undefined,
+    solver_status: solverStatus,
+    solver_message: solverMessage,
   }
 }
