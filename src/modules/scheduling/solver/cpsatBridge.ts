@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { cpus, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ConflictGraph, Section, Student } from '../types'
@@ -19,10 +19,24 @@ export const REPO_ROOT = path.resolve(MODULE_DIR, '../../../..')
 export const CPSAT_DIR = path.join(REPO_ROOT, 'solver', 'cpsat')
 export const CPSAT_SOLVE_PY = path.join(CPSAT_DIR, 'solve.py')
 
+/** Default portfolio race size (independent seeds). 0 disables. */
+export const DEFAULT_PORTFOLIO_SIZE = 5
+/** Wall-clock budget for each portfolio race member (clash-only). */
+export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
+/** Workers per portfolio race member. */
+export const DEFAULT_PORTFOLIO_MEMBER_WORKERS = 2
+
 export type RunCpsatOptions = {
   timeLimitSeconds?: number
   workers?: number
   hint?: Record<string, number>
+  minClashWeightLowerBound?: number
+  minRedStudentsLowerBound?: number
+  /** Independent clash-only race members (default 5). Pass 0 to skip. */
+  portfolio?: number
+  /** Seconds per portfolio race member (default 45). */
+  portfolioRaceSeconds?: number
+  seed?: number
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
   /** Override python executable (default: solver/cpsat/.venv or python3). */
@@ -82,18 +96,40 @@ export async function ensureCpsatReady(pythonPath?: string): Promise<{ python: s
   return { python }
 }
 
+type SpawnSolveOpts = RunCpsatOptions & {
+  seed?: number
+  clashOnly?: boolean
+  /** Attach portfolio lane metadata to every progress event. */
+  portfolioMeta?: import('./cpsatInstance').CpsatPortfolioMeta
+}
+
+function betterSolution(a: CpsatSolution, b: CpsatSolution): CpsatSolution {
+  const ac = a.clash_weight
+  const bc = b.clash_weight
+  if (ac == null && bc == null) return a
+  if (ac == null) return b
+  if (bc == null) return a
+  if (ac !== bc) return ac < bc ? a : b
+  const ar = a.red_students ?? Number.POSITIVE_INFINITY
+  const br = b.red_students ?? Number.POSITIVE_INFINITY
+  if (ar !== br) return ar < br ? a : b
+  if (a.proven_optimal && !b.proven_optimal) return a
+  if (b.proven_optimal && !a.proven_optimal) return b
+  return a
+}
+
 /**
  * Spawn the Python CP-SAT solver on a prepared instance.
  * Progress NDJSON is read from stderr.
  */
 export function spawnCpsatSolve(
   instance: CpsatInstance,
-  options?: RunCpsatOptions,
+  options?: SpawnSolveOpts,
 ): Promise<CpsatSolution> {
   return new Promise((resolve, reject) => {
     void (async () => {
       let workDir: string | undefined
-      let child: ReturnType<typeof spawn> | undefined
+      let child: ChildProcess | undefined
       const onAbort = () => {
         child?.kill('SIGTERM')
       }
@@ -118,6 +154,12 @@ export function spawnCpsatSolve(
         if (options?.workers != null && options.workers > 0) {
           args.push('--workers', String(options.workers))
         }
+        if (options?.seed != null && options.seed >= 0) {
+          args.push('--seed', String(options.seed))
+        }
+        if (options?.clashOnly) {
+          args.push('--clash-only')
+        }
 
         child = spawn(python, args, {
           cwd: CPSAT_DIR,
@@ -136,7 +178,12 @@ export function spawnCpsatSolve(
         const rl = createInterface({ input: child.stderr! })
         rl.on('line', (line) => {
           const evt = parseProgressLine(line)
-          if (evt) options?.onProgress?.(evt)
+          if (!evt) return
+          if (options?.portfolioMeta) {
+            options.onProgress?.({ ...evt, portfolio: options.portfolioMeta })
+            return
+          }
+          options?.onProgress?.(evt)
         })
 
         const exitCode: number = await new Promise((res, rej) => {
@@ -178,6 +225,68 @@ export function spawnCpsatSolve(
   })
 }
 
+const PORTFOLIO_SEEDS = [1, 5, 12, 88, 421, 7, 99, 256, 777, 1337]
+
+async function runPortfolioRace(
+  instance: CpsatInstance,
+  options: SpawnSolveOpts,
+  k: number,
+  raceSeconds: number,
+  memberWorkers: number,
+): Promise<CpsatSolution | null> {
+  const seeds = PORTFOLIO_SEEDS.slice(0, Math.max(1, k))
+  options.onProgress?.({
+    type: 'phase',
+    phase: 'portfolio_race',
+    phase_label: `Portfolio race · ${seeds.length} seeds × ${memberWorkers} workers each`,
+    workers: seeds.length * memberWorkers,
+    portfolio_seeds: seeds,
+    portfolio_member_workers: memberWorkers,
+    portfolio_race_seconds: raceSeconds,
+  })
+
+  const results = await Promise.all(
+    seeds.map(async (seed, i) => {
+      const portfolioMeta = {
+        index: i + 1,
+        size: seeds.length,
+        seed,
+        member_workers: memberWorkers,
+        race_seconds: raceSeconds,
+      }
+      try {
+        return await spawnCpsatSolve(instance, {
+          ...options,
+          workers: memberWorkers,
+          timeLimitSeconds: raceSeconds,
+          seed,
+          clashOnly: true,
+          portfolioMeta,
+        })
+      } catch {
+        return null
+      }
+    }),
+  )
+
+  let best: CpsatSolution | null = null
+  for (const r of results) {
+    if (!r) continue
+    best = best ? betterSolution(best, r) : r
+  }
+  if (best) {
+    options.onProgress?.({
+      type: 'phase',
+      phase: 'portfolio_best',
+      phase_label: `Portfolio best · clash ${best.clash_weight ?? '—'} · RED ${best.red_students ?? '—'}`,
+      workers: options.workers,
+      clash_weight: best.clash_weight ?? undefined,
+      red_students: best.red_students ?? undefined,
+    })
+  }
+  return best
+}
+
 export async function runCpsatScheduler(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
@@ -185,14 +294,62 @@ export async function runCpsatScheduler(
   students: Record<string, Student>,
   options?: RunCpsatOptions,
 ): Promise<CpsatSchedulerResult> {
+  const t0 = Date.now()
+  const totalWorkers =
+    options?.workers && options.workers > 0 ? options.workers : cpus().length
+
+  let hint = options?.hint
+  const portfolioK =
+    options?.portfolio === undefined
+      ? DEFAULT_PORTFOLIO_SIZE
+      : Math.max(0, Math.floor(options.portfolio))
+  const raceSeconds =
+    options?.portfolioRaceSeconds && options.portfolioRaceSeconds > 0
+      ? options.portfolioRaceSeconds
+      : DEFAULT_PORTFOLIO_RACE_SECONDS
+
   const instance = buildCpsatInstance(
     courseSections,
     conflictGraph,
     facultyConstraints,
     students,
-    { hint: options?.hint },
+    {
+      hint,
+      min_clash_weight_lower_bound: options?.minClashWeightLowerBound,
+      min_red_students_lower_bound: options?.minRedStudentsLowerBound,
+    },
   )
-  const solution = await spawnCpsatSolve(instance, options)
+
+  if (portfolioK > 0) {
+    const raceBest = await runPortfolioRace(
+      instance,
+      options ?? {},
+      portfolioK,
+      raceSeconds,
+      DEFAULT_PORTFOLIO_MEMBER_WORKERS,
+    )
+    if (raceBest?.slot_by_course) {
+      hint = raceBest.slot_by_course
+      instance.hint = hint
+    }
+  }
+
+  // Remaining time for full lex prove (if an overall limit was set).
+  let proveLimit = options?.timeLimitSeconds
+  if (proveLimit != null && proveLimit > 0 && portfolioK > 0) {
+    const spent = (Date.now() - t0) / 1000
+    proveLimit = Math.max(5, proveLimit - spent)
+  }
+
+  const solution = await spawnCpsatSolve(instance, {
+    ...options,
+    hint,
+    workers: totalWorkers,
+    timeLimitSeconds: proveLimit,
+    seed: options?.seed,
+    clashOnly: false,
+  })
+
   const slot_assignments = sectionSlotsFromCourseSlots(
     courseSections,
     solution.slot_by_course,
@@ -202,7 +359,7 @@ export async function runCpsatScheduler(
     slot_assignments,
     slot_by_course: solution.slot_by_course,
     solver_used: `cpsat-ortools-${solution.num_workers}w`,
-    solver_time_seconds: solution.solver_time_seconds,
+    solver_time_seconds: (Date.now() - t0) / 1000,
     total_clash_weight: solution.clash_weight ?? 0,
     red_students: solution.red_students ?? 0,
     proven_optimal: Boolean(solution.proven_optimal),

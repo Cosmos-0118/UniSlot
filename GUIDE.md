@@ -79,10 +79,11 @@ npm run unislot -- solve \
 | `-i, --input <file>` | Enrollment `.xlsx` |
 | `-o, --output <dir>` | Export directory |
 | `-y, --yes` | Skip interactive prompts when paths are given |
-| `--workers <n>` | CP-SAT search workers (default: all CPUs) |
+| `--workers <n>` | CP-SAT workers for the prove phase (default: all CPUs) |
+| `--portfolio <k>` | Multi-seed clash race before prove (default: 5; `0` disables) |
 | `--time-limit <seconds>` | Escape hatch only — stops early; may not prove optimality |
 
-Omit `--time-limit` for a full prove-to-optimal run.
+Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural clash/RED lower bounds as model cuts.
 
 ## 5. Reading the outputs
 
@@ -108,6 +109,8 @@ If lower bounds say zero-clash is impossible, a positive clash weight with `prov
 
 | Phase | Goal |
 |-------|------|
+| Warm start | DSATUR + light SA polish → CP-SAT hints |
+| Portfolio race | Optional multi-seed clash-only race; best incumbent seeds the prove |
 | Building model | Encoding courses, conflict edges, faculty, students into CP-SAT |
 | 1/3 Minimizing clashes | Lex level 1 — prove minimum clash weight |
 | 2/3 Minimizing RED | Lex level 2 — among clash-optimal schedules, fewest RED students |

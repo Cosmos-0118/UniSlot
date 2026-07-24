@@ -87,6 +87,10 @@ export type RunPipelineOptions = {
   cpsatTimeLimitSeconds?: number
   /** CP-SAT search workers (0 / omit = all CPUs). */
   cpsatWorkers?: number
+  /** Portfolio race size (default 5). Pass 0 to skip the multi-seed race. */
+  cpsatPortfolio?: number
+  /** Seconds per portfolio race member (default 45). */
+  cpsatPortfolioRaceSeconds?: number
   /**
    * When true, build .xlsx buffers during the run.
    * Default false: caller builds exports later if needed.
@@ -250,15 +254,40 @@ export async function runPipeline(
   const { buildSchedule, computeClashReport, auditScheduleHardConstraints, parallelHardCap } =
     await import('../solver/scheduler')
   const { runCpsatScheduler } = await import('../solver/cpsatBridge')
+  const { buildGreedyHint } = await import('../solver/greedyHint')
+  const { computeSchedulingLowerBounds } = await import('../solver/lowerBounds')
   const { cpus } = await import('node:os')
   throwIfAborted(signal)
 
   const workers =
     options?.cpsatWorkers && options.cpsatWorkers > 0 ? options.cpsatWorkers : cpus().length
+
   emit({
     stage: 'schedule',
-    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
+    message: 'Building warm-start hint (DSATUR + polish)…',
     fraction: SCHEDULE_LO,
+    etaSeconds: null,
+  })
+  const warm = buildGreedyHint({
+    courseSections,
+    conflictGraph,
+    facultyConstraints,
+    students,
+  })
+  emit({
+    stage: 'schedule',
+    message: `Warm start · clash ${warm.clash_weight} · RED ${warm.red_students}`,
+    fraction: SCHEDULE_LO + 0.01,
+    etaSeconds: null,
+  })
+
+  const structuralLb = computeSchedulingLowerBounds(courseSections, conflictGraph, students)
+  const portfolio =
+    options?.cpsatPortfolio === undefined ? undefined : options.cpsatPortfolio
+  emit({
+    stage: 'schedule',
+    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
+    fraction: SCHEDULE_LO + 0.02,
     etaSeconds: null,
   })
 
@@ -270,6 +299,11 @@ export async function runPipeline(
     {
       timeLimitSeconds: options?.cpsatTimeLimitSeconds,
       workers: options?.cpsatWorkers,
+      hint: warm.hint,
+      minClashWeightLowerBound: structuralLb.min_clash_weight_lower_bound,
+      minRedStudentsLowerBound: structuralLb.min_red_students_lower_bound,
+      portfolio,
+      portfolioRaceSeconds: options?.cpsatPortfolioRaceSeconds,
       signal,
       onProgress: (evt) => {
         if (evt.type === 'progress' || evt.type === 'heartbeat') {
@@ -304,9 +338,13 @@ export async function runPipeline(
             cpsat: evt,
           })
         } else if (evt.type === 'start') {
+          const port = evt.portfolio
+          const msg = port
+            ? `Seed ${port.index}/${port.size} (seed ${port.seed}) · building model · ${port.member_workers}w`
+            : `Building CP-SAT model · ${evt.courses} courses · ${evt.edges ?? '?'} edges · ${evt.workers} workers`
           emit({
             stage: 'schedule',
-            message: `Building CP-SAT model · ${evt.courses} courses · ${evt.edges ?? '?'} edges · ${evt.workers} workers`,
+            message: msg,
             fraction: SCHEDULE_LO,
             etaSeconds: null,
             cpsat: evt,

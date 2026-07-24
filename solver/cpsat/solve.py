@@ -17,7 +17,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from model import BuiltModel, build_model
+from model import BuiltModel, apply_hints, build_model
 
 HEARTBEAT_INTERVAL_S = 0.5
 
@@ -136,17 +136,38 @@ def start_heartbeat(cb: ProgressCallback, stop: threading.Event) -> threading.Th
     return t
 
 
-def configure_solver(time_limit: float | None, workers: int) -> cp_model.CpSolver:
+def configure_solver(
+    time_limit: float | None,
+    workers: int,
+    seed: int | None = None,
+) -> cp_model.CpSolver:
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = max(1, workers)
     solver.parameters.log_search_progress = False
     if time_limit is not None and time_limit > 0:
         solver.parameters.max_time_in_seconds = float(time_limit)
+    if seed is not None and seed >= 0:
+        solver.parameters.random_seed = int(seed)
     return solver
 
 
 def extract_assignment(built: BuiltModel, solver: cp_model.CpSolver) -> dict[str, int]:
     return {code: int(solver.Value(built.day[code])) for code in built.course_codes}
+
+
+def rehint_incumbent(built: BuiltModel, slot_by_course: dict[str, int]) -> None:
+    """Re-seed hints from the current incumbent before the next lex phase."""
+    built.model.ClearHints()
+    n = apply_hints(built.model, built.day, slot_by_course)
+    if n:
+        emit(
+            {
+                "type": "phase",
+                "phase": "rehint",
+                "phase_label": f"Warm-starting next phase · {n} course hints",
+                "workers": 0,
+            }
+        )
 
 
 def solve_with_progress(
@@ -156,6 +177,7 @@ def solve_with_progress(
     time_limit: float | None,
     workers: int,
     t0: float,
+    seed: int | None = None,
 ) -> tuple[int, cp_model.CpSolver, ProgressCallback]:
     emit(
         {
@@ -166,7 +188,7 @@ def solve_with_progress(
             "elapsed": round(time.time() - t0, 3),
         }
     )
-    solver = configure_solver(time_limit, workers)
+    solver = configure_solver(time_limit, workers, seed=seed)
     cb = ProgressCallback(built, phase, workers, t0)
     stop = threading.Event()
     start_heartbeat(cb, stop)
@@ -174,7 +196,6 @@ def solve_with_progress(
         status = solver.Solve(built.model, cb)
     finally:
         stop.set()
-    # Final snapshot so the UI catches the end-of-phase state promptly.
     final = cb.snapshot()
     final["type"] = "progress"
     final["event"] = "phase_end"
@@ -188,6 +209,8 @@ def solve_lex(
     *,
     time_limit: float | None,
     workers: int,
+    seed: int | None = None,
+    clash_only: bool = False,
 ) -> dict[str, Any]:
     t0 = time.time()
     remaining = time_limit
@@ -213,6 +236,7 @@ def solve_lex(
         time_limit=phase_limit(),
         workers=workers,
         t0=t0,
+        seed=seed,
     )
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -232,10 +256,34 @@ def solve_lex(
 
     clash_opt = int(solver.Value(built.clash_weight))
     slot_by_course = extract_assignment(built, solver)
+    red_at_clash = int(solver.Value(built.red_students))
+    bal_at_clash = int(solver.Value(built.balance_l1))
+    excess_at_clash = int(solver.Value(built.parallel_excess))
     if last_status == cp_model.OPTIMAL:
         proven_levels.append("clash_weight")
 
+    if clash_only:
+        return {
+            "status": status_name(last_status),
+            "proven_optimal": "clash_weight" in proven_levels,
+            "proven_levels": proven_levels,
+            "slot_by_course": slot_by_course,
+            "clash_weight": clash_opt,
+            "red_students": red_at_clash,
+            "weekday_balance_l1_scaled": bal_at_clash,
+            "parallel_excess": excess_at_clash,
+            "solver_time_seconds": round(time.time() - t0, 4),
+            "num_workers": workers,
+            "message": (
+                "Clash-only portfolio race result."
+                if "clash_weight" not in proven_levels
+                else "Clash weight proven in portfolio race member."
+            ),
+        }
+
     # Phase 2: fix clash, minimize RED
+    rehint_incumbent(built, slot_by_course)
+    built.model.ClearObjective()
     built.model.Add(built.clash_weight == clash_opt)
     built.model.Minimize(built.red_students)
     last_status, solver, cb = solve_with_progress(
@@ -244,6 +292,7 @@ def solve_lex(
         time_limit=phase_limit(),
         workers=workers,
         t0=t0,
+        seed=None if seed is None else seed + 1,
     )
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -253,7 +302,7 @@ def solve_lex(
             "proven_levels": proven_levels,
             "slot_by_course": slot_by_course,
             "clash_weight": clash_opt,
-            "red_students": cb.best_red,
+            "red_students": cb.best_red if cb.best_red is not None else red_at_clash,
             "weekday_balance_l1_scaled": cb.best_balance,
             "parallel_excess": cb.best_excess,
             "solver_time_seconds": round(time.time() - t0, 4),
@@ -267,6 +316,8 @@ def solve_lex(
         proven_levels.append("red_students")
 
     # Phase 3: balance + parallel soft
+    rehint_incumbent(built, slot_by_course)
+    built.model.ClearObjective()
     built.model.Add(built.red_students == red_opt)
     soft = built.balance_l1 * (10**6) + built.parallel_excess
     built.model.Minimize(soft)
@@ -276,6 +327,7 @@ def solve_lex(
         time_limit=phase_limit(),
         workers=workers,
         t0=t0,
+        seed=None if seed is None else seed + 2,
     )
     consume(solver.WallTime())
 
@@ -336,9 +388,21 @@ def main() -> int:
         default=0,
         help="CP-SAT search workers (0 = all CPUs)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=-1,
+        help="CP-SAT random seed (-1 = solver default)",
+    )
+    parser.add_argument(
+        "--clash-only",
+        action="store_true",
+        help="Stop after lex level 1 (clash). Used by portfolio race members.",
+    )
     args = parser.parse_args()
 
     workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
+    seed = args.seed if args.seed >= 0 else None
     with open(args.instance, encoding="utf-8") as f:
         instance = json.load(f)
 
@@ -349,6 +413,8 @@ def main() -> int:
             "courses": len(instance.get("courses") or []),
             "edges": len(instance.get("conflict_edges") or []),
             "students": len(instance.get("students") or []),
+            "seed": seed,
+            "clash_only": bool(args.clash_only),
         }
     )
     try:
@@ -361,7 +427,13 @@ def main() -> int:
         return 2
 
     emit({"type": "model_ready", "elapsed": 0, "courses": len(built.course_codes)})
-    result = solve_lex(built, time_limit=args.time_limit, workers=workers)
+    result = solve_lex(
+        built,
+        time_limit=args.time_limit,
+        workers=workers,
+        seed=seed,
+        clash_only=bool(args.clash_only),
+    )
     with open(args.output, "w", encoding="utf-8") as out:
         json.dump(result, out, indent=2)
     emit(

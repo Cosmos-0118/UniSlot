@@ -22,6 +22,10 @@ export type CpsatInstance = {
   faculty_groups: Array<{ faculty: string; course_codes: string[] }>
   students: Array<{ id: string; courses: string[] }>
   hint?: Record<string, number>
+  /** Structural lower bound injected as CP-SAT cut (clash_weight >= lb). */
+  min_clash_weight_lower_bound?: number
+  /** Structural lower bound injected as CP-SAT cut (red_students >= lb). */
+  min_red_students_lower_bound?: number
 }
 
 export type CpsatSolution = {
@@ -39,6 +43,16 @@ export type CpsatSolution = {
   error?: string
 }
 
+/** Present on events from a portfolio race member (multi-seed clash race). */
+export type CpsatPortfolioMeta = {
+  index: number
+  size: number
+  seed: number
+  member_workers: number
+  /** Wall-clock budget for this race member (seconds). */
+  race_seconds?: number
+}
+
 export type CpsatProgressEvent =
   | {
       type: 'start'
@@ -46,11 +60,13 @@ export type CpsatProgressEvent =
       courses: number
       edges?: number
       students?: number
+      portfolio?: CpsatPortfolioMeta
     }
   | {
       type: 'model_ready'
       elapsed?: number
       courses?: number
+      portfolio?: CpsatPortfolioMeta
     }
   | {
       type: 'phase'
@@ -60,6 +76,11 @@ export type CpsatProgressEvent =
       clash_weight?: number
       red_students?: number
       elapsed?: number
+      portfolio?: CpsatPortfolioMeta
+      /** Seed list when phase === portfolio_race (UI initializes lanes). */
+      portfolio_seeds?: number[]
+      portfolio_member_workers?: number
+      portfolio_race_seconds?: number
     }
   | {
       type: 'progress' | 'heartbeat'
@@ -77,6 +98,7 @@ export type CpsatProgressEvent =
       seconds_since_improve?: number
       event?: string
       solver_status?: string
+      portfolio?: CpsatPortfolioMeta
     }
   | {
       type: 'done'
@@ -84,8 +106,9 @@ export type CpsatProgressEvent =
       clash_weight?: number | null
       red_students?: number | null
       proven_optimal?: boolean
+      portfolio?: CpsatPortfolioMeta
     }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; portfolio?: CpsatPortfolioMeta }
 
 /** Aggregate section-level conflict edges to course pairs (unique students already per edge). */
 export function aggregateCourseConflictEdges(
@@ -115,7 +138,11 @@ export function buildCpsatInstance(
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
   students: Record<string, Student>,
-  options?: { hint?: Record<string, number> },
+  options?: {
+    hint?: Record<string, number>
+    min_clash_weight_lower_bound?: number
+    min_red_students_lower_bound?: number
+  },
 ): CpsatInstance {
   const sectionToCourse = new Map<string, string>()
   const courses: CpsatInstance['courses'] = []
@@ -161,6 +188,8 @@ export function buildCpsatInstance(
     faculty_groups,
     students: studentRows,
     hint: options?.hint,
+    min_clash_weight_lower_bound: options?.min_clash_weight_lower_bound,
+    min_red_students_lower_bound: options?.min_red_students_lower_bound,
   }
 }
 

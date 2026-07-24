@@ -85,12 +85,22 @@ async function runSolve(opts: {
   output?: string
   timeLimit?: number
   workers?: number
+  portfolio?: number
   interactive: boolean
 }): Promise<number> {
   banner()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
-  p.log.info(`CPUs   · ${cpus().length} (CP-SAT will use ${opts.workers && opts.workers > 0 ? opts.workers : 'all'})`)
+  const cpuN = cpus().length
+  const workersLabel = opts.workers && opts.workers > 0 ? String(opts.workers) : String(cpuN)
+  const portfolioK = opts.portfolio === undefined ? 5 : opts.portfolio
+  if (portfolioK > 0) {
+    p.log.info(
+      `CPUs   · ${cpuN} logical · race ${portfolioK} seeds × 2 workers (${portfolioK * 2}w) → prove ${workersLabel}w`,
+    )
+  } else {
+    p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)
+  }
 
   let inputPath = opts.input
   if (!inputPath) {
@@ -148,6 +158,7 @@ async function runSolve(opts: {
       {
         cpsatTimeLimitSeconds: opts.timeLimit,
         cpsatWorkers: opts.workers,
+        cpsatPortfolio: opts.portfolio,
         eagerExports: true,
         eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
         signal: ac.signal,
@@ -254,13 +265,21 @@ async function main(): Promise<void> {
     .option('--time-limit <seconds>', 'Optional wall-clock limit (escape hatch only)', (v) =>
       Number(v),
     )
-    .option('--workers <n>', 'CP-SAT workers (default: all CPUs)', (v) => Number(v))
+    .option('--workers <n>', 'CP-SAT workers for the prove phase (default: all CPUs)', (v) =>
+      Number(v),
+    )
+    .option(
+      '--portfolio <k>',
+      'Multi-seed clash race before prove (default: 5; 0 disables)',
+      (v) => Number(v),
+    )
     .option('-y, --yes', 'Non-interactive when paths are provided', false)
     .action(async (flags: {
       input?: string
       output?: string
       timeLimit?: number
       workers?: number
+      portfolio?: number
       yes?: boolean
     }) => {
       const interactive = !flags.yes && (!flags.input || !flags.output)
@@ -269,6 +288,7 @@ async function main(): Promise<void> {
         output: flags.output,
         timeLimit: flags.timeLimit,
         workers: flags.workers,
+        portfolio: flags.portfolio,
         interactive: interactive || !flags.input,
       })
       process.exitCode = code

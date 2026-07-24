@@ -7,6 +7,13 @@ import {
 } from '../../src/modules/scheduling/solver/cpsatInstance'
 import { computeClashWeight } from '../../src/modules/scheduling/solver/conflictGraph'
 import { runCpsatScheduler } from '../../src/modules/scheduling/solver/cpsatBridge'
+import { buildGreedyHint } from '../../src/modules/scheduling/solver/greedyHint'
+import { computeSchedulingLowerBounds } from '../../src/modules/scheduling/solver/lowerBounds'
+import {
+  isMathCourse,
+  NON_MATH_WEEKDAY_COUNT,
+  TOTAL_WEEKLY_SLOTS,
+} from '../../src/modules/scheduling/solver/timeModel'
 import type { Section } from '../../src/modules/scheduling/types'
 
 function section(
@@ -100,7 +107,7 @@ describe('CP-SAT instance + clash parity', () => {
     expect(slots.C1).toBe(0)
   })
 
-  it('buildCpsatInstance includes math flag and students', () => {
+  it('buildCpsatInstance includes math flag, students, and optional LB cuts', () => {
     const courseSections: Record<string, Section[]> = {
       '21MAB101T': [section('M1', '21MAB101T', ['s1'])],
       CS101: [section('C1', 'CS101', ['s1'])],
@@ -116,24 +123,103 @@ describe('CP-SAT instance + clash parity', () => {
       },
     }
     const graph = buildConflictGraph(students, courseSections)
-    const inst = buildCpsatInstance(courseSections, graph, {}, students)
+    const inst = buildCpsatInstance(courseSections, graph, {}, students, {
+      min_clash_weight_lower_bound: 0,
+      min_red_students_lower_bound: 0,
+      hint: { CS101: 1 },
+    })
     expect(inst.courses.find((c) => c.code === '21MAB101T')?.is_math).toBe(true)
     expect(inst.courses.find((c) => c.code === 'CS101')?.is_math).toBe(false)
     expect(inst.students[0]?.courses).toContain('CS101')
+    expect(inst.hint?.CS101).toBe(1)
+    expect(inst.min_clash_weight_lower_bound).toBe(0)
+  })
+})
+
+describe('greedy warm-start hint', () => {
+  it('produces a feasible course→day map with clash parity', () => {
+    const { courseSections, conflictGraph, facultyConstraints, students } = tinyInstance()
+    const warm = buildGreedyHint({
+      courseSections,
+      conflictGraph,
+      facultyConstraints,
+      students,
+      polishIters: 200,
+    })
+    expect(Object.keys(warm.hint).sort()).toEqual(['A', 'B', 'C'])
+    for (const [code, day] of Object.entries(warm.hint)) {
+      const max = isMathCourse(code) ? TOTAL_WEEKLY_SLOTS - 1 : NON_MATH_WEEKDAY_COUNT - 1
+      expect(day).toBeGreaterThanOrEqual(0)
+      expect(day).toBeLessThanOrEqual(max)
+    }
+    expect(warm.clash_weight).toBe(0)
+    expect(warm.hint.A).not.toBe(warm.hint.B)
+
+    const sectionSlots = sectionSlotsFromCourseSlots(courseSections, warm.hint)
+    expect(computeClashWeight(conflictGraph, sectionSlots)).toBe(warm.clash_weight)
+  })
+
+  it('respects faculty same-day exclusion', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [section('A1', 'A', ['s1'], 'DrX')],
+      B: [section('B1', 'B', ['s2'], 'DrX')],
+    }
+    const students = {
+      s1: {
+        register_number: 's1',
+        name: 'S1',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['A'],
+      },
+      s2: {
+        register_number: 's2',
+        name: 'S2',
+        program: 'CS',
+        email: null,
+        mobile: null,
+        enrolled_courses: ['B'],
+      },
+    }
+    const conflictGraph = buildConflictGraph(students, courseSections)
+    const facultyConstraints = { DrX: ['A1', 'B1'] }
+    const warm = buildGreedyHint({
+      courseSections,
+      conflictGraph,
+      facultyConstraints,
+      students,
+      polishIters: 100,
+    })
+    expect(warm.hint.A).not.toBe(warm.hint.B)
   })
 })
 
 describe('CP-SAT solver smoke', () => {
   it(
-    'proves zero clash weight on a tiny separable instance',
+    'proves zero clash weight on a tiny separable instance (with warm hint, no portfolio)',
     async () => {
       const { courseSections, conflictGraph, facultyConstraints, students } = tinyInstance()
+      const warm = buildGreedyHint({
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        polishIters: 100,
+      })
+      const lb = computeSchedulingLowerBounds(courseSections, conflictGraph, students)
       const result = await runCpsatScheduler(
         courseSections,
         conflictGraph,
         facultyConstraints,
         students,
-        { workers: 2 },
+        {
+          workers: 2,
+          portfolio: 0,
+          hint: warm.hint,
+          minClashWeightLowerBound: lb.min_clash_weight_lower_bound,
+          minRedStudentsLowerBound: lb.min_red_students_lower_bound,
+        },
       )
 
       expect(result.proven_optimal).toBe(true)
@@ -144,8 +230,29 @@ describe('CP-SAT solver smoke', () => {
       expect(tsWeight).toBe(result.total_clash_weight)
       expect(tsWeight).toBe(0)
 
-      // A and B share a student — must be on different days
       expect(result.slot_by_course.A).not.toBe(result.slot_by_course.B)
+    },
+    60_000,
+  )
+
+  it(
+    'accepts structural LB cuts without becoming infeasible',
+    async () => {
+      const { courseSections, conflictGraph, facultyConstraints, students } = tinyInstance()
+      const result = await runCpsatScheduler(
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        {
+          workers: 2,
+          portfolio: 0,
+          minClashWeightLowerBound: 0,
+          minRedStudentsLowerBound: 0,
+        },
+      )
+      expect(result.total_clash_weight).toBe(0)
+      expect(['OPTIMAL', 'FEASIBLE']).toContain(result.status)
     },
     60_000,
   )

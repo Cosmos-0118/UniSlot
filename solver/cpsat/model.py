@@ -27,6 +27,10 @@ def _as_courses(instance: dict[str, Any]) -> list[dict[str, Any]]:
     return list(instance.get("courses") or [])
 
 
+def _pair_key(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a < b else (b, a)
+
+
 def build_model(instance: dict[str, Any]) -> BuiltModel:
     courses = _as_courses(instance)
     if not courses:
@@ -61,20 +65,46 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
             for b in uniq[i + 1 :]:
                 model.Add(day[a] != day[b])
 
-    # Clash weight: sum of monochrome course-conflict edge weights.
-    clash_terms: list[cp_model.LinearExpr] = []
-    max_clash = 0
+    # Canonical same-day bools shared by clash weight and RED student encoding.
+    needed_pairs: set[tuple[str, str]] = set()
+    edge_weights: dict[tuple[str, str], int] = {}
     for edge in instance.get("conflict_edges") or []:
         a = str(edge["course_a"])
         b = str(edge["course_b"])
         w = int(edge.get("weight") or 0)
         if w <= 0 or a not in day or b not in day or a == b:
             continue
-        max_clash += w
+        key = _pair_key(a, b)
+        needed_pairs.add(key)
+        edge_weights[key] = edge_weights.get(key, 0) + w
+
+    student_pair_lists: list[list[tuple[str, str]]] = []
+    for student in instance.get("students") or []:
+        scourses = [str(x) for x in (student.get("courses") or []) if str(x) in day]
+        scourses = list(dict.fromkeys(scourses))
+        if len(scourses) < 2:
+            continue
+        pairs: list[tuple[str, str]] = []
+        for i, ca in enumerate(scourses):
+            for cb in scourses[i + 1 :]:
+                key = _pair_key(ca, cb)
+                needed_pairs.add(key)
+                pairs.append(key)
+        student_pair_lists.append(pairs)
+
+    same_day: dict[tuple[str, str], cp_model.IntVar] = {}
+    for a, b in sorted(needed_pairs):
         same = model.NewBoolVar(f"same_{a}_{b}")
         model.Add(day[a] == day[b]).OnlyEnforceIf(same)
         model.Add(day[a] != day[b]).OnlyEnforceIf(same.Not())
-        clash_terms.append(w * same)
+        same_day[(a, b)] = same
+
+    # Clash weight: sum of monochrome course-conflict edge weights.
+    clash_terms: list[cp_model.LinearExpr] = []
+    max_clash = 0
+    for key, w in edge_weights.items():
+        max_clash += w
+        clash_terms.append(w * same_day[key])
 
     clash_weight = model.NewIntVar(0, max(0, max_clash), "clash_weight")
     if clash_terms:
@@ -82,22 +112,15 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
     else:
         model.Add(clash_weight == 0)
 
+    lb_clash = int(instance.get("min_clash_weight_lower_bound") or 0)
+    if lb_clash > 0:
+        model.Add(clash_weight >= min(lb_clash, max_clash))
+
     # RED students: a student is RED if any two of their courses share a day.
     red_flags: list[Any] = []
-    for idx, student in enumerate(instance.get("students") or []):
-        scourses = [str(x) for x in (student.get("courses") or []) if str(x) in day]
-        scourses = list(dict.fromkeys(scourses))  # preserve order, unique
-        if len(scourses) < 2:
-            continue
-        pair_same: list[Any] = []
-        for i, ca in enumerate(scourses):
-            for cb in scourses[i + 1 :]:
-                same = model.NewBoolVar(f"stu_{idx}_{ca}_{cb}")
-                model.Add(day[ca] == day[cb]).OnlyEnforceIf(same)
-                model.Add(day[ca] != day[cb]).OnlyEnforceIf(same.Not())
-                pair_same.append(same)
+    for idx, pairs in enumerate(student_pair_lists):
+        pair_same = [same_day[p] for p in pairs]
         red = model.NewBoolVar(f"red_{idx}")
-        # red <=> OR(pair_same)
         model.AddBoolOr(pair_same).OnlyEnforceIf(red)
         for p in pair_same:
             model.AddImplication(p, red)
@@ -109,6 +132,10 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         model.Add(red_students == sum(red_flags))
     else:
         model.Add(red_students == 0)
+
+    lb_red = int(instance.get("min_red_students_lower_bound") or 0)
+    if lb_red > 0:
+        model.Add(red_students >= min(lb_red, n_students))
 
     # Day loads (section counts) for balance + soft parallel excess.
     total_sections = sum(section_count.values())
@@ -127,7 +154,6 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
             model.Add(load[d] == 0)
 
     # L1 distance from even spread (integer: scale ideal by n days via abs(n*load - total)).
-    # weekday_balance_l1 = Σ |load_d - total/n| ; we optimize Σ |n*load_d - total| (same argmin).
     n = num_weekdays
     abs_devs: list[cp_model.IntVar] = []
     for d in range(n):
@@ -142,7 +168,6 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
     excess_terms: list[cp_model.LinearExpr] = []
     zero = model.NewConstant(0)
     for d in range(n):
-        # excess_d = max(0, load_d - preferred)
         diff = model.NewIntVar(-preferred, total_sections, f"diff_{d}")
         model.Add(diff == load[d] - preferred)
         ex = model.NewIntVar(0, total_sections, f"excess_{d}")
@@ -154,15 +179,7 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
     else:
         model.Add(parallel_excess == 0)
 
-    hint = instance.get("hint") or {}
-    if isinstance(hint, dict):
-        for code, slot in hint.items():
-            c = str(code)
-            if c in day:
-                try:
-                    model.AddHint(day[c], int(slot))
-                except (TypeError, ValueError):
-                    pass
+    apply_hints(model, day, instance.get("hint"))
 
     return BuiltModel(
         model=model,
@@ -173,3 +190,24 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         parallel_excess=parallel_excess,
         course_codes=course_codes,
     )
+
+
+def apply_hints(
+    model: cp_model.CpModel,
+    day: dict[str, cp_model.IntVar],
+    hint: Any,
+) -> int:
+    """Apply course→day hints. Returns how many hints were set."""
+    if not isinstance(hint, dict):
+        return 0
+    n = 0
+    for code, slot in hint.items():
+        c = str(code)
+        if c not in day:
+            continue
+        try:
+            model.AddHint(day[c], int(slot))
+            n += 1
+        except (TypeError, ValueError):
+            pass
+    return n
