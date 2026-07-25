@@ -91,6 +91,12 @@ export type RunPipelineOptions = {
   cpsatPortfolio?: number
   /** Seconds per portfolio race member (default 45). */
   cpsatPortfolioRaceSeconds?: number
+  /** Stop clash prove when incumbent−bound ≤ this. */
+  cpsatAbsoluteGap?: number
+  /** Stop clash prove when incumbent and bound are flat for N seconds. */
+  cpsatProvePlateauSeconds?: number
+  /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
+  cpsatFullProve?: boolean
   /**
    * When true, build .xlsx buffers during the run.
    * Default false: caller builds exports later if needed.
@@ -304,6 +310,9 @@ export async function runPipeline(
       minRedStudentsLowerBound: structuralLb.min_red_students_lower_bound,
       portfolio,
       portfolioRaceSeconds: options?.cpsatPortfolioRaceSeconds,
+      absoluteGap: options?.cpsatAbsoluteGap,
+      provePlateauSeconds: options?.cpsatProvePlateauSeconds,
+      fullProve: options?.cpsatFullProve,
       signal,
       onProgress: (evt) => {
         if (evt.type === 'progress' || evt.type === 'heartbeat') {

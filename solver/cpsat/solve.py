@@ -53,12 +53,21 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
         phase: str,
         workers: int,
         t0: float,
+        gap_trace: list[dict[str, Any]] | None = None,
+        *,
+        prove_plateau_seconds: float | None = None,
     ) -> None:
         super().__init__()
         self._built = built
         self._phase = phase
         self._workers = workers
         self._t0 = t0
+        self._gap_trace = gap_trace
+        self._prove_plateau_seconds = (
+            float(prove_plateau_seconds)
+            if prove_plateau_seconds is not None and prove_plateau_seconds > 0
+            else None
+        )
         self.best_clash: int | None = None
         self.best_red: int | None = None
         self.best_balance: int | None = None
@@ -66,25 +75,72 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
         self.best_bound: int | None = None
         self.solution_count = 0
         self.last_improve_at = t0
+        self.last_bound_improve_at = t0
+        self.stopped_for_plateau = False
+        self._plateau_stop_issued = False
         self._lock = threading.Lock()
 
     def _bound_value(self) -> int | None:
-        bound_raw = self.BestObjectiveBound()
+        try:
+            bound_raw = self.BestObjectiveBound()
+        except Exception:  # noqa: BLE001 — callback may be mid-teardown
+            return None
         if bound_raw is None or bound_raw >= 2**62:
             return None
         return int(bound_raw)
 
+    def _active_incumbent(self) -> int | None:
+        if self._phase == "minimize_clash":
+            return self.best_clash
+        if self._phase == "minimize_red":
+            return self.best_red
+        if self._phase == "minimize_balance":
+            if self.best_balance is None:
+                return None
+            return int(self.best_balance) * (10**6) + int(self.best_excess or 0)
+        return self.best_clash
+
+    def _record_gap_sample(self, event: str, snap: dict[str, Any]) -> None:
+        if self._gap_trace is None:
+            return
+        self._gap_trace.append(
+            {
+                "event": event,
+                "phase": snap.get("phase"),
+                "elapsed": snap.get("elapsed"),
+                "incumbent": snap.get("incumbent"),
+                "bound": snap.get("bound"),
+                "gap": snap.get("gap"),
+                "activity": snap.get("activity"),
+                "solutions": snap.get("solutions"),
+                "seconds_since_improve": snap.get("seconds_since_improve"),
+                "seconds_since_bound_improve": snap.get("seconds_since_bound_improve"),
+            }
+        )
+
     def snapshot(self) -> dict[str, Any]:
+        # Refresh dual bound during heartbeats — bound often moves while proving
+        # with no new incumbent (this was previously stale after the last solution).
+        bound = self._bound_value()
         with self._lock:
+            if bound is not None:
+                if self.best_bound is None or bound > self.best_bound:
+                    self.last_bound_improve_at = time.time()
+                self.best_bound = bound
             elapsed = time.time() - self._t0
             idle = max(0.0, time.time() - self.last_improve_at)
+            bound_idle = max(0.0, time.time() - self.last_bound_improve_at)
             if self.solution_count == 0:
                 activity = "searching"
             elif idle >= 1.5:
                 activity = "proving"
             else:
                 activity = "improving"
-            return {
+            incumbent = self._active_incumbent()
+            gap = None
+            if incumbent is not None and self.best_bound is not None:
+                gap = int(incumbent) - int(self.best_bound)
+            snap = {
                 "type": "progress",
                 "phase": self._phase,
                 "phase_label": phase_label(self._phase),
@@ -92,13 +148,49 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
                 "best_red": self.best_red,
                 "best_balance_l1_scaled": self.best_balance,
                 "best_parallel_excess": self.best_excess,
+                "incumbent": incumbent,
                 "bound": self.best_bound,
+                "gap": gap,
                 "elapsed": round(elapsed, 3),
                 "workers": self._workers,
                 "solutions": self.solution_count,
                 "activity": activity,
                 "seconds_since_improve": round(max(0.0, idle), 3),
+                "seconds_since_bound_improve": round(max(0.0, bound_idle), 3),
             }
+            # Plateau escape: both incumbent and bound flat long enough while proving.
+            if (
+                self._prove_plateau_seconds is not None
+                and self.solution_count > 0
+                and idle >= self._prove_plateau_seconds
+                and bound_idle >= self._prove_plateau_seconds
+                and gap is not None
+                and gap > 0
+                and not self.stopped_for_plateau
+            ):
+                self.stopped_for_plateau = True
+                snap["stopped_for_plateau"] = True
+            return snap
+
+    def maybe_stop_for_plateau(self) -> bool:
+        """Call from heartbeat thread; StopSearch is safe from callback object."""
+        with self._lock:
+            should = self.stopped_for_plateau and not self._plateau_stop_issued
+            if should:
+                self._plateau_stop_issued = True
+        if should:
+            emit(
+                {
+                    "type": "progress",
+                    "event": "plateau_stop",
+                    "phase": self._phase,
+                    "phase_label": phase_label(self._phase),
+                    "message": "Stopping prove: incumbent and bound plateaued",
+                }
+            )
+            self.StopSearch()
+            return True
+        return False
 
     def _objective_improved(self, clash: int, red: int, bal: int, excess: int) -> bool:
         """True when the active lex objective strictly improved."""
@@ -129,12 +221,15 @@ class ProgressCallback(cp_model.CpSolverSolutionCallback):
             self.best_balance = bal
             self.best_excess = excess
             if bound is not None:
+                if self.best_bound is None or bound > self.best_bound:
+                    self.last_bound_improve_at = now
                 self.best_bound = bound
             if improved:
                 self.last_improve_at = now
         evt = self.snapshot()
         evt["event"] = "solution"
         emit(evt)
+        self._record_gap_sample("solution", evt)
 
 
 def start_heartbeat(cb: ProgressCallback, stop: threading.Event) -> threading.Thread:
@@ -144,6 +239,9 @@ def start_heartbeat(cb: ProgressCallback, stop: threading.Event) -> threading.Th
             evt["type"] = "heartbeat"
             evt["event"] = "heartbeat"
             emit(evt)
+            cb._record_gap_sample("heartbeat", evt)
+            if cb.maybe_stop_for_plateau():
+                break
 
     t = threading.Thread(target=loop, name="cpsat-heartbeat", daemon=True)
     t.start()
@@ -154,14 +252,34 @@ def configure_solver(
     time_limit: float | None,
     workers: int,
     seed: int | None = None,
+    *,
+    prove_mode: bool = False,
+    absolute_gap: float | None = None,
 ) -> cp_model.CpSolver:
+    """Configure CP-SAT.
+
+    prove_mode enables MaxSAT-core + stronger linearization aimed at dual-bound
+    closing on weighted Boolean objectives (clash phase). Portfolio race members
+    keep prove_mode=False for faster primal search.
+    """
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = max(1, workers)
     solver.parameters.log_search_progress = False
+    solver.parameters.cp_model_presolve = True
     if time_limit is not None and time_limit > 0:
         solver.parameters.max_time_in_seconds = float(time_limit)
     if seed is not None and seed >= 0:
         solver.parameters.random_seed = int(seed)
+    if absolute_gap is not None and absolute_gap >= 0:
+        solver.parameters.absolute_gap_limit = float(absolute_gap)
+    if prove_mode:
+        # Weighted sum of Booleans → unsat-core LB stepping often beats weak LP.
+        solver.parameters.optimize_with_core = True
+        solver.parameters.find_multiple_cores = True
+        # Stronger LP cuts for reified same-day constraints (still keep portfolio).
+        solver.parameters.linearization_level = 2
+        solver.parameters.cp_model_probing_level = 2
+        solver.parameters.symmetry_level = 2
     return solver
 
 
@@ -192,6 +310,10 @@ def solve_with_progress(
     workers: int,
     t0: float,
     seed: int | None = None,
+    gap_trace: list[dict[str, Any]] | None = None,
+    prove_mode: bool = False,
+    absolute_gap: float | None = None,
+    prove_plateau_seconds: float | None = None,
 ) -> tuple[int, cp_model.CpSolver, ProgressCallback]:
     emit(
         {
@@ -200,22 +322,137 @@ def solve_with_progress(
             "phase_label": phase_label(phase),
             "workers": workers,
             "elapsed": round(time.time() - t0, 3),
+            "prove_mode": prove_mode,
         }
     )
-    solver = configure_solver(time_limit, workers, seed=seed)
-    cb = ProgressCallback(built, phase, workers, t0)
+    solver = configure_solver(
+        time_limit,
+        workers,
+        seed=seed,
+        prove_mode=prove_mode,
+        absolute_gap=absolute_gap if phase == "minimize_clash" else None,
+    )
+    plateau = prove_plateau_seconds if phase == "minimize_clash" else None
+    cb = ProgressCallback(
+        built,
+        phase,
+        workers,
+        t0,
+        gap_trace=gap_trace,
+        prove_plateau_seconds=plateau,
+    )
     stop = threading.Event()
     start_heartbeat(cb, stop)
     try:
         status = solver.Solve(built.model, cb)
     finally:
         stop.set()
+    # Plateau StopSearch often surfaces as FEASIBLE / UNKNOWN with an incumbent.
+    if cb.stopped_for_plateau and status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if cb.best_clash is not None:
+            status = cp_model.FEASIBLE
     final = cb.snapshot()
     final["type"] = "progress"
     final["event"] = "phase_end"
     final["solver_status"] = status_name(status)
+    if cb.stopped_for_plateau:
+        final["stopped_for_plateau"] = True
     emit(final)
+    cb._record_gap_sample("phase_end", final)
     return status, solver, cb
+
+
+def analyze_gap_trace(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Classify prove behavior from incumbent/bound time series."""
+    clash = [s for s in samples if s.get("phase") == "minimize_clash"]
+    if not clash:
+        return {"diagnosis": "no_clash_phase_samples", "samples": len(samples)}
+
+    first_sol = next((s for s in clash if s.get("event") == "solution"), None)
+    last = clash[-1]
+    incumbents = [s["incumbent"] for s in clash if s.get("incumbent") is not None]
+    bounds = [s["bound"] for s in clash if s.get("bound") is not None]
+    gaps = [s["gap"] for s in clash if s.get("gap") is not None]
+
+    first_inc = incumbents[0] if incumbents else None
+    final_inc = incumbents[-1] if incumbents else None
+    first_bound = bounds[0] if bounds else None
+    final_bound = bounds[-1] if bounds else None
+    final_gap = gaps[-1] if gaps else None
+    total_elapsed = float(last.get("elapsed") or 0)
+
+    # Longest stretch where incumbent flat but gap > 0 (bound-stuck prove).
+    max_prove_stretch = 0.0
+    stretch_start = None
+    for s in clash:
+        gap = s.get("gap")
+        act = s.get("activity")
+        elapsed = float(s.get("elapsed") or 0)
+        if gap is not None and gap > 0 and act == "proving":
+            if stretch_start is None:
+                stretch_start = elapsed
+            max_prove_stretch = max(max_prove_stretch, elapsed - stretch_start)
+        else:
+            stretch_start = None
+
+    bound_moved = (
+        first_bound is not None
+        and final_bound is not None
+        and final_bound > first_bound
+    )
+    incumbent_improved = (
+        first_inc is not None
+        and final_inc is not None
+        and final_inc < first_inc
+    )
+
+    # Late-window: last 40% of wall time (or last 10s) — what users feel as "stuck proving".
+    late_cut = max(0.0, total_elapsed - max(10.0, 0.4 * total_elapsed))
+    late = [s for s in clash if float(s.get("elapsed") or 0) >= late_cut]
+    late_bounds = [s["bound"] for s in late if s.get("bound") is not None]
+    late_incs = [s["incumbent"] for s in late if s.get("incumbent") is not None]
+    late_bound_flat = (
+        len(late_bounds) >= 2 and max(late_bounds) == min(late_bounds)
+    )
+    late_inc_flat = len(late_incs) >= 2 and max(late_incs) == min(late_incs)
+    late_gap = late[-1].get("gap") if late else None
+
+    if final_gap is not None and final_gap <= 0:
+        diagnosis = "gap_closed"
+    elif (
+        late_gap is not None
+        and late_gap > 0
+        and late_bound_flat
+        and late_inc_flat
+        and max_prove_stretch >= 5.0
+    ):
+        # Classic UniSlot prove stall: good incumbent, dual barely moves.
+        diagnosis = "bound_stuck"
+    elif bound_moved and not incumbent_improved and final_gap is not None and final_gap > 0:
+        diagnosis = "bound_closing_slowly"
+    elif incumbent_improved and final_gap is not None and final_gap > 0:
+        diagnosis = "still_improving_incumbent"
+    elif not bound_moved and final_gap is not None and final_gap > 0:
+        diagnosis = "bound_stuck"
+    else:
+        diagnosis = "inconclusive"
+
+    return {
+        "diagnosis": diagnosis,
+        "clash_samples": len(clash),
+        "first_solution_elapsed": first_sol.get("elapsed") if first_sol else None,
+        "first_incumbent": first_inc,
+        "final_incumbent": final_inc,
+        "first_bound": first_bound,
+        "final_bound": final_bound,
+        "final_gap": final_gap,
+        "incumbent_improved": incumbent_improved,
+        "bound_moved": bound_moved,
+        "late_bound_flat": late_bound_flat,
+        "late_incumbent_flat": late_inc_flat,
+        "max_proving_stretch_seconds": round(max_prove_stretch, 3),
+        "phase_end_status": last.get("event"),
+    }
 
 
 def solve_lex(
@@ -225,12 +462,26 @@ def solve_lex(
     workers: int,
     seed: int | None = None,
     clash_only: bool = False,
+    gap_trace: list[dict[str, Any]] | None = None,
+    absolute_gap: float | None = None,
+    prove_plateau_seconds: float | None = None,
+    full_prove: bool = False,
 ) -> dict[str, Any]:
     t0 = time.time()
     remaining = time_limit
     proven_levels: list[str] = []
     last_status = cp_model.UNKNOWN
     slot_by_course: dict[str, int] = {}
+    # Portfolio race (clash_only, no escapes): primal-first params.
+    # Dedicated prove / clash-only with explicit escapes: dual-oriented params.
+    escape_requested = (
+        (prove_plateau_seconds is not None and prove_plateau_seconds > 0)
+        or (absolute_gap is not None and absolute_gap >= 0)
+        or full_prove
+    )
+    clash_prove_mode = (not clash_only) or escape_requested
+    clash_plateau = prove_plateau_seconds
+    clash_abs_gap = absolute_gap
 
     def phase_limit() -> float | None:
         if remaining is None:
@@ -242,6 +493,17 @@ def solve_lex(
         if remaining is not None:
             remaining = max(0.0, remaining - elapsed_phase)
 
+    if built.bound_notes:
+        emit(
+            {
+                "type": "phase",
+                "phase": "bound_cuts",
+                "phase_label": "Injecting structural clash lower-bound cuts",
+                "workers": 0,
+                "notes": built.bound_notes[:5],
+            }
+        )
+
     # Phase 1: minimize clash weight
     built.model.Minimize(built.clash_weight)
     last_status, solver, cb = solve_with_progress(
@@ -251,6 +513,10 @@ def solve_lex(
         workers=workers,
         t0=t0,
         seed=seed,
+        gap_trace=gap_trace,
+        prove_mode=clash_prove_mode,
+        absolute_gap=clash_abs_gap,
+        prove_plateau_seconds=clash_plateau,
     )
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -273,10 +539,20 @@ def solve_lex(
     red_at_clash = int(solver.Value(built.red_students))
     bal_at_clash = int(solver.Value(built.balance_l1))
     excess_at_clash = int(solver.Value(built.parallel_excess))
-    if last_status == cp_model.OPTIMAL:
+    plateau_stopped = bool(cb.stopped_for_plateau)
+    if last_status == cp_model.OPTIMAL and not plateau_stopped:
         proven_levels.append("clash_weight")
 
     if clash_only:
+        msg = (
+            "Clash weight proven in portfolio race member."
+            if "clash_weight" in proven_levels
+            else (
+                "Clash prove stopped on incumbent/bound plateau."
+                if plateau_stopped
+                else "Clash-only portfolio race result."
+            )
+        )
         return {
             "status": status_name(last_status),
             "proven_optimal": "clash_weight" in proven_levels,
@@ -288,11 +564,8 @@ def solve_lex(
             "parallel_excess": excess_at_clash,
             "solver_time_seconds": round(time.time() - t0, 4),
             "num_workers": workers,
-            "message": (
-                "Clash-only portfolio race result."
-                if "clash_weight" not in proven_levels
-                else "Clash weight proven in portfolio race member."
-            ),
+            "stopped_for_plateau": plateau_stopped,
+            "message": msg,
         }
 
     # Phase 2: fix clash, minimize RED
@@ -307,6 +580,7 @@ def solve_lex(
         workers=workers,
         t0=t0,
         seed=None if seed is None else seed + 1,
+        gap_trace=gap_trace,
     )
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -342,6 +616,7 @@ def solve_lex(
         workers=workers,
         t0=t0,
         seed=None if seed is None else seed + 2,
+        gap_trace=gap_trace,
     )
     consume(solver.WallTime())
 
@@ -381,6 +656,11 @@ def solve_lex(
         message = (
             "Clash weight proven minimal under the course→weekday CP-SAT model."
         )
+    elif plateau_stopped:
+        message = (
+            "Best feasible schedule shipped after clash prove plateau "
+            "(incumbent and dual bound both flat)."
+        )
     else:
         message = "Best feasible solution found (clash weight not fully proven)."
 
@@ -395,6 +675,7 @@ def solve_lex(
         "parallel_excess": excess,
         "solver_time_seconds": round(time.time() - t0, 4),
         "num_workers": workers,
+        "stopped_for_plateau": plateau_stopped,
         "message": message,
     }
 
@@ -426,6 +707,28 @@ def main() -> int:
         action="store_true",
         help="Stop after lex level 1 (clash). Used by portfolio race members.",
     )
+    parser.add_argument(
+        "--gap-trace",
+        default=None,
+        help="Write NDJSON incumbent/bound/gap samples for prove diagnosis",
+    )
+    parser.add_argument(
+        "--absolute-gap",
+        type=float,
+        default=None,
+        help="Stop clash prove when incumbent−bound ≤ this (CP-SAT absolute_gap_limit)",
+    )
+    parser.add_argument(
+        "--prove-plateau",
+        type=float,
+        default=None,
+        help="Stop clash prove when incumbent and bound are both flat for N seconds",
+    )
+    parser.add_argument(
+        "--prove",
+        action="store_true",
+        help="Disable plateau/gap escapes; chase full clash OPTIMAL certificate",
+    )
     args = parser.parse_args()
 
     workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
@@ -442,6 +745,9 @@ def main() -> int:
             "students": len(instance.get("students") or []),
             "seed": seed,
             "clash_only": bool(args.clash_only),
+            "absolute_gap": args.absolute_gap,
+            "prove_plateau": args.prove_plateau,
+            "full_prove": bool(args.prove),
         }
     )
     try:
@@ -454,13 +760,28 @@ def main() -> int:
         return 2
 
     emit({"type": "model_ready", "elapsed": 0, "courses": len(built.course_codes)})
+    gap_samples: list[dict[str, Any]] | None = [] if args.gap_trace else None
+    absolute_gap = None if args.prove else args.absolute_gap
+    prove_plateau = None if args.prove else args.prove_plateau
     result = solve_lex(
         built,
         time_limit=args.time_limit,
         workers=workers,
         seed=seed,
         clash_only=bool(args.clash_only),
+        gap_trace=gap_samples,
+        absolute_gap=absolute_gap,
+        prove_plateau_seconds=prove_plateau,
+        full_prove=bool(args.prove),
     )
+    if gap_samples is not None and args.gap_trace:
+        analysis = analyze_gap_trace(gap_samples)
+        result["gap_analysis"] = analysis
+        with open(args.gap_trace, "w", encoding="utf-8") as gt:
+            for row in gap_samples:
+                gt.write(json.dumps(row, separators=(",", ":")) + "\n")
+            gt.write(json.dumps({"event": "analysis", **analysis}, separators=(",", ":")) + "\n")
+        emit({"type": "gap_analysis", **analysis})
     with open(args.output, "w", encoding="utf-8") as out:
         json.dump(result, out, indent=2)
     emit(
@@ -468,7 +789,13 @@ def main() -> int:
             "type": "done",
             **{
                 k: result.get(k)
-                for k in ("status", "clash_weight", "red_students", "proven_optimal")
+                for k in (
+                    "status",
+                    "clash_weight",
+                    "red_students",
+                    "proven_optimal",
+                    "stopped_for_plateau",
+                )
             },
         }
     )

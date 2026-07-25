@@ -88,6 +88,9 @@ async function runSolve(opts: {
   timeLimit?: number
   workers?: number
   portfolio?: number
+  absoluteGap?: number
+  provePlateau?: number
+  prove?: boolean
   interactive: boolean
 }): Promise<number> {
   banner()
@@ -182,6 +185,9 @@ async function runSolve(opts: {
         cpsatTimeLimitSeconds: opts.timeLimit,
         cpsatWorkers: opts.workers,
         cpsatPortfolio: opts.portfolio,
+        cpsatAbsoluteGap: opts.absoluteGap,
+        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatFullProve: opts.prove,
         eagerExports: true,
         eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
         signal: ac.signal,
@@ -319,6 +325,17 @@ async function main(): Promise<void> {
       'Multi-seed clash race before prove (default: 5; 0 disables)',
       (v) => Number(v),
     )
+    .option(
+      '--absolute-gap <n>',
+      'Ship when clash incumbent−bound ≤ n (skips full OPTIMAL certificate)',
+      (v) => Number(v),
+    )
+    .option(
+      '--prove-plateau <seconds>',
+      'Ship when clash incumbent and bound are both flat for N seconds',
+      (v) => Number(v),
+    )
+    .option('--prove', 'Disable gap/plateau escapes; chase full clash OPTIMAL', false)
     .option('-y, --yes', 'Non-interactive when paths are provided', false)
     .action(async (flags: {
       input?: string
@@ -326,6 +343,9 @@ async function main(): Promise<void> {
       timeLimit?: number
       workers?: number
       portfolio?: number
+      absoluteGap?: number
+      provePlateau?: number
+      prove?: boolean
       yes?: boolean
     }) => {
       const interactive = !flags.yes && (!flags.input || !flags.output)
@@ -335,6 +355,9 @@ async function main(): Promise<void> {
         timeLimit: flags.timeLimit,
         workers: flags.workers,
         portfolio: flags.portfolio,
+        absoluteGap: flags.absoluteGap,
+        provePlateau: flags.provePlateau,
+        prove: flags.prove,
         interactive: interactive || !flags.input,
       })
       process.exitCode = code

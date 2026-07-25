@@ -7,6 +7,8 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
+from bounds import compute_clash_lower_bound
+
 NUM_WEEKDAYS = 6
 SATURDAY = 5
 PREFERRED_PARALLEL = 11
@@ -21,6 +23,7 @@ class BuiltModel:
     balance_l1: cp_model.IntVar
     parallel_excess: cp_model.IntVar
     course_codes: list[str]
+    bound_notes: list[str]
 
 
 def _as_courses(instance: dict[str, Any]) -> list[dict[str, Any]]:
@@ -36,6 +39,16 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
     if not courses:
         raise ValueError("instance has no courses")
 
+    # Strengthen clash cut via component / core-edge / weighted-clique kernels.
+    bound_info = compute_clash_lower_bound(instance)
+    bound_notes = list(bound_info.get("notes") or [])
+    if bound_info["min_clash_weight_lower_bound"] > int(
+        instance.get("min_clash_weight_lower_bound") or 0
+    ):
+        instance = {
+            **instance,
+            "min_clash_weight_lower_bound": int(bound_info["min_clash_weight_lower_bound"]),
+        }
     num_weekdays = int(instance.get("num_weekdays") or NUM_WEEKDAYS)
     saturday = int(instance.get("saturday_index", SATURDAY))
     preferred = int(instance.get("preferred_parallel") or PREFERRED_PARALLEL)
@@ -189,6 +202,7 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         balance_l1=balance_l1,
         parallel_excess=parallel_excess,
         course_codes=course_codes,
+        bound_notes=bound_notes,
     )
 
 

@@ -43,6 +43,12 @@ export type RunCpsatOptions = {
   /** Seconds per portfolio race member (default 45). */
   portfolioRaceSeconds?: number
   seed?: number
+  /** Stop clash prove when incumbent−bound ≤ this (CP-SAT absolute_gap_limit). */
+  absoluteGap?: number
+  /** Stop clash prove when incumbent and bound are both flat for N seconds. */
+  provePlateauSeconds?: number
+  /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
+  fullProve?: boolean
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
   /** Override python executable (default: solver/cpsat/.venv or python3). */
@@ -254,6 +260,15 @@ export function spawnCpsatSolve(
         if (options?.clashOnly) {
           args.push('--clash-only')
         }
+        if (options?.absoluteGap != null && options.absoluteGap >= 0) {
+          args.push('--absolute-gap', String(options.absoluteGap))
+        }
+        if (options?.provePlateauSeconds != null && options.provePlateauSeconds > 0) {
+          args.push('--prove-plateau', String(options.provePlateauSeconds))
+        }
+        if (options?.fullProve) {
+          args.push('--prove')
+        }
 
         child = spawn(python, args, {
           cwd: CPSAT_DIR,
@@ -373,6 +388,10 @@ async function runPortfolioRace(
         timeLimitSeconds: raceSeconds,
         seed,
         clashOnly: true,
+        // Race is primal-first — no prove escapes / full-prove flags.
+        absoluteGap: undefined,
+        provePlateauSeconds: undefined,
+        fullProve: false,
         portfolioMeta,
       })
     }),
