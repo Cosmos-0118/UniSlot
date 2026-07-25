@@ -242,9 +242,9 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
 
   for (let it = 0; it < polishIters; it++) {
     const useSwap = rand() < 0.35 && codes.length >= 2
-    let c1 = codes[Math.floor(rand() * codes.length)]!
+    const c1 = codes[Math.floor(rand() * codes.length)]!
     let c2: string | null = null
-    let old1 = dayOf[c1]!
+    const old1 = dayOf[c1]!
     let old2 = 0
 
     if (useSwap) {

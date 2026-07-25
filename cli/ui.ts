@@ -40,12 +40,20 @@ type RaceLane = {
 /** Live panel stage: race seeds, clash prove (+ seeds), then compact lex steps. */
 type Stage = 'pipeline' | 'race' | 'clash' | 'red' | 'balance'
 
-const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
-const PULSE = ['·', '◦', '●', '◦'] as const
-/** Paint / animation rate — keep low to avoid flicker. */
-const TICK_MS = 100
+/**
+ * Ambient paint rate. Line-diff rendering keeps this flicker-free;
+ * ~12.5 FPS is enough for smooth Braille motion without stealing CPU from CP-SAT.
+ */
+const TICK_MS = 80
 /** Pad every frame to this many columns so leftovers never ghost. */
 const COLS = 88
+
+/** Soft Braille spinner — one cell, low visual noise. */
+const BRAILLE_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+/** Density ramp for indeterminate Braille ribbons (empty → full). */
+const BRAILLE_LEVEL = ['⠀', '⢀', '⢠', '⢰', '⢸', '⣸', '⣼', '⣾', '⣿'] as const
+const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
+const HISTORY_CAP = 24
 
 function formatDuration(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '0.0s'
@@ -53,20 +61,6 @@ function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = sec - m * 60
   return `${m}m ${s.toFixed(0).padStart(2, '0')}s`
-}
-
-function laneStatus(activity: LiveSolveState['activity'], idle: number, done: boolean): string {
-  if (done) return chalk.dim('done')
-  switch (activity) {
-    case 'improving':
-      return chalk.green('improving')
-    case 'proving':
-      return chalk.yellow(`proving ${formatDuration(idle)}`)
-    case 'searching':
-      return chalk.cyan('searching')
-    default:
-      return chalk.dim('waiting')
-  }
 }
 
 function liveOf(elapsed: number, elapsedAt: number): number {
@@ -91,6 +85,11 @@ function activityLabel(activity: LiveSolveState['activity'], idle: number): stri
   }
 }
 
+function laneStatus(activity: LiveSolveState['activity'], idle: number, done: boolean): string {
+  if (done) return chalk.dim('done')
+  return activityLabel(activity, idle)
+}
+
 function gapLabel(value: number | null, bound: number | null): string {
   if (value == null || bound == null) return chalk.dim('gap —')
   const g = value - bound
@@ -99,13 +98,117 @@ function gapLabel(value: number | null, bound: number | null): string {
 
 /** Visible length ignoring ANSI CSI sequences. */
 function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length
+  // Build without a literal ESC so eslint no-control-regex stays clean.
+  return s.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'), '').length
 }
 
 function padLine(s: string, width = COLS): string {
   const len = visibleLen(s)
   if (len >= width) return s
   return s + ' '.repeat(width - len)
+}
+
+/** Strip decorative motion glyphs so non-TTY logs stay quiet. */
+function stripMotion(s: string): string {
+  return s.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠀⢀⢠⢰⢸⣸⣼⣾⣿▁▂▃▄▅▆▇█●○★·]/g, '')
+}
+
+/**
+ * Sliding Braille ribbon — ambient “still working” motion that never hard-loops
+ * the same shape (phase drifts with tick; soft Gaussian hotspot).
+ */
+function brailleRibbon(tick: number, width = 18, tone: 'cyan' | 'green' | 'yellow' | 'dim' = 'cyan'): string {
+  const cells: string[] = []
+  const center = ((tick * 0.35) % (width + 6)) - 3
+  for (let i = 0; i < width; i++) {
+    const dist = Math.abs(i - center)
+    const falloff = Math.max(0, 1 - dist / 4.2)
+    const breathe = 0.35 + 0.65 * falloff
+    const idx = Math.min(BRAILLE_LEVEL.length - 1, Math.floor(breathe * (BRAILLE_LEVEL.length - 1) + 0.001))
+    cells.push(BRAILLE_LEVEL[idx]!)
+  }
+  const raw = cells.join('')
+  switch (tone) {
+    case 'green':
+      return chalk.green(raw)
+    case 'yellow':
+      return chalk.yellow(raw)
+    case 'dim':
+      return chalk.dim(raw)
+    default:
+      return chalk.cyan(raw)
+  }
+}
+
+/** Determinate bar with Braille sub-cell fill. */
+function progressBar(frac: number, width = 18): string {
+  const t = Math.max(0, Math.min(1, frac))
+  const exact = t * width
+  const full = Math.floor(exact)
+  const partial = exact - full
+  let bar = ''
+  for (let i = 0; i < width; i++) {
+    if (i < full) {
+      bar += '⣿'
+    } else if (i === full && partial > 0.02) {
+      const idx = Math.max(
+        1,
+        Math.min(BRAILLE_LEVEL.length - 1, Math.round(partial * (BRAILLE_LEVEL.length - 1))),
+      )
+      bar += BRAILLE_LEVEL[idx]!
+    } else {
+      bar += '⠀'
+    }
+  }
+  const colored =
+    t >= 1 ? chalk.green(bar) : t > 0.75 ? chalk.yellow(bar) : chalk.cyan(bar)
+  return colored
+}
+
+function sparkline(history: number[], width = 16): string {
+  if (history.length === 0) return chalk.dim('░'.repeat(Math.min(width, 8)))
+  const slice = history.slice(-width)
+  const min = Math.min(...slice)
+  const max = Math.max(...slice)
+  const span = Math.max(1e-9, max - min)
+  // Lower objective is better → invert so improvements rise visually.
+  return slice
+    .map((v) => {
+      const norm = 1 - (v - min) / span
+      const idx = Math.min(SPARK.length - 1, Math.floor(norm * (SPARK.length - 1) + 0.001))
+      return chalk.cyan(SPARK[idx]!)
+    })
+    .join('')
+}
+
+function activityTone(activity: LiveSolveState['activity']): 'cyan' | 'green' | 'yellow' | 'dim' {
+  switch (activity) {
+    case 'improving':
+      return 'green'
+    case 'proving':
+      return 'yellow'
+    case 'searching':
+      return 'cyan'
+    default:
+      return 'dim'
+  }
+}
+
+function pushHistory(buf: number[], value: number | null | undefined): void {
+  if (value == null || !Number.isFinite(value)) return
+  const last = buf[buf.length - 1]
+  if (last === value && buf.length > 0) return
+  buf.push(value)
+  if (buf.length > HISTORY_CAP) buf.shift()
+}
+
+function stepTrack(active: 1 | 2 | 3): string {
+  const mark = (n: 1 | 2 | 3, label: string) => {
+    if (n < active) return chalk.dim(`✓ ${n}/3 ${label}`)
+    if (n === active) return chalk.cyan(`● ${n}/3 ${label}`)
+    return chalk.dim(`○ ${n}/3 ${label}`)
+  }
+  return `  ${mark(1, 'clash')}  ${mark(2, 'RED')}  ${mark(3, 'balance')}`
 }
 
 /**
@@ -242,15 +345,8 @@ export function createSolveSpinner(workers = cpus().length) {
   let tickTimer: ReturnType<typeof setInterval> | null = null
   let dirty = true
   let lastNonTtyKey = ''
-
-  const panelHeight = () => {
-    if (stage === 'race' || stage === 'clash') {
-      const seeds = race?.size ?? 0
-      return 2 + Math.max(seeds, 1)
-    }
-    // Compact lex panels: header + metrics + locked context
-    return 3
-  }
+  const clashHistory: number[] = []
+  const redHistory: number[] = []
 
   const ensureLane = (meta: CpsatPortfolioMeta): RaceLane => {
     if (!race) {
@@ -314,32 +410,10 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 
   const liveElapsed = () => liveOf(state.solverElapsed, state.solverElapsedAt)
-  const spinGlyph = () => chalk.magenta(SPINNER[tick % SPINNER.length])
-  const pulseGlyph = () => chalk.magenta(PULSE[Math.floor(tick / 2) % PULSE.length])
-
-  const sparkRow = (n: number, activeHint?: number): string => {
-    const cells: string[] = []
-    const traveling = tick % Math.max(1, n)
-    for (let i = 0; i < n; i++) {
-      if (activeHint != null && i + 1 === activeHint) cells.push(chalk.green('●'))
-      else if (i === traveling && stage === 'race') cells.push(chalk.magenta('●'))
-      else cells.push(chalk.dim('·'))
-    }
-    return cells.join(' ')
-  }
-
-  const bestLaneIndex = (): number | undefined => {
-    if (!race || race.bestClash == null) return undefined
-    for (const lane of race.lanes.values()) {
-      if (lane.clash === race.bestClash && (lane.red ?? null) === (race.bestRed ?? null)) {
-        return lane.index
-      }
-    }
-    return undefined
-  }
+  const spinGlyph = () => chalk.cyan(BRAILLE_SPIN[tick % BRAILLE_SPIN.length])
 
   const laneLines = (): string[] => {
-    if (!race) return [chalk.dim('  (waiting for solver…)')]
+    if (!race) return [chalk.dim('  waiting for solver…')]
     const ordered = [...race.lanes.values()].sort((a, b) => a.index - b.index)
     const width = Math.max(1, String(race.size).length)
     return ordered.map((lane) => {
@@ -358,37 +432,41 @@ export function createSolveSpinner(workers = cpus().length) {
         `  ${mark} ${chalk.dim(`#${tag}`)} ${seedLabel} ` +
         `clash ${padNum(lane.clash)}  RED ${padNum(lane.red)}  ` +
         `${status}  ` +
-        chalk.dim(`${time} · ${lane.workers}w`)
+        chalk.dim(time)
       )
     })
   }
 
   const header = (title: string, detail: string) =>
-    `${spinGlyph()} ${chalk.cyan(title)} ${pulseGlyph()} ${detail}` +
-    chalk.dim(` · ${state.workers}w · ${formatDuration(liveElapsed())}`)
+    `${spinGlyph()} ${chalk.bold(title)}` +
+    (detail ? chalk.dim(`  ${detail}`) : '') +
+    chalk.dim(`  ·  ${state.workers}w  ·  ${formatDuration(liveElapsed())}`)
 
   const buildRaceFrame = (): string[] => {
-    if (!race) return [`${spinGlyph()} ${rawMessage}`]
+    if (!race) return [`${spinGlyph()}  ${rawMessage}`, `  ${brailleRibbon(tick, 20)}`]
     const lanes = laneLines()
-    const bestIdx = bestLaneIndex()
     const wall = (Date.now() - race.startedAt) / 1000
-    const budget =
+    const totalW = race.size * race.memberWorkers
+    const timeBit =
       race.raceSeconds > 0
         ? chalk.dim(
-            ` · ${formatDuration(Math.min(wall, race.raceSeconds))} / ${race.raceSeconds}s`,
+            `${formatDuration(Math.min(wall, race.raceSeconds))} / ${race.raceSeconds}s`,
           )
-        : chalk.dim(` · ${formatDuration(wall)}`)
+        : chalk.dim(formatDuration(wall))
     const headerBest =
       race.bestClash == null
         ? chalk.dim('best —')
-        : `best ${chalk.bold.green(String(race.bestClash))} / RED ${chalk.bold.green(String(race.bestRed ?? '—'))}`
-    const totalW = race.size * race.memberWorkers
+        : `best ${chalk.bold.green(String(race.bestClash))} · RED ${chalk.bold.green(String(race.bestRed ?? '—'))}`
+
+    const ribbon =
+      race.raceSeconds > 0
+        ? `${progressBar(Math.min(1, wall / race.raceSeconds), 20)}  ${timeBit}`
+        : `${brailleRibbon(tick, 20)}  ${timeBit}`
+
     return [
-      `${spinGlyph()} ${chalk.magenta('Portfolio race')} ${pulseGlyph()} ` +
-        `${race.size} seeds × ${race.memberWorkers}w` +
-        chalk.dim(` (${totalW} workers)`) +
-        `${budget}`,
-      `  ${sparkRow(race.size, bestIdx)}   ${headerBest}`,
+      `${spinGlyph()} ${chalk.bold('Portfolio race')}  ` +
+        chalk.dim(`${race.size} seeds × ${race.memberWorkers}w · ${totalW} workers`),
+      `  ${ribbon}    ${headerBest}`,
       ...lanes,
     ]
   }
@@ -401,14 +479,16 @@ export function createSolveSpinner(workers = cpus().length) {
       warmClash != null
         ? chalk.dim(`warm ${warmClash}/${warmRed ?? '—'}`)
         : chalk.dim('warm —')
-    const lanes = race ? laneLines() : []
-    const bestIdx = bestLaneIndex()
-    const spark = race ? `${sparkRow(race.size, bestIdx)}   ` : ''
+    const tone = activityTone(state.activity)
+    const motion =
+      clashHistory.length > 1
+        ? `${brailleRibbon(tick, 10, tone)}  ${sparkline(clashHistory, 14)}`
+        : brailleRibbon(tick, 16, tone)
     return [
-      header('1/3 Clash', 'Minimizing clash weight'),
-      `  ${spark}${warm}  →  clash ${padNum(clash)}  RED ${padNum(red)}  ` +
+      header('1/3 Clash', 'minimize clash weight'),
+      `  ${motion}  ${warm}  →  clash ${padNum(clash)}  RED ${padNum(red)}  ` +
         `${gapLabel(clash, state.bound)}  ${act}`,
-      ...lanes,
+      stepTrack(1),
     ]
   }
 
@@ -419,53 +499,59 @@ export function createSolveSpinner(workers = cpus().length) {
       state.bestClash != null
         ? chalk.dim(`locked clash ${state.bestClash}${clashProven ? ' ✓' : ''}`)
         : chalk.dim('locked clash —')
+    const tone = activityTone(state.activity)
+    const motion =
+      redHistory.length > 1
+        ? `${brailleRibbon(tick, 10, tone)}  ${sparkline(redHistory, 14)}`
+        : brailleRibbon(tick, 16, tone)
     return [
-      header('2/3 RED', 'Minimizing students with clashes'),
-      `  ${locked}  →  RED ${padNum(red)}  ${gapLabel(red, state.bound)}  ${act}`,
-      `  ${chalk.dim('✓ 1/3 clash fixed')}  ${chalk.cyan('● 2/3 RED')}  ${chalk.dim('○ 3/3 balance')}`,
+      header('2/3 RED', 'minimize students with clashes'),
+      `  ${motion}  ${locked}  →  RED ${padNum(red)}  ${gapLabel(red, state.bound)}  ${act}`,
+      stepTrack(2),
     ]
   }
 
   const buildBalanceFrame = (): string[] => {
     const act = activityLabel(state.activity, state.secondsSinceImprove)
-    const locked =
-      chalk.dim(
-        `locked clash ${state.bestClash ?? '—'}${clashProven ? ' ✓' : ''}` +
-          ` · RED ${state.bestRed ?? '—'}${redProven ? ' ✓' : ''}`,
-      )
+    const locked = chalk.dim(
+      `locked clash ${state.bestClash ?? '—'}${clashProven ? ' ✓' : ''}` +
+        ` · RED ${state.bestRed ?? '—'}${redProven ? ' ✓' : ''}`,
+    )
+    const ribbon = brailleRibbon(tick, 14, activityTone(state.activity))
     return [
-      header('3/3 Balance', 'Spreading load across weekdays'),
-      `  ${locked}  →  balance ${padNum(state.bestBalance)}  parallel ${padNum(state.bestParallelExcess)}  ${act}`,
-      `  ${chalk.dim('✓ 1/3 clash')}  ${chalk.dim('✓ 2/3 RED')}  ${chalk.cyan('● 3/3 balance')}`,
+      header('3/3 Balance', 'spread load across weekdays'),
+      `  ${ribbon}  ${locked}  →  balance ${padNum(state.bestBalance)}  parallel ${padNum(state.bestParallelExcess)}  ${act}`,
+      stepTrack(3),
     ]
   }
 
   const buildFrame = (): string[] => {
     if (stage === 'pipeline') {
-      const lines = [`${spinGlyph()} ${rawMessage}`]
-      while (lines.length < panelHeight()) lines.push('')
-      return lines
+      return [
+        `${spinGlyph()}  ${rawMessage}`,
+        `  ${brailleRibbon(tick, 22)}`,
+        '',
+      ]
     }
     if (stage === 'race') return buildRaceFrame()
     if (stage === 'clash') return buildClashFrame()
     if (stage === 'red') return buildRedFrame()
     if (stage === 'balance') return buildBalanceFrame()
 
-    // No portfolio race — single compact prove view.
-    const lines = [
+    return [
       header(state.phaseLabel, ''),
-      `  clash ${padNum(state.bestClash)}  RED ${padNum(state.bestRed)}  ` +
+      `  ${brailleRibbon(tick, 14, activityTone(state.activity))}  ` +
+        `clash ${padNum(state.bestClash)}  RED ${padNum(state.bestRed)}  ` +
         `balance ${padNum(state.bestBalance)}  ${activityLabel(state.activity, state.secondsSinceImprove)}`,
+      '',
     ]
-    while (lines.length < panelHeight()) lines.push('')
-    return lines
   }
 
   const paint = () => {
     if (!dirty && stage === 'pipeline') return
     const lines = buildFrame()
     if (!panel.isTty) {
-      const key = lines.join('\n').replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·◦●]/g, '')
+      const key = stripMotion(lines.join('\n'))
       if (key === lastNonTtyKey) return
       lastNonTtyKey = key
     }
@@ -484,7 +570,7 @@ export function createSolveSpinner(workers = cpus().length) {
     const c = race?.bestClash ?? warmClash
     const r = race?.bestRed ?? warmRed
     panel.checkpoint(
-      chalk.magenta('Portfolio race') +
+      chalk.bold('Portfolio race') +
         chalk.dim(' · ') +
         `best clash ${c ?? '—'} · RED ${r ?? '—'}`,
     )
@@ -503,6 +589,8 @@ export function createSolveSpinner(workers = cpus().length) {
     stage = 'clash'
     if (state.bestClash == null && warmClash != null) state.bestClash = warmClash
     if (state.bestRed == null && warmRed != null) state.bestRed = warmRed
+    pushHistory(clashHistory, state.bestClash)
+    pushHistory(redHistory, state.bestRed)
     markDirty()
   }
 
@@ -518,6 +606,8 @@ export function createSolveSpinner(workers = cpus().length) {
       state.activity = 'searching'
       state.secondsSinceImprove = 0
       state.solutions = 0
+      clashHistory.length = 0
+      redHistory.length = 0
     } else if (next === 'balance' && (stage === 'red' || stage === 'clash')) {
       if (stage === 'clash') {
         // Skipped red somehow — still checkpoint clash.
@@ -576,6 +666,8 @@ export function createSolveSpinner(workers = cpus().length) {
         const raceSeconds = evt.portfolio_race_seconds ?? 0
         stage = 'race'
         raceCheckpointed = false
+        clashHistory.length = 0
+        redHistory.length = 0
         race = {
           size:
             seeds.length ||
@@ -652,6 +744,8 @@ export function createSolveSpinner(workers = cpus().length) {
             lane.activity = 'idle'
           }
           recomputeRaceBest()
+          pushHistory(clashHistory, race?.bestClash)
+          pushHistory(redHistory, race?.bestRed)
         } else if (evt.type === 'start' || evt.type === 'model_ready' || evt.type === 'phase') {
           lane.activity = 'searching'
           lane.workers = evt.portfolio.member_workers
@@ -662,6 +756,8 @@ export function createSolveSpinner(workers = cpus().length) {
           if (evt.clash_weight != null) lane.clash = evt.clash_weight
           if (evt.red_students != null) lane.red = evt.red_students
           recomputeRaceBest()
+          pushHistory(clashHistory, race?.bestClash)
+          pushHistory(redHistory, race?.bestRed)
         }
         markDirty()
         return
@@ -721,8 +817,14 @@ export function createSolveSpinner(workers = cpus().length) {
         state.phase = evt.phase
         state.phaseLabel = evt.phase_label ?? evt.phase
         // Never wipe established metrics with null mid-phase heartbeats.
-        if (evt.best_clash != null) state.bestClash = evt.best_clash
-        if (evt.best_red != null) state.bestRed = evt.best_red
+        if (evt.best_clash != null) {
+          state.bestClash = evt.best_clash
+          pushHistory(clashHistory, evt.best_clash)
+        }
+        if (evt.best_red != null) {
+          state.bestRed = evt.best_red
+          pushHistory(redHistory, evt.best_red)
+        }
         if (evt.best_balance_l1_scaled != null) state.bestBalance = evt.best_balance_l1_scaled
         if (evt.best_parallel_excess != null) {
           state.bestParallelExcess = evt.best_parallel_excess
@@ -775,7 +877,7 @@ export function createSolveSpinner(workers = cpus().length) {
 }
 
 export function banner(): void {
-  p.intro(chalk.bold.magenta('UniSlot') + chalk.dim(' · terminal CP-SAT scheduler'))
+  p.intro(chalk.bold.cyan('UniSlot') + chalk.dim(' · terminal CP-SAT scheduler'))
 }
 
 export function outroSuccess(lines: string[]): void {
