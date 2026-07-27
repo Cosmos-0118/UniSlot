@@ -85,6 +85,7 @@ async function writeExports(
 async function runSolve(opts: {
   input?: string
   output?: string
+  nomenclature?: string
   timeLimit?: number
   workers?: number
   portfolio?: number
@@ -132,6 +133,21 @@ async function runSolve(opts: {
       ? 'Saturday · enabled for maths courses'
       : 'Saturday · blocked (Mon–Fri only)',
   )
+
+  let programNomenclatureXlsx: ArrayBuffer | undefined
+  if (opts.nomenclature) {
+    try {
+      await assertReadableFile(opts.nomenclature)
+      const nomBuffer = await readFile(opts.nomenclature)
+      programNomenclatureXlsx = nomBuffer.buffer.slice(
+        nomBuffer.byteOffset,
+        nomBuffer.byteOffset + nomBuffer.byteLength,
+      )
+    } catch (err) {
+      p.log.error(err instanceof Error ? err.message : String(err))
+      return 1
+    }
+  }
 
   let inputPath = opts.input
   if (!inputPath) {
@@ -213,6 +229,7 @@ async function runSolve(opts: {
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
+        programNomenclatureXlsx,
         eagerExports: true,
         eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
         signal: ac.signal,
@@ -339,6 +356,7 @@ async function main(): Promise<void> {
     .description('Parse enrollment Excel, solve with CP-SAT, write schedule exports')
     .option('-i, --input <file>', 'Enrollment .xlsx path')
     .option('-o, --output <dir>', 'Output directory for exports')
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx for program/branch abbreviations')
     .option('--time-limit <seconds>', 'Optional wall-clock limit (escape hatch only)', (v) =>
       Number(v),
     )
@@ -369,6 +387,7 @@ async function main(): Promise<void> {
     .action(async (flags: {
       input?: string
       output?: string
+      nomenclature?: string
       timeLimit?: number
       workers?: number
       portfolio?: number
@@ -385,6 +404,7 @@ async function main(): Promise<void> {
       const code = await runSolve({
         input: flags.input,
         output: flags.output,
+        nomenclature: flags.nomenclature,
         timeLimit: flags.timeLimit,
         workers: flags.workers,
         portfolio: flags.portfolio,

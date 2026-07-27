@@ -24,6 +24,8 @@ import {
   type PipelineExportKind,
 } from './exports'
 
+import DEFAULT_PROGRAM_NOMENCLATURE_MAP from '../io/programNomenclatureMap.json'
+
 export function computeCourseEmailGroups(rows: EnrollmentRow[]): CourseEmailGroup[] {
   const courseMap = new Map<string, { title: string; student_count: number; emails: Set<string> }>()
 
@@ -107,6 +109,11 @@ export type RunPipelineOptions = {
    * Default false: caller builds exports later if needed.
    */
   eagerExports?: boolean
+  /**
+   * Optional `Nomenclature.xlsx` (first sheet) used to map long program labels
+   * to short nomenclature abbreviations in schedule exports.
+   */
+  programNomenclatureXlsx?: ArrayBuffer
   /** Which workbooks to build when {@link eagerExports} is true. */
   eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
   signal?: AbortSignal
@@ -409,6 +416,16 @@ export async function runPipeline(
     { courseSections, students },
   )
   const lb = schedulingStatsPreview.lower_bounds
+  let programNomenclatureMap: Record<string, string> | undefined = DEFAULT_PROGRAM_NOMENCLATURE_MAP as Record<
+    string,
+    string
+  >
+
+  if (options?.programNomenclatureXlsx) {
+    const { nomenclatureToProgramAbbrevMap } = await import('../io/excelNomenclature')
+    programNomenclatureMap = await nomenclatureToProgramAbbrevMap(options.programNomenclatureXlsx)
+  }
+
   let schedule = buildSchedule(courseSections, slotAssignments, {
     solver_used: solverUsed,
     solver_time_seconds: solverTimeSeconds,
@@ -419,7 +436,7 @@ export async function runPipeline(
     min_clash_weight_lower_bound: lb?.min_clash_weight_lower_bound,
     zero_clash_structurally_impossible: lb?.zero_clash_structurally_impossible,
     lower_bound_notes: lb?.notes,
-  })
+  }, { programNomenclature: programNomenclatureMap })
   const clashReport = computeClashReport(students, courseSections, slotAssignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
 

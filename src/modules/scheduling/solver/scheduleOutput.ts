@@ -24,8 +24,72 @@ const PROGRAM_ABBREVIATIONS: [string, string][] = [
   ['civil engineering', 'CIVIL'],
 ]
 
-function abbreviateProgram(program: string): string {
+function normalizeProgramForNomenclature(s: string): string {
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s*\.\s*/g, '.')
+}
+
+function compactProgramKey(s: string): string {
+  return s.replace(/[^a-z0-9]+/g, '')
+}
+
+function stripLeadingDegreePrefix(s: string): string {
+  return s
+    .replace(
+      /^(b\.?tech|m\.?tech(\(integrated\))?|b\.?arch|b\.?des|int\.?\s*m\.?tech)\.?-?/i,
+      '',
+    )
+    .trim()
+}
+
+function resolveNomenclature(
+  program: string,
+  programNomenclature: Record<string, string>,
+): string | null {
+  const base = normalizeProgramForNomenclature(program)
+  const baseNoDots = base.replace(/\./g, '')
+  const stripped = stripLeadingDegreePrefix(base)
+  const strippedNoDots = stripped.replace(/\./g, '')
+
+  const candidates = [
+    base,
+    baseNoDots,
+    compactProgramKey(base),
+    stripped,
+    strippedNoDots,
+    compactProgramKey(stripped),
+  ].filter(Boolean)
+
+  for (const key of candidates) {
+    const v = programNomenclature[key]
+    if (v) return v
+  }
+
+  // Final tolerant fallback: compare punctuation-free forms.
+  const compactCandidates = new Set(candidates.map((c) => compactProgramKey(c)).filter(Boolean))
+  if (compactCandidates.size) {
+    for (const [k, v] of Object.entries(programNomenclature)) {
+      if (compactCandidates.has(compactProgramKey(k))) return v
+    }
+  }
+
+  return null
+}
+
+function abbreviateProgram(
+  program: string,
+  programNomenclature?: Record<string, string>,
+): string {
   if (!program) return ''
+  if (programNomenclature && Object.keys(programNomenclature).length) {
+    const v = resolveNomenclature(program, programNomenclature)
+    if (v) return v
+  }
   let lower = program.trim().toLowerCase()
   for (const prefix of ['b.tech.-', 'b.tech-', 'b.tech.', 'b.tech ']) {
     if (lower.startsWith(prefix)) {
@@ -46,11 +110,11 @@ function abbreviateProgram(program: string): string {
   return program.slice(0, 6).toUpperCase() || 'UNK'
 }
 
-function formatPrograms(programs: string[]): string {
+function formatPrograms(programs: string[], programNomenclature?: Record<string, string>): string {
   const abbrs: string[] = []
   const seen = new Set<string>()
   for (const p of programs) {
-    const a = abbreviateProgram(p)
+    const a = abbreviateProgram(p, programNomenclature)
     if (!seen.has(a)) {
       seen.add(a)
       abbrs.push(a)
@@ -73,6 +137,7 @@ export function buildSchedule(
     zero_clash_structurally_impossible?: boolean
     lower_bound_notes?: string[]
   },
+  opts?: { programNomenclature?: Record<string, string> },
 ): Schedule {
   const entries: ScheduleEntry[] = []
 
@@ -92,7 +157,7 @@ export function buildSchedule(
         parallel_lane_count: 0,
         faculty: section.faculty,
         enrollment_count: section.enrolled_students.length,
-        programs: formatPrograms(section.programs),
+        programs: formatPrograms(section.programs, opts?.programNomenclature),
       })
     }
   }
