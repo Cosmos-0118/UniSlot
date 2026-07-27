@@ -21,8 +21,8 @@ export const REPO_ROOT = path.resolve(MODULE_DIR, '../../../..')
 export const CPSAT_DIR = path.join(REPO_ROOT, 'solver', 'cpsat')
 export const CPSAT_SOLVE_PY = path.join(CPSAT_DIR, 'solve.py')
 
-/** Default portfolio race size (independent seeds). 0 disables. */
-export const DEFAULT_PORTFOLIO_SIZE = 5
+/** Default portfolio race size (independent seeds). 0 disables — keeps seeded runs reproducible. */
+export const DEFAULT_PORTFOLIO_SIZE = 0
 /** Wall-clock budget for each portfolio race member (clash-only). */
 export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
 /** Minimum workers per portfolio race member (floor). */
@@ -39,7 +39,7 @@ export type RunCpsatOptions = {
   hint?: Record<string, number>
   minClashWeightLowerBound?: number
   minRedStudentsLowerBound?: number
-  /** Independent clash-only race members (default 5). Pass 0 to skip. */
+  /** Independent clash-only race members (default 0). Pass k>0 to race (non-reproducible). */
   portfolio?: number
   /** Seconds per portfolio race member (default 45). */
   portfolioRaceSeconds?: number

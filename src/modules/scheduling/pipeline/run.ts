@@ -89,7 +89,7 @@ export type RunPipelineOptions = {
   cpsatTimeLimitSeconds?: number
   /** CP-SAT search workers (0 / omit = all CPUs). */
   cpsatWorkers?: number
-  /** Portfolio race size (default 5). Pass 0 to skip the multi-seed race. */
+  /** Portfolio race size (default 0). Pass k>0 for a multi-seed clash race (non-reproducible). */
   cpsatPortfolio?: number
   /** Seconds per portfolio race member (default 45). */
   cpsatPortfolioRaceSeconds?: number
@@ -117,8 +117,9 @@ export type RunPipelineOptions = {
   /** Which workbooks to build when {@link eagerExports} is true. */
   eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
   /**
-   * Random seed for warm-start polish and CP-SAT. When set, portfolio race seeds
-   * and export metadata are derived deterministically from this value.
+   * Random seed for warm-start polish and CP-SAT. When set, CP-SAT uses
+   * interleaved deterministic search; export metadata is seed-derived.
+   * Portfolio race (if enabled) still uses wall-clock and breaks reproducibility.
    */
   seed?: number
   signal?: AbortSignal

@@ -258,6 +258,10 @@ def configure_solver(
 ) -> cp_model.CpSolver:
     """Configure CP-SAT.
 
+    When ``seed`` is set, enables interleaved deterministic multi-worker search
+    (``interleave_search``) so the same seed + workers yield the same trajectory
+    absent wall-clock escapes.
+
     prove_mode enables MaxSAT-core + stronger linearization aimed at dual-bound
     closing on weighted Boolean objectives (clash phase). Portfolio race members
     keep prove_mode=False for faster primal search.
@@ -269,7 +273,13 @@ def configure_solver(
     if time_limit is not None and time_limit > 0:
         solver.parameters.max_time_in_seconds = float(time_limit)
     if seed is not None and seed >= 0:
+        # random_seed alone is not enough for multi-worker determinism;
+        # interleave_search makes the portfolio search reproducible.
+        n_workers = max(1, workers)
         solver.parameters.random_seed = int(seed)
+        solver.parameters.interleave_search = True
+        solver.parameters.interleave_batch_size = max(1, n_workers * 2)
+        solver.parameters.share_binary_clauses = False
     if absolute_gap is not None and absolute_gap >= 0:
         solver.parameters.absolute_gap_limit = float(absolute_gap)
     if prove_mode:

@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
 import { assertReadableFile, pickEnrollmentFile, pickOutputFolder } from './fileDialog.ts'
-import { resolveRunSeed } from './seedPrompt.ts'
+import { parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
 import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts'
 import {
   CPSAT_DIR,
@@ -43,7 +43,7 @@ async function ensurePythonReady(): Promise<string> {
 async function writeExports(
   outDir: string,
   result: Awaited<ReturnType<typeof runPipeline>>,
-  seed: number,
+  meta: { seed: number; workers: number; portfolio: number },
 ): Promise<string[]> {
   await mkdir(outDir, { recursive: true })
   const written: string[] = []
@@ -64,7 +64,12 @@ async function writeExports(
   }
   if (result.schedulingSnapshot) {
     const fp = path.join(outDir, 'snapshot.json')
-    const snapshot = { ...result.schedulingSnapshot, seed }
+    const snapshot = {
+      ...result.schedulingSnapshot,
+      seed: meta.seed,
+      workers: meta.workers,
+      portfolio: meta.portfolio,
+    }
     await writeFile(fp, JSON.stringify(snapshot, null, 2), 'utf8')
     written.push(fp)
   }
@@ -78,7 +83,9 @@ async function writeExports(
     lower_bounds: result.stats?.scheduling?.lower_bounds,
     solver_used: result.schedule?.solver_used,
     solver_time_seconds: 0,
-    seed,
+    seed: meta.seed,
+    workers: meta.workers,
+    portfolio: meta.portfolio,
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
@@ -98,6 +105,8 @@ async function runSolve(opts: {
   prove?: boolean
   /** undefined = ask in interactive mode; default blocked when non-interactive. */
   saturday?: boolean
+  /** Explicit --seed; skips the seed prompt when set. */
+  seed?: number
   /** -y: skip seed and other interactive prompts */
   skipPrompts?: boolean
   interactive: boolean
@@ -106,13 +115,16 @@ async function runSolve(opts: {
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
-  const workersLabel = opts.workers && opts.workers > 0 ? String(opts.workers) : String(cpuN)
-  const portfolioK = opts.portfolio === undefined ? 5 : opts.portfolio
+  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+  const workersLabel = String(requestedWorkers)
+  const portfolioK = opts.portfolio === undefined ? 0 : Math.max(0, Math.floor(opts.portfolio))
   if (portfolioK > 0) {
-    const totalW = opts.workers && opts.workers > 0 ? opts.workers : cpuN
-    const memberW = Math.max(2, Math.floor(totalW / portfolioK))
+    const memberW = Math.max(2, Math.floor(requestedWorkers / portfolioK))
     p.log.info(
       `CPUs   · ${cpuN} logical · race ${portfolioK} seeds × ${memberW} workers (${portfolioK * memberW}w) → prove ${workersLabel}w`,
+    )
+    p.log.warn(
+      'Portfolio race uses a wall-clock budget — schedule will not reproduce from seed alone. Use --portfolio 0 (default) for reproducible runs.',
     )
   } else {
     p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)
@@ -140,7 +152,10 @@ async function runSolve(opts: {
       : 'Saturday · blocked (Mon–Fri only)',
   )
 
-  const seedResult = await resolveRunSeed(!opts.skipPrompts)
+  const seedResult = await resolveRunSeed({
+    interactive: !opts.skipPrompts && opts.seed === undefined,
+    seed: opts.seed,
+  })
   if ('cancelled' in seedResult) {
     p.cancel('Cancelled')
     return 1
@@ -149,7 +164,7 @@ async function runSolve(opts: {
   p.log.info(
     reused
       ? `Seed   · ${seed} (reused from previous run)`
-      : `Seed   · ${seed} (new run — save this to reproduce exports)`,
+      : `Seed   · ${seed} (new run — save this to reproduce with --seed ${seed})`,
   )
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
@@ -242,7 +257,7 @@ async function runSolve(opts: {
       {
         cpsatTimeLimitSeconds: opts.timeLimit,
         cpsatWorkers: opts.workers,
-        cpsatPortfolio: opts.portfolio,
+        cpsatPortfolio: portfolioK,
         cpsatAbsoluteGap: opts.absoluteGap,
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
@@ -326,12 +341,25 @@ async function runSolve(opts: {
 
     const writeSpin = p.spinner()
     writeSpin.start(`Writing exports to ${outDir}…`)
-    const files = await writeExports(outDir, result, seed)
+    const files = await writeExports(outDir, result, {
+      seed,
+      workers: workersUsed,
+      portfolio: portfolioK,
+    })
     writeSpin.stop(`Wrote ${files.length} file(s)`)
+
+    const reproduceHint =
+      portfolioK > 0 || opts.timeLimit != null || opts.provePlateau != null || opts.absoluteGap != null
+        ? chalk.dim(
+            `Seed ${seed} recorded — reproducible only with --portfolio 0, same --workers ${workersUsed}, and no time/plateau/gap escapes.`,
+          )
+        : chalk.dim(
+            `Seed ${seed} — reuse with --seed ${seed} --workers ${workersUsed} (same machine settings) to reproduce this schedule.`,
+          )
 
     outroSuccess([
       chalk.green('Done.'),
-      chalk.dim(`Seed ${seed} — reuse when prompted to reproduce this run byte-for-byte.`),
+      reproduceHint,
       ...files.map((f) => chalk.dim('  · ') + f),
       fullLex
         ? chalk.green(
@@ -385,9 +413,14 @@ async function main(): Promise<void> {
     )
     .option(
       '--portfolio <k>',
-      'Multi-seed clash race before prove (default: 5; 0 disables)',
+      'Multi-seed clash race before prove (default: 0; k>0 enables, breaks seed reproducibility)',
       (v) => Number(v),
     )
+    .option('--seed <n>', 'Reuse a prior run seed (skips seed prompt; works with -y)', (v) => {
+      const n = parseSeedInput(String(v))
+      if (n === undefined) throw new Error('--seed must be a non-negative integer')
+      return n
+    })
     .option(
       '--absolute-gap <n>',
       'Ship when clash incumbent−bound ≤ n (skips full OPTIMAL certificate)',
@@ -411,6 +444,7 @@ async function main(): Promise<void> {
       timeLimit?: number
       workers?: number
       portfolio?: number
+      seed?: number
       absoluteGap?: number
       provePlateau?: number
       prove?: boolean
@@ -428,6 +462,7 @@ async function main(): Promise<void> {
         timeLimit: flags.timeLimit,
         workers: flags.workers,
         portfolio: flags.portfolio,
+        seed: flags.seed,
         absoluteGap: flags.absoluteGap,
         provePlateau: flags.provePlateau,
         prove: flags.prove,

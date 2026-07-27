@@ -79,13 +79,22 @@ npm run unislot -- solve `
 | `-i, --input <file>` | Enrollment `.xlsx` |
 | `-o, --output <dir>` | Export directory |
 | `-y, --yes` | Skip interactive prompts when paths are given |
+| `--seed <n>` | Reuse a prior run seed (skips seed prompt; works with `-y`) |
 | `--workers <n>` | CP-SAT workers for the prove phase (default: all CPUs) |
-| `--portfolio <k>` | Multi-seed clash race before prove (default: 5; `0` disables) |
+| `--portfolio <k>` | Multi-seed clash race before prove (default: `0`; `k>0` enables but breaks seed reproducibility) |
 | `--time-limit <seconds>` | Escape hatch only — stops early; may not prove optimality |
 
 Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural clash/RED lower bounds as model cuts.
 
-**Seeds:** Unless you pass `-y`, UniSlot asks whether you have a seed from a previous run. Say yes and enter it to reproduce exports byte-for-byte; say no and a new seed is generated. The seed is shown at the end and stored in `summary.json` and `snapshot.json`. With `-y`, a fresh seed is generated automatically.
+**Seeds:** Each run gets a seed (shown at the end and stored in `summary.json` / `snapshot.json`). To reproduce the same schedule:
+
+```powershell
+npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
+```
+
+Use the same `--workers` as the original run (`summary.json` records `workers` and `portfolio`). Keep `--portfolio 0` (the default) and omit `--time-limit` / `--prove-plateau` / `--absolute-gap`. Interactive mode can still prompt for a prior seed if you do not pass `--seed`. With `-y` and no `--seed`, a fresh seed is generated automatically.
+
+When a seed is set, CP-SAT uses interleaved deterministic search so multi-worker solves are reproducible. A portfolio race (`--portfolio k` with `k>0`) uses a wall-clock budget and will not reproduce from seed alone.
 
 ## 5. Reading the outputs
 
@@ -100,7 +109,9 @@ Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSl
 In `summary.json`, the important fields are:
 
 - `status` — solver status string
-- `seed` — run seed (reuse when prompted to reproduce exports)
+- `seed` — run seed (reuse with `--seed` to reproduce the schedule)
+- `workers` — CP-SAT worker count used (match on rerun)
+- `portfolio` — portfolio race size (`0` = off)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash
 - `proven_optimal` — `true` means clash weight is proven minimal under the course→weekday model
@@ -113,7 +124,7 @@ If lower bounds say zero-clash is impossible, a positive clash weight with `prov
 | Phase | Goal |
 |-------|------|
 | Warm start | DSATUR + light SA polish → CP-SAT hints |
-| Portfolio race | Optional multi-seed clash-only race; best incumbent seeds the prove |
+| Portfolio race | Optional (`--portfolio k`); multi-seed clash-only race — wall-clock, not seed-reproducible |
 | Building model | Encoding courses, conflict edges, faculty, students into CP-SAT |
 | 1/3 Minimizing clashes | Lex level 1 — prove minimum clash weight |
 | 2/3 Minimizing RED | Lex level 2 — among clash-optimal schedules, fewest RED students |
@@ -140,7 +151,8 @@ npm install
 npm run setup:cpsat
 npm run unislot -- doctor
 npm run unislot
-npm run unislot -- solve -i enroll.xlsx -o .\unislot-out -y
+npm run unislot -- solve -i enroll.xlsx -o .\out -y
+npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
 npm run unislot -- solve -i enroll.xlsx -o .\out -y --workers 8
 npm test
 ```

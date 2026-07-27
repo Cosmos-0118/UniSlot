@@ -15,6 +15,10 @@ export type SchedulingSnapshot = {
   facultyOverrides?: Record<string, string>
   /** Run seed for reproducing solver + export bytes. */
   seed?: number
+  /** CP-SAT workers used for this run (match on rerun for reproducibility). */
+  workers?: number
+  /** Portfolio race size used (0 = off). */
+  portfolio?: number
 }
 
 export function cloneStudents(students: Record<string, Student>): Record<string, Student> {
@@ -51,5 +55,7 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     enrollmentRows: s.enrollmentRows.map((r) => ({ ...r })),
     facultyOverrides: s.facultyOverrides ? { ...s.facultyOverrides } : undefined,
     seed: s.seed,
+    workers: s.workers,
+    portfolio: s.portfolio,
   }
 }

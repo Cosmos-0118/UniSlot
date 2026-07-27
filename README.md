@@ -22,7 +22,7 @@ npm run setup:cpsat    # creates solver/cpsat/.venv and installs ortools
 npm run unislot
 ```
 
-Interactive flow: native file picker → seed prompt (reuse or new) → parse → CP-SAT → export folder. Each run gets a seed; `summary.json` and `snapshot.json` record it for reruns.
+Interactive flow: native file picker → seed prompt (reuse or new) → parse → CP-SAT → export folder. Each run gets a seed; `summary.json` and `snapshot.json` record it (plus `workers` / `portfolio`) for reruns.
 
 Non-interactive (`-y` skips the seed prompt and auto-generates one):
 
@@ -30,7 +30,13 @@ Non-interactive (`-y` skips the seed prompt and auto-generates one):
 npm run unislot -- solve -i enrollment.xlsx -o ./unislot-out -y
 ```
 
-A new seed is generated automatically; check `summary.json` for the value. To reproduce a prior run, use interactive mode and enter that seed when asked.
+A new seed is generated automatically; check `summary.json` for the value. To reproduce a prior run:
+
+```bash
+npm run unislot -- solve -i enrollment.xlsx -o ./unislot-out -y --seed 12345 --workers 8
+```
+
+Use the same `--workers` as recorded in `summary.json`, keep `--portfolio 0` (default), and omit time/plateau/gap escapes. Seeded solves use CP-SAT interleaved search for multi-worker determinism.
 
 Check the solver environment:
 
