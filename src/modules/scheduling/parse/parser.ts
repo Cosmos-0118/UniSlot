@@ -95,7 +95,7 @@ function cleanString(value: unknown): string {
 function cleanRegisterNumber(value: unknown): string {
   let s = cleanString(value)
   if (!s) return ''
-  s = s.replace(/^(RA|SRM|REG|ID|NO|#|:|\s)+/i, '')
+  // Keep leading alphabetic prefixes (e.g., "RA", "AB") as part of register numbers.
   s = s.replace(/[^A-Za-z0-9]/g, '')
   return s.toUpperCase()
 }
