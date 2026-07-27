@@ -116,6 +116,11 @@ export type RunPipelineOptions = {
   programNomenclatureXlsx?: ArrayBuffer
   /** Which workbooks to build when {@link eagerExports} is true. */
   eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
+  /**
+   * Random seed for warm-start polish and CP-SAT. When set, portfolio race seeds
+   * and export metadata are derived deterministically from this value.
+   */
+  seed?: number
   signal?: AbortSignal
 }
 
@@ -151,6 +156,7 @@ async function buildEagerExportsSequential(
     enrollmentRows: EnrollmentRow[]
     allowScheduleXlsx: boolean
     snapshot?: import('../merge/snapshot').SchedulingSnapshot | null
+    seed?: number
   },
 ): Promise<{
   scheduleXlsx: ArrayBuffer | null
@@ -160,15 +166,19 @@ async function buildEagerExportsSequential(
   let scheduleXlsx: ArrayBuffer | null = null
   let clashXlsx: ArrayBuffer | null = null
   let courseEmailsXlsx: ArrayBuffer | null = null
+  const exportOpts = artifacts.seed !== undefined ? { seed: artifacts.seed } : undefined
 
   if (kinds.schedule && artifacts.allowScheduleXlsx && artifacts.schedule) {
-    scheduleXlsx = await buildScheduleXlsxBuffer(artifacts.schedule, artifacts.snapshot)
+    scheduleXlsx = await buildScheduleXlsxBuffer(
+      artifacts.schedule,
+      artifacts.snapshot ? { snapshot: artifacts.snapshot, ...exportOpts } : exportOpts,
+    )
   }
   if (kinds.clash && artifacts.clashReport) {
-    clashXlsx = await buildClashXlsxBuffer(artifacts.clashReport)
+    clashXlsx = await buildClashXlsxBuffer(artifacts.clashReport, exportOpts)
   }
   if (kinds.courseEmails && artifacts.enrollmentRows.length > 0) {
-    courseEmailsXlsx = await buildCourseEmailsXlsxBuffer(artifacts.enrollmentRows)
+    courseEmailsXlsx = await buildCourseEmailsXlsxBuffer(artifacts.enrollmentRows, exportOpts)
   }
 
   return { scheduleXlsx, clashXlsx, courseEmailsXlsx }
@@ -288,12 +298,14 @@ export async function runPipeline(
     fraction: SCHEDULE_LO,
     etaSeconds: null,
   })
+  const solverSeed = options?.seed
   const warm = buildGreedyHint({
     courseSections,
     conflictGraph,
     facultyConstraints,
     students,
     allowSaturdayForMath,
+    seed: solverSeed ?? 42,
   })
   emit({
     stage: 'schedule',
@@ -331,6 +343,7 @@ export async function runPipeline(
       provePlateauSeconds: options?.cpsatProvePlateauSeconds,
       fullProve: options?.cpsatFullProve,
       allowSaturdayForMath,
+      seed: solverSeed,
       signal,
       onProgress: (evt) => {
         if (evt.type === 'progress' || evt.type === 'heartbeat') {
@@ -426,9 +439,11 @@ export async function runPipeline(
     programNomenclatureMap = await nomenclatureToProgramAbbrevMap(options.programNomenclatureXlsx)
   }
 
+  const pinnedSolverSeconds =
+    solverSeed !== undefined ? 0 : solverTimeSeconds
   let schedule = buildSchedule(courseSections, slotAssignments, {
     solver_used: solverUsed,
-    solver_time_seconds: solverTimeSeconds,
+    solver_time_seconds: pinnedSolverSeconds,
     hard_constraints_feasible: feasible,
     hard_constraint_violations: hardViolations,
     solver_primary_metrics_zero: primaryZero,
@@ -446,6 +461,7 @@ export async function runPipeline(
     courseSections: deepCloneCourseSections(courseSections),
     students: cloneStudents(students),
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
+    ...(solverSeed !== undefined ? { seed: solverSeed } : {}),
   }
 
   const eagerKinds = options?.eagerExportKinds ?? {
@@ -471,6 +487,7 @@ export async function runPipeline(
       enrollmentRows,
       allowScheduleXlsx: true,
       snapshot: schedulingSnapshot,
+      seed: solverSeed,
     })
     scheduleXlsx = built.scheduleXlsx
     clashXlsx = built.clashXlsx

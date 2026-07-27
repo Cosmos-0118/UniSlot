@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
 import { writeExportBrandHeader } from './excelBranding'
+import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { XL } from './excelStyleConstants'
 
@@ -15,7 +16,10 @@ function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
 /**
  * Course-wise deduplicated email lists + students missing email (legacy `export_course_grouping_xlsx`).
  */
-export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promise<ArrayBuffer> {
+export async function courseEmailsToWorkbookBuffer(
+  rows: EnrollmentRow[],
+  options?: ExportDeterminismOptions,
+): Promise<ArrayBuffer> {
   type Group = {
     title: string
     students: Set<string>
@@ -41,7 +45,7 @@ export async function courseEmailsToWorkbookBuffer(rows: EnrollmentRow[]): Promi
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
-  wb.created = new Date()
+  wb.created = workbookCreatedAt(options?.seed)
   const ws = wb.addWorksheet('Course Emails')
 
   const headerRow = writeExportBrandHeader(ws, 5, 'COURSE EMAIL GROUPS')

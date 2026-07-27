@@ -22,11 +22,15 @@ npm run setup:cpsat    # creates solver/cpsat/.venv and installs ortools
 npm run unislot
 ```
 
-Interactive flow: native file picker → parse → CP-SAT → export folder. Non-interactive:
+Interactive flow: native file picker → seed prompt (reuse or new) → parse → CP-SAT → export folder. Each run gets a seed; `summary.json` and `snapshot.json` record it for reruns.
+
+Non-interactive (`-y` skips the seed prompt and auto-generates one):
 
 ```bash
 npm run unislot -- solve -i enrollment.xlsx -o ./unislot-out -y
 ```
+
+A new seed is generated automatically; check `summary.json` for the value. To reproduce a prior run, use interactive mode and enter that seed when asked.
 
 Check the solver environment:
 

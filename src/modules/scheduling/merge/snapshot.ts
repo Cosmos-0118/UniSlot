@@ -13,6 +13,8 @@ export type SchedulingSnapshot = {
   enrollmentRows: EnrollmentRow[]
   /** Real faculty names keyed by section_id (applied onto sections after solve). */
   facultyOverrides?: Record<string, string>
+  /** Run seed for reproducing solver + export bytes. */
+  seed?: number
 }
 
 export function cloneStudents(students: Record<string, Student>): Record<string, Student> {
@@ -48,5 +50,6 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     students: cloneStudents(s.students),
     enrollmentRows: s.enrollmentRows.map((r) => ({ ...r })),
     facultyOverrides: s.facultyOverrides ? { ...s.facultyOverrides } : undefined,
+    seed: s.seed,
   }
 }

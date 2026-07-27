@@ -266,4 +266,46 @@ describe('CP-SAT solver smoke', () => {
     },
     60_000,
   )
+
+  it(
+    'returns identical assignments when rerun with the same seed',
+    async () => {
+      const { courseSections, conflictGraph, facultyConstraints, students } = tinyInstance()
+      const warm = buildGreedyHint({
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        seed: 77,
+        polishIters: 100,
+      })
+      const lb = computeSchedulingLowerBounds(courseSections, conflictGraph, students)
+      const opts = {
+        workers: 2,
+        portfolio: 0,
+        seed: 77,
+        hint: warm.hint,
+        minClashWeightLowerBound: lb.min_clash_weight_lower_bound,
+        minRedStudentsLowerBound: lb.min_red_students_lower_bound,
+      }
+      const first = await runCpsatScheduler(
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        opts,
+      )
+      const second = await runCpsatScheduler(
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        opts,
+      )
+      expect(first.slot_by_course).toEqual(second.slot_by_course)
+      expect(first.total_clash_weight).toBe(second.total_clash_weight)
+      expect(first.red_students).toBe(second.red_students)
+    },
+    180_000,
+  )
 })

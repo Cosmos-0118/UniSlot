@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
 import { assertReadableFile, pickEnrollmentFile, pickOutputFolder } from './fileDialog.ts'
+import { resolveRunSeed } from './seedPrompt.ts'
 import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts'
 import {
   CPSAT_DIR,
@@ -42,6 +43,7 @@ async function ensurePythonReady(): Promise<string> {
 async function writeExports(
   outDir: string,
   result: Awaited<ReturnType<typeof runPipeline>>,
+  seed: number,
 ): Promise<string[]> {
   await mkdir(outDir, { recursive: true })
   const written: string[] = []
@@ -62,7 +64,8 @@ async function writeExports(
   }
   if (result.schedulingSnapshot) {
     const fp = path.join(outDir, 'snapshot.json')
-    await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
+    const snapshot = { ...result.schedulingSnapshot, seed }
+    await writeFile(fp, JSON.stringify(snapshot, null, 2), 'utf8')
     written.push(fp)
   }
   const summary = {
@@ -74,7 +77,8 @@ async function writeExports(
     red_students: result.clashReport?.students_with_clashes,
     lower_bounds: result.stats?.scheduling?.lower_bounds,
     solver_used: result.schedule?.solver_used,
-    solver_time_seconds: result.schedule?.solver_time_seconds,
+    solver_time_seconds: 0,
+    seed,
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
@@ -94,6 +98,8 @@ async function runSolve(opts: {
   prove?: boolean
   /** undefined = ask in interactive mode; default blocked when non-interactive. */
   saturday?: boolean
+  /** -y: skip seed and other interactive prompts */
+  skipPrompts?: boolean
   interactive: boolean
 }): Promise<number> {
   banner()
@@ -132,6 +138,18 @@ async function runSolve(opts: {
     allowSaturdayForMath
       ? 'Saturday · enabled for maths courses'
       : 'Saturday · blocked (Mon–Fri only)',
+  )
+
+  const seedResult = await resolveRunSeed(!opts.skipPrompts)
+  if ('cancelled' in seedResult) {
+    p.cancel('Cancelled')
+    return 1
+  }
+  const { seed, reused } = seedResult
+  p.log.info(
+    reused
+      ? `Seed   · ${seed} (reused from previous run)`
+      : `Seed   · ${seed} (new run — save this to reproduce exports)`,
   )
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
@@ -230,6 +248,7 @@ async function runSolve(opts: {
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
         programNomenclatureXlsx,
+        seed,
         eagerExports: true,
         eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
         signal: ac.signal,
@@ -307,11 +326,12 @@ async function runSolve(opts: {
 
     const writeSpin = p.spinner()
     writeSpin.start(`Writing exports to ${outDir}…`)
-    const files = await writeExports(outDir, result)
+    const files = await writeExports(outDir, result, seed)
     writeSpin.stop(`Wrote ${files.length} file(s)`)
 
     outroSuccess([
       chalk.green('Done.'),
+      chalk.dim(`Seed ${seed} — reuse when prompted to reproduce this run byte-for-byte.`),
       ...files.map((f) => chalk.dim('  · ') + f),
       fullLex
         ? chalk.green(
@@ -412,6 +432,7 @@ async function main(): Promise<void> {
         provePlateau: flags.provePlateau,
         prove: flags.prove,
         saturday: saturdayFlag,
+        skipPrompts: Boolean(flags.yes),
         interactive: interactive || !flags.input,
       })
       process.exitCode = code

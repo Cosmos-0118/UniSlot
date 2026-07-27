@@ -85,6 +85,8 @@ npm run unislot -- solve `
 
 Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural clash/RED lower bounds as model cuts.
 
+**Seeds:** Unless you pass `-y`, UniSlot asks whether you have a seed from a previous run. Say yes and enter it to reproduce exports byte-for-byte; say no and a new seed is generated. The seed is shown at the end and stored in `summary.json` and `snapshot.json`. With `-y`, a fresh seed is generated automatically.
+
 ## 5. Reading the outputs
 
 | File | Use it for |
@@ -98,6 +100,7 @@ Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSl
 In `summary.json`, the important fields are:
 
 - `status` — solver status string
+- `seed` — run seed (reuse when prompted to reproduce exports)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash
 - `proven_optimal` — `true` means clash weight is proven minimal under the course→weekday model

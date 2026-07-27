@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import type { ClashReport, StudentClashReport } from '../types'
 import { writeExportBrandHeader } from './excelBranding'
+import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
@@ -46,10 +47,13 @@ function writeStudentClashRow(
 /**
  * Rich clash workbook matching legacy `export_clash_report_xlsx` structure and grouping.
  */
-export async function clashReportToRichWorkbookBuffer(report: ClashReport): Promise<ArrayBuffer> {
+export async function clashReportToRichWorkbookBuffer(
+  report: ClashReport,
+  options?: ExportDeterminismOptions,
+): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
-  wb.created = new Date()
+  wb.created = workbookCreatedAt(options?.seed)
   const red = clashers(report)
 
   // ---------- Summary ----------

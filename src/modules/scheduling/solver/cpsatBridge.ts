@@ -13,6 +13,7 @@ import {
   type CpsatProgressEvent,
   type CpsatSolution,
 } from './cpsatInstance'
+import { derivePortfolioSeeds } from './seedUtils'
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 /** Repo root: src/modules/scheduling/solver → ../../../../ */
@@ -364,7 +365,10 @@ async function runPortfolioRace(
 ): Promise<CpsatSolution | null> {
   if (options.signal?.aborted) throw new PipelineCancelledError()
 
-  const seeds = PORTFOLIO_SEEDS.slice(0, Math.max(1, k))
+  const seeds =
+    options.seed != null && options.seed >= 0
+      ? derivePortfolioSeeds(options.seed, k)
+      : PORTFOLIO_SEEDS.slice(0, Math.max(1, k))
   options.onProgress?.({
     type: 'phase',
     phase: 'portfolio_race',

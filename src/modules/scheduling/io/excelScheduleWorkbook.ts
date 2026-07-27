@@ -10,6 +10,7 @@ import {
   thinBorder,
 } from './excelLayout'
 import { EXCEL_BRAND } from './excelBranding'
+import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
 import { DAY_FILL, XL } from './excelStyleConstants'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
@@ -188,7 +189,7 @@ export type ScheduleWorkbookOptions = {
   branding?: ScheduleWorkbookBranding
   /** When provided, adds the “Students by Course & Weekday” roster sheet. */
   snapshot?: SchedulingSnapshot | null
-}
+} & ExportDeterminismOptions
 
 /**
  * Publication-style schedule workbook (multi-sheet):
@@ -207,7 +208,7 @@ export async function scheduleToWorkbookBuffer(
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
-  wb.created = new Date()
+  wb.created = workbookCreatedAt(options.seed)
   const brand = resolveBranding(options.branding)
 
   const sorted = sortEntries(schedule.entries)
