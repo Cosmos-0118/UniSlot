@@ -1,5 +1,11 @@
 import type { ConflictGraph, Section, Student } from '../types'
-import { isMathCourse, PREFERRED_PARALLEL_SECTIONS, TOTAL_WEEKLY_SLOTS } from './timeModel'
+import {
+  activeWeekdayCount,
+  isMathCourse,
+  maxSlotIndexForCourse,
+  PREFERRED_PARALLEL_SECTIONS,
+  SATURDAY_SLOT_INDEX,
+} from './timeModel'
 
 /** Course-level conflict edge for the CP-SAT instance. */
 export type CpsatConflictEdge = {
@@ -11,6 +17,8 @@ export type CpsatConflictEdge = {
 export type CpsatInstance = {
   num_weekdays: number
   saturday_index: number
+  /** When false, Saturday is excluded entirely (temporary Mon–Fri-only mode). */
+  allow_saturday: boolean
   preferred_parallel: number
   courses: Array<{
     code: string
@@ -142,8 +150,11 @@ export function buildCpsatInstance(
     hint?: Record<string, number>
     min_clash_weight_lower_bound?: number
     min_red_students_lower_bound?: number
+    /** Default true (Constraints.md). Pass false to exclude Saturday entirely. */
+    allowSaturdayForMath?: boolean
   },
 ): CpsatInstance {
+  const allowSaturdayForMath = options?.allowSaturdayForMath !== false
   const sectionToCourse = new Map<string, string>()
   const courses: CpsatInstance['courses'] = []
 
@@ -179,15 +190,25 @@ export function buildCpsatInstance(
     if (enrolled.length) studentRows.push({ id, courses: enrolled })
   }
 
+  let hint = options?.hint
+  if (hint && !allowSaturdayForMath) {
+    const clamped: Record<string, number> = {}
+    for (const [code, slot] of Object.entries(hint)) {
+      clamped[code] = Math.min(slot, maxSlotIndexForCourse(code, false))
+    }
+    hint = clamped
+  }
+
   return {
-    num_weekdays: TOTAL_WEEKLY_SLOTS,
-    saturday_index: TOTAL_WEEKLY_SLOTS - 1,
+    num_weekdays: activeWeekdayCount(allowSaturdayForMath),
+    saturday_index: SATURDAY_SLOT_INDEX,
+    allow_saturday: allowSaturdayForMath,
     preferred_parallel: PREFERRED_PARALLEL_SECTIONS,
     courses,
     conflict_edges: aggregateCourseConflictEdges(conflictGraph, sectionToCourse),
     faculty_groups,
     students: studentRows,
-    hint: options?.hint,
+    hint,
     min_clash_weight_lower_bound: options?.min_clash_weight_lower_bound,
     min_red_students_lower_bound: options?.min_red_students_lower_bound,
   }

@@ -1,5 +1,5 @@
 import type { Section } from '../types'
-import { TOTAL_WEEKLY_SLOTS, isMathCourse, slotIndexToDay } from './timeModel'
+import { SATURDAY_SLOT_INDEX, TOTAL_WEEKLY_SLOTS, isMathCourse, slotIndexToDay } from './timeModel'
 
 /**
  * Parallel load is a soft comfort target (~11), not a hard fence.
@@ -35,7 +35,9 @@ export function auditScheduleHardConstraints(
   slotAssignments: Record<string, number>,
   _parallelCap: number,
   facultyConstraints: Record<string, string[]>,
+  options?: { allowSaturdayForMath?: boolean },
 ): { feasible: boolean; violations: string[] } {
+  const allowSaturdayForMath = options?.allowSaturdayForMath !== false
   const violations: string[] = []
   const sections = Object.values(courseSections).flat()
 
@@ -92,9 +94,14 @@ export function auditScheduleHardConstraints(
   }
 
   for (const [code, slot] of Object.entries(slotByCourse)) {
-    if (slot === 5 && !isMathCourse(code)) {
+    if (slot !== SATURDAY_SLOT_INDEX) continue
+    if (!allowSaturdayForMath) {
       violations.push(
-        `Course ${code}: non-mathematics course assigned to Saturday (slot 5); Saturday is reserved for mathematics courses`,
+        `Course ${code}: assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is temporarily blocked`,
+      )
+    } else if (!isMathCourse(code)) {
+      violations.push(
+        `Course ${code}: non-mathematics course assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is reserved for mathematics courses`,
       )
     }
   }

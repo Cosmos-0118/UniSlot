@@ -7,7 +7,7 @@ import {
   aggregateCourseConflictEdges,
   type CpsatConflictEdge,
 } from './cpsatInstance'
-import { isMathCourse, NON_MATH_WEEKDAY_COUNT, TOTAL_WEEKLY_SLOTS } from './timeModel'
+import { maxSlotIndexForCourse } from './timeModel'
 
 export type GreedyHintResult = {
   hint: Record<string, number>
@@ -23,6 +23,8 @@ type HintInput = {
   /** SA polish iterations (default 4000). */
   polishIters?: number
   seed?: number
+  /** Default true. Pass false to exclude Saturday entirely. */
+  allowSaturdayForMath?: boolean
 }
 
 function mulberry32(seed: number): () => number {
@@ -39,8 +41,8 @@ function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`
 }
 
-function maxDayFor(code: string): number {
-  return isMathCourse(code) ? TOTAL_WEEKLY_SLOTS - 1 : NON_MATH_WEEKDAY_COUNT - 1
+function maxDayFor(code: string, allowSaturdayForMath: boolean): number {
+  return maxSlotIndexForCourse(code, allowSaturdayForMath)
 }
 
 function buildFacultyForbidden(
@@ -145,6 +147,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
     students,
     polishIters = 4000,
     seed = 42,
+    allowSaturdayForMath = true,
   } = input
 
   const sectionToCourse = new Map<string, string>()
@@ -203,7 +206,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
     const code = best!
     remaining.delete(code)
 
-    const maxD = maxDayFor(code)
+    const maxD = maxDayFor(code, allowSaturdayForMath)
     let pick = 0
     let pickClash = Number.POSITIVE_INFINITY
     let pickRed = Number.POSITIVE_INFINITY
@@ -252,7 +255,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
       if (c2 === c1) continue
       old2 = dayOf[c2]!
       // Try swap if domains allow.
-      if (old2 > maxDayFor(c1) || old1 > maxDayFor(c2)) continue
+      if (old2 > maxDayFor(c1, allowSaturdayForMath) || old1 > maxDayFor(c2, allowSaturdayForMath)) continue
       dayOf[c1] = old2
       dayOf[c2] = old1
       if (!isFacultyOk(c1, dayOf[c1]!, dayOf, forbid) || !isFacultyOk(c2, dayOf[c2]!, dayOf, forbid)) {
@@ -261,7 +264,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
         continue
       }
     } else {
-      const maxD = maxDayFor(c1)
+      const maxD = maxDayFor(c1, allowSaturdayForMath)
       const nd = Math.floor(rand() * (maxD + 1))
       if (nd === old1) continue
       dayOf[c1] = nd

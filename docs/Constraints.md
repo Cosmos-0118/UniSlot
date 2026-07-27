@@ -331,7 +331,7 @@ Remarks
 
 - A student may appear in multiple rows
 - One row = one course registration
-- Each student may have 1–5 course registrations
+- Each student may have one or more course registrations
 - Some courses may require section splitting
 
 ---

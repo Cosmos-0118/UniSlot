@@ -7,6 +7,8 @@ export const TOTAL_WEEKLY_SLOTS = WEEKDAY_COUNT
 export const PREFERRED_PARALLEL_SECTIONS = 11
 /** Non-mathematics courses may only use Mon–Fri (slots 0–4). */
 export const NON_MATH_WEEKDAY_COUNT = 5
+/** Saturday evening index (Constraints.md: maths-only when enabled). */
+export const SATURDAY_SLOT_INDEX = TOTAL_WEEKLY_SLOTS - 1
 /** Used only to convert saved schedules created by the pre-weekday model. */
 export const LEGACY_BANDS_PER_DAY = 11
 
@@ -15,6 +17,17 @@ export function isMathCourse(code: string): boolean {
   const upper = code.toUpperCase()
   // Matches '21MAB101T', '21MAC503T', 'MA101', 'MAT201', etc.
   return /^[0-9]*MA/.test(upper) || upper.startsWith('MAT')
+}
+
+/** Active weekday count: Mon–Sat when Saturday maths is enabled, else Mon–Fri. */
+export function activeWeekdayCount(allowSaturdayForMath = true): number {
+  return allowSaturdayForMath ? TOTAL_WEEKLY_SLOTS : NON_MATH_WEEKDAY_COUNT
+}
+
+/** Highest slot index a course may use under the Saturday maths policy. */
+export function maxSlotIndexForCourse(code: string, allowSaturdayForMath = true): number {
+  if (!allowSaturdayForMath) return NON_MATH_WEEKDAY_COUNT - 1
+  return isMathCourse(code) ? SATURDAY_SLOT_INDEX : NON_MATH_WEEKDAY_COUNT - 1
 }
 
 export const WEEKDAY_ORDER: DayName[] = [

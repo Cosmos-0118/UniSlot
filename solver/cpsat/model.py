@@ -51,6 +51,14 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         }
     num_weekdays = int(instance.get("num_weekdays") or NUM_WEEKDAYS)
     saturday = int(instance.get("saturday_index", SATURDAY))
+    allow_saturday = instance.get("allow_saturday")
+    if allow_saturday is None:
+        allow_saturday = True
+    else:
+        allow_saturday = bool(allow_saturday)
+    if not allow_saturday:
+        # Temporary Mon–Fri-only mode: exclude Saturday for all courses.
+        num_weekdays = min(num_weekdays, saturday)
     preferred = int(instance.get("preferred_parallel") or PREFERRED_PARALLEL)
 
     model = cp_model.CpModel()
@@ -64,7 +72,7 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         section_count[code] = max(1, sc)
         is_math[code] = bool(c.get("is_math"))
         day[code] = model.NewIntVar(0, num_weekdays - 1, f"day_{code}")
-        if not is_math[code]:
+        if allow_saturday and not is_math[code]:
             # Non-mathematics courses: Mon–Fri only (Constraints.md).
             model.Add(day[code] <= saturday - 1)
 

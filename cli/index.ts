@@ -91,6 +91,8 @@ async function runSolve(opts: {
   absoluteGap?: number
   provePlateau?: number
   prove?: boolean
+  /** undefined = ask in interactive mode; default blocked when non-interactive. */
+  saturday?: boolean
   interactive: boolean
 }): Promise<number> {
   banner()
@@ -108,6 +110,28 @@ async function runSolve(opts: {
   } else {
     p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)
   }
+
+  let allowSaturdayForMath = opts.saturday
+  if (allowSaturdayForMath === undefined) {
+    if (opts.interactive) {
+      const answer = await p.confirm({
+        message: 'Use Saturday slot for maths courses? (temporarily blocked by default)',
+        initialValue: false,
+      })
+      if (p.isCancel(answer)) {
+        p.cancel('Cancelled')
+        return 1
+      }
+      allowSaturdayForMath = Boolean(answer)
+    } else {
+      allowSaturdayForMath = false
+    }
+  }
+  p.log.info(
+    allowSaturdayForMath
+      ? 'Saturday · enabled for maths courses'
+      : 'Saturday · blocked (Mon–Fri only)',
+  )
 
   let inputPath = opts.input
   if (!inputPath) {
@@ -188,6 +212,7 @@ async function runSolve(opts: {
         cpsatAbsoluteGap: opts.absoluteGap,
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
+        allowSaturdayForMath,
         eagerExports: true,
         eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
         signal: ac.signal,
@@ -336,6 +361,10 @@ async function main(): Promise<void> {
       (v) => Number(v),
     )
     .option('--prove', 'Disable gap/plateau escapes; chase full clash OPTIMAL', false)
+    .option(
+      '--saturday',
+      'Allow Saturday slot for maths courses (use --no-saturday to block; default: ask / blocked)',
+    )
     .option('-y, --yes', 'Non-interactive when paths are provided', false)
     .action(async (flags: {
       input?: string
@@ -346,9 +375,13 @@ async function main(): Promise<void> {
       absoluteGap?: number
       provePlateau?: number
       prove?: boolean
+      saturday?: boolean
       yes?: boolean
     }) => {
       const interactive = !flags.yes && (!flags.input || !flags.output)
+      // Commander --saturday / --no-saturday → true / false; omitted → undefined.
+      const saturdayFlag =
+        typeof flags.saturday === 'boolean' ? flags.saturday : undefined
       const code = await runSolve({
         input: flags.input,
         output: flags.output,
@@ -358,6 +391,7 @@ async function main(): Promise<void> {
         absoluteGap: flags.absoluteGap,
         provePlateau: flags.provePlateau,
         prove: flags.prove,
+        saturday: saturdayFlag,
         interactive: interactive || !flags.input,
       })
       process.exitCode = code

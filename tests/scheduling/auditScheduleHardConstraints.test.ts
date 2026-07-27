@@ -80,4 +80,15 @@ describe('auditScheduleHardConstraints', () => {
     expect(r.feasible).toBe(true)
     expect(r.violations).toHaveLength(0)
   })
+
+  it('flags any course on Saturday when Saturday is blocked', () => {
+    const courseSections: Record<string, Section[]> = {
+      '21MAB101T': [makeSection({ section_id: 'ma1', course_code: '21MAB101T', course_title: 'CALCULUS AND LINEAR ALGEBRA' })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { ma1: 5 }, 40, {}, {
+      allowSaturdayForMath: false,
+    })
+    expect(r.feasible).toBe(false)
+    expect(r.violations.some((v: string) => v.includes('temporarily blocked'))).toBe(true)
+  })
 })

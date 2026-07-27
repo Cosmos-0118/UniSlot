@@ -49,6 +49,8 @@ export type RunCpsatOptions = {
   provePlateauSeconds?: number
   /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
   fullProve?: boolean
+  /** When false, Saturday is excluded for all courses (including maths). Default true. */
+  allowSaturdayForMath?: boolean
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
   /** Override python executable (default: solver/cpsat/.venv or python3). */
@@ -464,6 +466,7 @@ export async function runCpsatScheduler(
       hint,
       min_clash_weight_lower_bound: options?.minClashWeightLowerBound,
       min_red_students_lower_bound: options?.minRedStudentsLowerBound,
+      allowSaturdayForMath: options?.allowSaturdayForMath,
     },
   )
 

@@ -133,6 +133,16 @@ describe('CP-SAT instance + clash parity', () => {
     expect(inst.students[0]?.courses).toContain('CS101')
     expect(inst.hint?.CS101).toBe(1)
     expect(inst.min_clash_weight_lower_bound).toBe(0)
+    expect(inst.allow_saturday).toBe(true)
+    expect(inst.num_weekdays).toBe(6)
+
+    const blocked = buildCpsatInstance(courseSections, graph, {}, students, {
+      allowSaturdayForMath: false,
+      hint: { '21MAB101T': 5, CS101: 1 },
+    })
+    expect(blocked.allow_saturday).toBe(false)
+    expect(blocked.num_weekdays).toBe(5)
+    expect(blocked.hint?.['21MAB101T']).toBe(4)
   })
 })
 

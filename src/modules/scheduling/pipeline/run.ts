@@ -8,7 +8,7 @@ import {
 } from '../preprocess/preprocessing'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
 import { sumConflictGraphWeights } from '../solver/conflictGraph'
-import { TOTAL_WEEKLY_SLOTS } from '../solver/timeModel'
+import { activeWeekdayCount } from '../solver/timeModel'
 import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
 import {
   cloneStudents,
@@ -97,6 +97,11 @@ export type RunPipelineOptions = {
   cpsatProvePlateauSeconds?: number
   /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
   cpsatFullProve?: boolean
+  /**
+   * When false, Saturday is blocked for all courses (including maths).
+   * Default true (Constraints.md Saturday maths-only).
+   */
+  allowSaturdayForMath?: boolean
   /**
    * When true, build .xlsx buffers during the run.
    * Default false: caller builds exports later if needed.
@@ -267,6 +272,8 @@ export async function runPipeline(
 
   const workers =
     options?.cpsatWorkers && options.cpsatWorkers > 0 ? options.cpsatWorkers : cpus().length
+  const allowSaturdayForMath = options?.allowSaturdayForMath !== false
+  const weekdays = activeWeekdayCount(allowSaturdayForMath)
 
   emit({
     stage: 'schedule',
@@ -279,6 +286,7 @@ export async function runPipeline(
     conflictGraph,
     facultyConstraints,
     students,
+    allowSaturdayForMath,
   })
   emit({
     stage: 'schedule',
@@ -287,12 +295,14 @@ export async function runPipeline(
     etaSeconds: null,
   })
 
-  const structuralLb = computeSchedulingLowerBounds(courseSections, conflictGraph, students)
+  const structuralLb = computeSchedulingLowerBounds(courseSections, conflictGraph, students, {
+    allowSaturdayForMath,
+  })
   const portfolio =
     options?.cpsatPortfolio === undefined ? undefined : options.cpsatPortfolio
   emit({
     stage: 'schedule',
-    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${TOTAL_WEEKLY_SLOTS} weekday sessions/week`,
+    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${weekdays} weekday sessions/week${allowSaturdayForMath ? '' : ' · Saturday blocked'}`,
     fraction: SCHEDULE_LO + 0.02,
     etaSeconds: null,
   })
@@ -313,6 +323,7 @@ export async function runPipeline(
       absoluteGap: options?.cpsatAbsoluteGap,
       provePlateauSeconds: options?.cpsatProvePlateauSeconds,
       fullProve: options?.cpsatFullProve,
+      allowSaturdayForMath,
       signal,
       onProgress: (evt) => {
         if (evt.type === 'progress' || evt.type === 'heartbeat') {
@@ -378,6 +389,7 @@ export async function runPipeline(
     slotAssignments,
     parallelHardCap(sectionCount),
     facultyConstraints,
+    { allowSaturdayForMath },
   )
   const feasible = audit.feasible
   const hardViolations = audit.violations

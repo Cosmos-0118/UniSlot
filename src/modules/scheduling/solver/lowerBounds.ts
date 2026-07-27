@@ -1,5 +1,6 @@
 import type { ConflictGraph, Section, Student } from '../types'
 import {
+  activeWeekdayCount,
   NON_MATH_WEEKDAY_COUNT,
   TOTAL_WEEKLY_SLOTS,
   isMathCourse,
@@ -240,26 +241,35 @@ function componentWeightedCliqueLb(
 
 function studentPigeonholeRedLowerBound(
   students: Record<string, Student>,
+  allowSaturdayForMath: boolean,
 ): { count: number; notes: string[] } {
   let count = 0
   const notes: string[] = []
+  const saturdayNote = allowSaturdayForMath
+    ? 'Saturday maths-only'
+    : 'Mon–Fri only (Saturday blocked)'
   for (const st of Object.values(students)) {
     const courses = st.enrolled_courses
     if (!courses.length) continue
-    let nonMath = 0
-    let math = 0
-    for (const c of courses) {
-      if (isMathCourse(c)) math++
-      else nonMath++
+    let maxFeasibleDistinctDays: number
+    if (!allowSaturdayForMath) {
+      maxFeasibleDistinctDays = Math.min(courses.length, NON_MATH_WEEKDAY_COUNT)
+    } else {
+      let nonMath = 0
+      let math = 0
+      for (const c of courses) {
+        if (isMathCourse(c)) math++
+        else nonMath++
+      }
+      maxFeasibleDistinctDays =
+        Math.min(nonMath, NON_MATH_WEEKDAY_COUNT) +
+        Math.min(math, TOTAL_WEEKLY_SLOTS - Math.min(nonMath, NON_MATH_WEEKDAY_COUNT))
     }
-    const maxFeasibleDistinctDays =
-      Math.min(nonMath, NON_MATH_WEEKDAY_COUNT) +
-      Math.min(math, TOTAL_WEEKLY_SLOTS - Math.min(nonMath, NON_MATH_WEEKDAY_COUNT))
     if (courses.length > maxFeasibleDistinctDays) {
       count++
       if (notes.length < 3) {
         notes.push(
-          `Student ${st.register_number}: ${courses.length} courses but at most ${maxFeasibleDistinctDays} feasible distinct evenings (Saturday maths-only).`,
+          `Student ${st.register_number}: ${courses.length} courses but at most ${maxFeasibleDistinctDays} feasible distinct evenings (${saturdayNote}).`,
         )
       }
     }
@@ -275,7 +285,9 @@ export function computeSchedulingLowerBounds(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
   students?: Record<string, Student>,
+  options?: { allowSaturdayForMath?: boolean },
 ): SchedulingLowerBounds {
+  const allowSaturdayForMath = options?.allowSaturdayForMath !== false
   const sectionToCourse = new Map<string, string>()
   for (const secs of Object.values(courseSections)) {
     for (const s of secs) sectionToCourse.set(s.section_id, s.course_code)
@@ -286,7 +298,7 @@ export function computeSchedulingLowerBounds(
   const maxCliqueNodes =
     exactClique.length >= greedyClique.length ? exactClique : greedyClique
   const maxClique = maxCliqueNodes.length || (adj.size ? 1 : 0)
-  const colors = TOTAL_WEEKLY_SLOTS
+  const colors = activeWeekdayCount(allowSaturdayForMath)
   const notes: string[] = []
 
   if (maxClique > colors) {
@@ -299,17 +311,19 @@ export function computeSchedulingLowerBounds(
 
   let minRed = 0
   if (students && Object.keys(students).length) {
-    const pigeon = studentPigeonholeRedLowerBound(students)
+    const pigeon = studentPigeonholeRedLowerBound(students, allowSaturdayForMath)
     minRed = pigeon.count
     notes.push(...pigeon.notes)
     if (minRed > 0) {
       notes.push(
-        `At least ${minRed} student(s) must have a timetable clash given enrollment and Saturday maths-only.`,
+        allowSaturdayForMath
+          ? `At least ${minRed} student(s) must have a timetable clash given enrollment and Saturday maths-only.`
+          : `At least ${minRed} student(s) must have a timetable clash given enrollment and Mon–Fri-only (Saturday blocked).`,
       )
     }
   }
 
-  // Non-math subgraph: only 5 colors.
+  // Non-math subgraph: only 5 colors (or all colors when Saturday is blocked).
   let nonMathClique = 0
   const nonMathAdj = new Map<string, Set<string>>()
   for (const [v, nbrs] of adj) {

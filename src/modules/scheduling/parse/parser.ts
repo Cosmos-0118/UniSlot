@@ -62,9 +62,6 @@ const REQUIRED_FIELDS = [
   'course_title',
 ] as const
 
-/** Constraints.md §5.3 Rule 4 — max 5 courses per student */
-const MAX_COURSES_PER_STUDENT = 5
-
 function normalizeColumnName(col: string): string {
   const cleaned = String(col)
     .replace(/[^\w\s]/g, '')
@@ -349,16 +346,6 @@ export function validateBusinessRules(rows: EnrollmentRow[]): {
     }
     studentCourses.get(row.register_number)!.add(row.course_code)
     validRows.push(row)
-  }
-
-  for (const [studentId, courses] of studentCourses) {
-    if (courses.size > MAX_COURSES_PER_STUDENT) {
-      result.errors.push({
-        field: 'max_courses',
-        message: `Student ${studentId} has ${courses.size} course registrations (maximum ${MAX_COURSES_PER_STUDENT} per Constraints.md §5.3)`,
-        value: studentId,
-      })
-    }
   }
 
   result.valid_rows = validRows.length
