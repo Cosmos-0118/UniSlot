@@ -295,11 +295,29 @@ export function spawnCpsatSolve(
           options.signal.addEventListener('abort', onAbort, { once: true })
         }
 
+        // Keep the tail of non-NDJSON stderr (tracebacks, OR-Tools aborts) for failure messages.
+        const stderrTail: string[] = []
+        const STDERR_TAIL_LINES = 20
+
         const rl = createInterface({ input: child.stderr! })
         rl.on('line', (line) => {
           if (aborted) return
           const evt = parseProgressLine(line)
-          if (!evt) return
+          if (!evt) {
+            const trimmed = line.trim()
+            if (trimmed) {
+              stderrTail.push(trimmed)
+              if (stderrTail.length > STDERR_TAIL_LINES) stderrTail.shift()
+            }
+            return
+          }
+          if (evt.type === 'error') {
+            const detail = [evt.message, evt.traceback].filter(Boolean).join('\n')
+            if (detail) {
+              stderrTail.push(detail)
+              if (stderrTail.length > STDERR_TAIL_LINES) stderrTail.shift()
+            }
+          }
           if (options?.portfolioMeta) {
             options.onProgress?.({ ...evt, portfolio: options.portfolioMeta })
             return
@@ -336,18 +354,20 @@ export function spawnCpsatSolve(
           } catch {
             /* ignore */
           }
+          const tail = stderrTail.length ? `\nSolver output:\n  ${stderrTail.join('\n  ')}` : ''
           throw new Error(
-            exitCode !== 0
+            (exitCode !== 0
               ? `CP-SAT solver failed (exit ${exitCode})${detail ? ` — ${detail}` : ' with no solution file'}`
-              : 'CP-SAT solver produced no solution file',
+              : 'CP-SAT solver produced no solution file') + tail,
           )
         }
 
         if (!solution.slot_by_course || Object.keys(solution.slot_by_course).length === 0) {
+          const tail = stderrTail.length ? `\nSolver output:\n  ${stderrTail.join('\n  ')}` : ''
           throw new Error(
-            solution.error ||
+            (solution.error ||
               solution.message ||
-              `CP-SAT solver returned empty assignment (status=${solution.status})`,
+              `CP-SAT solver returned empty assignment (status=${solution.status})`) + tail,
           )
         }
 

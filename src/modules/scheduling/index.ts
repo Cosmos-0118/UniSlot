@@ -24,13 +24,46 @@ export { runPipeline, computeCourseEmailGroups } from './pipeline/run'
 export { PipelineCancelledError, throwIfAborted } from './pipeline/cancellation'
 export type { SchedulingSnapshot } from './merge/snapshot'
 export { cloneSchedulingSnapshot, loadSchedulingSnapshot } from './merge/snapshot'
-export type { RectifyPipelineResult, RectificationReport, RunRectifyOptions } from './pipeline/rectifyRun'
+export type {
+  PlacementMethod,
+  RectifyPipelineResult,
+  RectificationReport,
+  RunRectifyOptions,
+} from './pipeline/rectifyRun'
 export {
   runRectifyPipeline,
   parseEnrollmentWorkbook,
   loadPreviousSummary,
 } from './pipeline/rectifyRun'
+export type {
+  BaselineValidationWarning,
+  EnrollmentDelta,
+  StudentEnrollmentChange,
+} from './merge/enrollmentDelta'
+export {
+  buildFixedDays,
+  computeEnrollmentDelta,
+  extractCourseSlotsFromSnapshot,
+  formatEnrollmentDeltaSummary,
+  freeCourseCodes,
+  inferAllowSaturdayFromSnapshot,
+  validateBaselineMatchesSnapshot,
+} from './merge/enrollmentDelta'
+export type { PlaceFreeCoursesResult, RectifyPreflight } from './merge/rectifyPlacement'
+export {
+  buildFacultyByCourse,
+  placeFreeCourseWeekdays,
+  preflightRectify,
+} from './merge/rectifyPlacement'
+export type {
+  ClashDiff,
+  ClashEntry,
+  CoursePlacement,
+  SectionCountChange,
+} from './merge/rectifyDiff'
+export { describePlacements, diffClashReports, diffSectionCounts } from './merge/rectifyDiff'
 export { parseExcelRows, loadAndValidate } from './parse/parser'
+export type { ScheduleAudit } from './solver/hardConstraints'
 export {
   auditScheduleHardConstraints,
   parallelHardCap,

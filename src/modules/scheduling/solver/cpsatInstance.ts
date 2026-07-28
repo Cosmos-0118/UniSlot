@@ -118,7 +118,13 @@ export type CpsatProgressEvent =
       proven_optimal?: boolean
       portfolio?: CpsatPortfolioMeta
     }
-  | { type: 'error'; message: string; portfolio?: CpsatPortfolioMeta }
+  | {
+      type: 'error'
+      message: string
+      /** Python traceback when solve_lex raised. */
+      traceback?: string
+      portfolio?: CpsatPortfolioMeta
+    }
 
 /** Aggregate section-level conflict edges to course pairs (unique students already per edge). */
 export function aggregateCourseConflictEdges(

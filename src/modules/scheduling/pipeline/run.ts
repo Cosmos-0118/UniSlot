@@ -412,8 +412,9 @@ export async function runPipeline(
     facultyConstraints,
     { allowSaturdayForMath },
   )
-  const feasible = audit.feasible
-  const hardViolations = audit.violations
+  // Student same-day overlaps are the soft objective, not a fence — gate on structural rules only.
+  const feasible = audit.structuralFeasible
+  const hardViolations = audit.structuralViolations
   const primaryZero = cpsat.total_clash_weight === 0 && cpsat.red_students === 0
   const provenOptimal = cpsat.proven_optimal
   const provenLevels = cpsat.proven_levels

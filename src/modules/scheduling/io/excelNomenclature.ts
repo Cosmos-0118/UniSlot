@@ -1,4 +1,3 @@
-import type { Workbook } from 'exceljs'
 import { readFirstSheetAsAoA } from './excelIo'
 
 function normalizeProgramKey(s: string): string {

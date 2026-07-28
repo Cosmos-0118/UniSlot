@@ -50,10 +50,14 @@ describe('weighted clash lower bounds', () => {
           section_a: `${codes[i]}1`,
           section_b: `${codes[j]}1`,
           weight: 5,
+          shared_students: [],
         })
       }
     }
-    const conflictGraph: ConflictGraph = { edges, adjacency: {} }
+    const conflictGraph: ConflictGraph = {
+      sections: codes.map((c) => `${c}1`),
+      edges,
+    }
     const lb = computeSchedulingLowerBounds(courseSections, conflictGraph)
     // Unit pigeonhole for K7/6 = 1; weighted = 5
     expect(lb.min_clash_weight_lower_bound).toBeGreaterThanOrEqual(5)

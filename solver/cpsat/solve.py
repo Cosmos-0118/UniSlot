@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from typing import Any
 
 from ortools.sat.python import cp_model
@@ -773,17 +774,31 @@ def main() -> int:
     gap_samples: list[dict[str, Any]] | None = [] if args.gap_trace else None
     absolute_gap = None if args.prove else args.absolute_gap
     prove_plateau = None if args.prove else args.prove_plateau
-    result = solve_lex(
-        built,
-        time_limit=args.time_limit,
-        workers=workers,
-        seed=seed,
-        clash_only=bool(args.clash_only),
-        gap_trace=gap_samples,
-        absolute_gap=absolute_gap,
-        prove_plateau_seconds=prove_plateau,
-        full_prove=bool(args.prove),
-    )
+    try:
+        result = solve_lex(
+            built,
+            time_limit=args.time_limit,
+            workers=workers,
+            seed=seed,
+            clash_only=bool(args.clash_only),
+            gap_trace=gap_samples,
+            absolute_gap=absolute_gap,
+            prove_plateau_seconds=prove_plateau,
+            full_prove=bool(args.prove),
+        )
+    except Exception as exc:  # noqa: BLE001 — always leave the parent CLI a readable file
+        detail = traceback.format_exc()
+        err = {
+            "status": "SOLVER_ERROR",
+            "error": str(exc),
+            "traceback": detail,
+            "proven_optimal": False,
+            "slot_by_course": {},
+        }
+        with open(args.output, "w", encoding="utf-8") as out:
+            json.dump(err, out, indent=2)
+        emit({"type": "error", "message": str(exc), "traceback": detail})
+        return 3
     if gap_samples is not None and args.gap_trace:
         analysis = analyze_gap_trace(gap_samples)
         result["gap_analysis"] = analysis

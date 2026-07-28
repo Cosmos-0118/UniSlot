@@ -317,6 +317,9 @@ describe('CP-SAT solver smoke', () => {
       expect(result.slot_by_course.A).toBe(2)
       expect(result.slot_by_course.B).toBe(4)
       expect(result.slot_by_course.D).not.toBe(2)
+      // Rectify relies on the full lex run, so balance must still be proven under pinning.
+      expect(result.proven_levels).toContain('clash_weight')
+      expect(result.proven_levels).toContain('balance_and_parallel')
     },
     60_000,
   )

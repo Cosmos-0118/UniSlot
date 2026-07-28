@@ -82,13 +82,17 @@ export function computeEnrollmentDelta(
 
 /** Derive course→weekday from section-level snapshot assignments. */
 export function extractCourseSlotsFromSnapshot(snapshot: SchedulingSnapshot): Record<string, number> {
+  const courseBySection = new Map<string, string>()
+  for (const sections of Object.values(snapshot.courseSections)) {
+    for (const sec of sections) courseBySection.set(sec.section_id, sec.course_code)
+  }
+
   const slotByCourse: Record<string, number> = {}
   for (const [sectionId, slot] of Object.entries(snapshot.slot_assignments)) {
-    const sections = Object.values(snapshot.courseSections).flat()
-    const sec = sections.find((s) => s.section_id === sectionId)
-    if (sec) slotByCourse[sec.course_code] = slot
+    const code = courseBySection.get(sectionId)
+    if (code) slotByCourse[code] = slot
   }
-  // Fallback: parse section_id as course code for single-section courses
+  // Fallback: single-section courses whose section_id never appeared in slot_assignments.
   for (const [code, secs] of Object.entries(snapshot.courseSections)) {
     if (code in slotByCourse) continue
     const first = secs[0]

@@ -92,3 +92,68 @@ describe('auditScheduleHardConstraints', () => {
     expect(r.violations.some((v: string) => v.includes('temporarily blocked'))).toBe(true)
   })
 })
+
+describe('auditScheduleHardConstraints structural split', () => {
+  it('keeps a student same-day overlap out of the structural bucket', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [makeSection({ section_id: 'a1', course_code: 'A', enrolled_students: ['s1'] })],
+      B: [makeSection({ section_id: 'b1', course_code: 'B', enrolled_students: ['s1'] })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { a1: 0, b1: 0 }, 40, {})
+
+    expect(r.feasible).toBe(false)
+    expect(r.structuralFeasible).toBe(true)
+    expect(r.structuralViolations).toHaveLength(0)
+    expect(r.studentOverlapViolations).toHaveLength(1)
+  })
+
+  it('marks a capacity breach as structural', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [
+        makeSection({
+          section_id: 'a1',
+          course_code: 'A',
+          capacity: 1,
+          enrolled_students: ['s1', 's2'],
+        }),
+      ],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { a1: 0 }, 40, {})
+
+    expect(r.feasible).toBe(false)
+    expect(r.structuralFeasible).toBe(false)
+    expect(r.structuralViolations.some((v) => v.includes('capacity'))).toBe(true)
+  })
+
+  it('marks faculty double-booking as structural', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [makeSection({ section_id: 'a1', course_code: 'A', faculty: 'Dr X' })],
+      B: [makeSection({ section_id: 'b1', course_code: 'B', faculty: 'Dr X' })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { a1: 1, b1: 1 }, 40, {
+      'Dr X': ['a1', 'b1'],
+    })
+
+    expect(r.structuralFeasible).toBe(false)
+    expect(r.studentOverlapViolations).toHaveLength(0)
+  })
+
+  it('reports both buckets when structural and soft rules break together', () => {
+    const courseSections: Record<string, Section[]> = {
+      A: [
+        makeSection({
+          section_id: 'a1',
+          course_code: 'A',
+          capacity: 1,
+          enrolled_students: ['s1', 's2'],
+        }),
+      ],
+      B: [makeSection({ section_id: 'b1', course_code: 'B', enrolled_students: ['s1'] })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { a1: 0, b1: 0 }, 40, {})
+
+    expect(r.structuralViolations.length).toBeGreaterThan(0)
+    expect(r.studentOverlapViolations.length).toBeGreaterThan(0)
+    expect(r.violations).toEqual([...r.structuralViolations, ...r.studentOverlapViolations])
+  })
+})

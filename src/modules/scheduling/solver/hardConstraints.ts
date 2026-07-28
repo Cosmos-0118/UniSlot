@@ -26,9 +26,23 @@ export function facultySlotsFeasible(
   return true
 }
 
+export type ScheduleAudit = {
+  /** Structural rules plus student same-day overlaps (kept for backwards compatibility). */
+  feasible: boolean
+  /** {@link structuralViolations} followed by {@link studentOverlapViolations}. */
+  violations: string[]
+  /** True when every rule the solver treats as hard holds. Ignores soft student overlaps. */
+  structuralFeasible: boolean
+  /** Split-section sync, slot range, capacity, faculty double-booking, Saturday policy. */
+  structuralViolations: string[]
+  /** Students with two courses on one weekday. Soft (clash weight is the objective, not a fence). */
+  studentOverlapViolations: string[]
+}
+
 /**
  * Post-solve audit for Constraints.md hard rules (bundle weekday, faculty, capacity, range, Saturday maths).
- * Student same-day overlaps are reported here for diagnostics; clash weight remains the soft primary objective.
+ * Student same-day overlaps are reported here for diagnostics; clash weight remains the soft primary objective,
+ * so callers deciding whether a schedule is shippable should gate on {@link ScheduleAudit.structuralFeasible}.
  */
 export function auditScheduleHardConstraints(
   courseSections: Record<string, Section[]>,
@@ -36,16 +50,18 @@ export function auditScheduleHardConstraints(
   _parallelCap: number,
   facultyConstraints: Record<string, string[]>,
   options?: { allowSaturdayForMath?: boolean },
-): { feasible: boolean; violations: string[] } {
+): ScheduleAudit {
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
-  const violations: string[] = []
+  const structuralViolations: string[] = []
+  const studentOverlapViolations: string[] = []
   const sections = Object.values(courseSections).flat()
+  const sectionById = new Map(sections.map((s) => [s.section_id, s]))
 
   for (const [code, secs] of Object.entries(courseSections)) {
     if (secs.length <= 1) continue
     const slots = new Set(secs.map((s) => slotAssignments[s.section_id] ?? -1))
     if (slots.size > 1) {
-      violations.push(
+      structuralViolations.push(
         `Course ${code}: split sections must share one slot; found ${[...slots].join(', ')}`,
       )
     }
@@ -54,10 +70,10 @@ export function auditScheduleHardConstraints(
   for (const sec of sections) {
     const sl = slotAssignments[sec.section_id]
     if (sl === undefined || sl < 0 || sl >= TOTAL_WEEKLY_SLOTS) {
-      violations.push(`Section ${sec.section_id}: invalid slot ${String(sl)}`)
+      structuralViolations.push(`Section ${sec.section_id}: invalid slot ${String(sl)}`)
     }
     if (sec.enrolled_students.length > sec.capacity) {
-      violations.push(
+      structuralViolations.push(
         `Section ${sec.section_id}: enrollment ${sec.enrolled_students.length} > capacity ${sec.capacity}`,
       )
     }
@@ -78,7 +94,7 @@ export function auditScheduleHardConstraints(
   for (const [studentId, coursesByDay] of studentDayCourses) {
     for (const [day, courses] of coursesByDay) {
       if (courses.size > 1) {
-        violations.push(
+        studentOverlapViolations.push(
           `Student ${studentId}: ${[...courses].sort().join(', ')} scheduled on ${slotIndexToDay(day)}; maximum one course per weekday`,
         )
       }
@@ -90,17 +106,17 @@ export function auditScheduleHardConstraints(
     slotByCourse[sec.course_code] = slotAssignments[sec.section_id] ?? 0
   }
   if (!facultySlotsFeasible(sections, slotByCourse)) {
-    violations.push('Faculty overlap: same faculty in multiple sections on one weekday')
+    structuralViolations.push('Faculty overlap: same faculty in multiple sections on one weekday')
   }
 
   for (const [code, slot] of Object.entries(slotByCourse)) {
     if (slot !== SATURDAY_SLOT_INDEX) continue
     if (!allowSaturdayForMath) {
-      violations.push(
+      structuralViolations.push(
         `Course ${code}: assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is temporarily blocked`,
       )
     } else if (!isMathCourse(code)) {
-      violations.push(
+      structuralViolations.push(
         `Course ${code}: non-mathematics course assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is reserved for mathematics courses`,
       )
     }
@@ -108,15 +124,22 @@ export function auditScheduleHardConstraints(
 
   for (const [facLabel, secIds] of Object.entries(facultyConstraints)) {
     for (const id of secIds) {
-      const sec = sections.find((x) => x.section_id === id)
-      if (!sec) violations.push(`Faculty map references unknown section ${id}`)
+      const sec = sectionById.get(id)
+      if (!sec) structuralViolations.push(`Faculty map references unknown section ${id}`)
       else if (sec.faculty !== facLabel) {
-        violations.push(
+        structuralViolations.push(
           `Faculty map mismatch for ${id}: map "${facLabel}" vs section "${sec.faculty ?? ''}"`,
         )
       }
     }
   }
 
-  return { feasible: violations.length === 0, violations }
+  const violations = [...structuralViolations, ...studentOverlapViolations]
+  return {
+    feasible: violations.length === 0,
+    violations,
+    structuralFeasible: structuralViolations.length === 0,
+    structuralViolations,
+    studentOverlapViolations,
+  }
 }

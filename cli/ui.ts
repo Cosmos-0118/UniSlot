@@ -876,7 +876,12 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 }
 
+let bannerShown = false
+
+/** Idempotent: the mode menu prints the banner before commander re-dispatches into a subcommand. */
 export function banner(): void {
+  if (bannerShown) return
+  bannerShown = true
   p.intro(chalk.bold.cyan('UniSlot') + chalk.dim(' · terminal CP-SAT scheduler'))
 }
 

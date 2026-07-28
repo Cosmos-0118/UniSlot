@@ -21,16 +21,22 @@ import {
   loadPreviousSummary,
   parseEnrollmentWorkbook,
   runRectifyPipeline,
+  type RectificationReport,
   type RectifyPipelineResult,
 } from '../src/modules/scheduling/pipeline/rectifyRun.ts'
-import { loadSchedulingSnapshot } from '../src/modules/scheduling/merge/snapshot.ts'
+import {
+  loadSchedulingSnapshot,
+  type SchedulingSnapshot,
+} from '../src/modules/scheduling/merge/snapshot.ts'
 import {
   buildFixedDays,
   computeEnrollmentDelta,
+  extractCourseSlotsFromSnapshot,
   formatEnrollmentDeltaSummary,
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
 } from '../src/modules/scheduling/merge/enrollmentDelta.ts'
+import { slotIndexToDay } from '../src/modules/scheduling/solver/timeModel.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -110,7 +116,7 @@ async function writeExports(
 async function writeRectifyExports(
   outDir: string,
   result: RectifyPipelineResult,
-  meta: { workers: number },
+  meta: { workers: number; seed?: number },
 ): Promise<string[]> {
   await mkdir(outDir, { recursive: true })
   const written: string[] = []
@@ -139,22 +145,126 @@ async function writeRectifyExports(
     await writeFile(fp, JSON.stringify(result.rectificationReport, null, 2), 'utf8')
     written.push(fp)
   }
+  const report = result.rectificationReport
   const summary = {
     mode: 'rectify',
     status: result.solver_status,
     proven_optimal: result.proven_optimal,
+    proven_levels: result.proven_levels,
     message: result.solver_message,
+    placement_method: report?.placement_method,
     clash_weight: result.stats?.scheduling?.total_clash_weight,
     red_students: result.clashReport?.students_with_clashes,
+    new_clashes: report?.new_clashes.length ?? 0,
+    carried_over_clashes: report?.carried_over_clashes.length ?? 0,
+    resolved_clashes: report?.resolved_clashes.length ?? 0,
+    lower_bounds: result.stats?.scheduling?.lower_bounds,
     changed_students: result.enrollmentDelta?.changed_students.length ?? 0,
     new_courses: result.enrollmentDelta?.new_course_codes ?? [],
+    pinned_courses: report?.pinned_course_count ?? 0,
     infeasible: result.infeasible ?? false,
+    allow_saturday_for_math: result.allowSaturdayForMath,
+    seed: meta.seed,
     workers: meta.workers,
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
   written.push(summaryPath)
   return written
+}
+
+/**
+ * Result panel for a rectify run. Deliberately reports only what this rectification changed —
+ * clashes that already existed in the previous run are summarised as a single count, never listed.
+ */
+function formatRectifyResult(
+  report: RectificationReport,
+  snapshot: SchedulingSnapshot,
+): string {
+  const previousDays = extractCourseSlotsFromSnapshot(snapshot)
+  const dayOf = (code: string): string => {
+    const placed = report.new_course_slots[code]
+    if (placed !== undefined) return slotIndexToDay(placed)
+    const prev = previousDays[code]
+    return prev === undefined ? '?' : slotIndexToDay(prev)
+  }
+
+  const lines: string[] = []
+
+  if (report.new_course_placements.length > 0) {
+    lines.push(chalk.bold('New course' + (report.new_course_placements.length > 1 ? 's' : '')))
+    for (const pl of report.new_course_placements) {
+      lines.push(
+        `  ${chalk.cyan(pl.course_code)} · ${pl.course_title}`,
+        `    ${chalk.green(pl.day)} · ${pl.section_count} section(s) · ${pl.enrollment} student(s)`,
+      )
+    }
+    lines.push('')
+  }
+
+  if (report.removed_course_codes.length > 0) {
+    lines.push(
+      chalk.bold('Removed courses'),
+      `  ${report.removed_course_codes.join(', ')}`,
+      '',
+    )
+  }
+
+  if (report.changed_students.length > 0) {
+    lines.push(chalk.bold('Student changes'))
+    const shown = report.changed_students.slice(0, 12)
+    for (const s of shown) {
+      lines.push(`  ${chalk.cyan(s.register_number)} · ${s.student_name}`)
+      if (s.dropped.length > 0) {
+        lines.push(`    dropped  ${s.dropped.map((c) => `${c} (${dayOf(c)})`).join(', ')}`)
+      }
+      if (s.added.length > 0) {
+        lines.push(`    added    ${s.added.map((c) => `${c} (${dayOf(c)})`).join(', ')}`)
+      }
+      const clash = report.new_clashes.find((c) => c.register_number === s.register_number)
+      lines.push(
+        clash
+          ? `    status   ${chalk.red(`Red — clash on ${clash.day}: ${clash.courses.join(', ')}`)}`
+          : `    status   ${chalk.green('Green — no clash')}`,
+      )
+    }
+    if (report.changed_students.length > shown.length) {
+      lines.push(chalk.dim(`  … ${report.changed_students.length - shown.length} more`))
+    }
+    lines.push('')
+  }
+
+  lines.push(chalk.bold('Impact'))
+  lines.push(`  ${report.pinned_course_count} course weekday(s) frozen from the previous run`)
+  lines.push(
+    `  Section splits changed: ${
+      report.section_count_changes.length === 0
+        ? 'none'
+        : report.section_count_changes
+            .map((c) => `${c.course_code} ${c.before}→${c.after}`)
+            .join(', ')
+    }`,
+  )
+  const newClashLine = `  New clashes introduced: ${report.new_clashes.length}`
+  lines.push(report.new_clashes.length > 0 ? chalk.red(newClashLine) : chalk.green(newClashLine))
+  for (const c of report.new_clashes.slice(0, 8)) {
+    lines.push(`    ${c.register_number} · ${c.student_name} · ${c.day} · ${c.courses.join(', ')}`)
+  }
+  if (report.new_clashes.length > 8) {
+    lines.push(chalk.dim(`    … ${report.new_clashes.length - 8} more`))
+  }
+  if (report.resolved_clashes.length > 0) {
+    lines.push(chalk.green(`  Clashes resolved: ${report.resolved_clashes.length}`))
+  }
+  if (report.carried_over_clashes.length > 0) {
+    lines.push(
+      chalk.dim(
+        `  Pre-existing clashes carried over: ${report.carried_over_clashes.length} (unchanged by this rectification)`,
+      ),
+    )
+  }
+
+  return lines.join('\n')
 }
 
 async function promptRunMode(): Promise<'solve' | 'rectify' | null> {
@@ -191,7 +301,10 @@ async function runRectify(opts: {
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
   const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
-  const portfolioK = opts.portfolio === undefined ? 0 : Math.max(0, Math.floor(opts.portfolio))
+  if (opts.portfolio !== undefined && opts.portfolio > 0) {
+    // With every continuing course pinned the model presolves to almost nothing.
+    p.log.warn('--portfolio is ignored during rectify; the pinned model solves in a single pass.')
+  }
 
   let baselinePath = opts.baseline
   let rectifiedPath = opts.rectified
@@ -318,14 +431,17 @@ async function runRectify(opts: {
     'Rectify preview',
   )
 
-  if (opts.interactive && !opts.skipPrompts) {
-    const proceed = await p.confirm({
-      message: 'Apply these changes and write rectified exports?',
-      initialValue: true,
-    })
-    if (p.isCancel(proceed) || !proceed) {
-      p.cancel('Cancelled')
-      return 1
+  if (enrollmentDelta.changed_students.length === 0 && free.length === 0) {
+    p.log.warn('Nothing changed between the two workbooks — the previous schedule already applies.')
+    if (opts.interactive && !opts.skipPrompts) {
+      const proceed = await p.confirm({
+        message: 'Re-export the schedule anyway?',
+        initialValue: false,
+      })
+      if (p.isCancel(proceed) || !proceed) {
+        p.cancel('Cancelled')
+        return 1
+      }
     }
   }
 
@@ -350,11 +466,11 @@ async function runRectify(opts: {
       },
       {
         baselineRows: baselineParsed.rows,
+        rectifiedRows: rectifiedParsed.rows,
         previousSnapshot: snapshot,
         previousSummary,
         cpsatTimeLimitSeconds: opts.timeLimit,
         cpsatWorkers: opts.workers,
-        cpsatPortfolio: portfolioK,
         cpsatAbsoluteGap: opts.absoluteGap,
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
@@ -376,12 +492,16 @@ async function runRectify(opts: {
     }
 
     if (result.infeasible) {
-      spin.stop('Rectify infeasible')
-      p.log.error(result.infeasible_reason ?? 'Hard constraints violated')
-      if (result.rectificationReport?.hard_constraint_violations.length) {
-        p.note(result.rectificationReport.hard_constraint_violations.join('\n'), 'Violations')
+      spin.stop('Rectify blocked')
+      p.log.error(result.infeasible_reason ?? 'Structural constraints violated')
+      const violations = result.rectificationReport?.hard_constraint_violations ?? []
+      if (violations.length > 1) {
+        p.note(violations.slice(0, 12).join('\n'), 'Structural violations')
       }
-      const files = await writeRectifyExports(outDir, result, { workers: requestedWorkers })
+      const files = await writeRectifyExports(outDir, result, {
+        workers: requestedWorkers,
+        seed: opts.seed,
+      })
       p.log.warn(`Partial report written to ${outDir} (${files.length} file(s))`)
       return 1
     }
@@ -393,27 +513,35 @@ async function runRectify(opts: {
 
     spin.stop(chalk.green('Rectify complete'))
 
-    const delta = result.enrollmentDelta
-    if (delta) {
-      p.note(
-        [
-          `${delta.changed_students.length} student(s) changed`,
-          `${delta.new_course_codes.length} new course(s): ${delta.new_course_codes.join(', ') || '—'}`,
-          `${delta.removed_course_codes.length} removed course(s): ${delta.removed_course_codes.join(', ') || '—'}`,
-        ].join('\n'),
-        'Changes',
-      )
-    }
-
-    if (result.rectificationReport?.baseline_warnings.length) {
-      p.log.warn(
-        result.rectificationReport.baseline_warnings.map((w) => w.message).join('\n'),
-      )
+    const report = result.rectificationReport
+    if (report) {
+      p.note(formatRectifyResult(report, snapshot), 'Rectified')
+      if (report.placement_method === 'greedy-fallback') {
+        p.log.warn(
+          'CP-SAT was unavailable, so new courses were placed by the greedy fallback. Weekday balance is not guaranteed — re-run once the solver is available.',
+        )
+      }
+      if (report.baseline_warnings.length) {
+        p.log.warn(report.baseline_warnings.map((w) => w.message).join('\n'))
+      }
+      if (report.new_clashes.length > 0 && opts.interactive && !opts.skipPrompts) {
+        const proceed = await p.confirm({
+          message: `Write exports despite ${report.new_clashes.length} newly introduced clash(es)?`,
+          initialValue: true,
+        })
+        if (p.isCancel(proceed) || !proceed) {
+          p.cancel('Cancelled — nothing written.')
+          return 1
+        }
+      }
     }
 
     const writeSpin = p.spinner()
     writeSpin.start(`Writing rectified exports to ${outDir}…`)
-    const files = await writeRectifyExports(outDir, result, { workers: requestedWorkers })
+    const files = await writeRectifyExports(outDir, result, {
+      workers: requestedWorkers,
+      seed: opts.seed,
+    })
     writeSpin.stop(`Wrote ${files.length} file(s)`)
 
     outroSuccess([
@@ -739,20 +867,26 @@ async function main(): Promise<void> {
   const hasExplicitSubcommand =
     args[0] === 'doctor' || args[0] === 'rectify' || args[0] === 'solve'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
-  const bareInteractive =
-    !hasExplicitSubcommand && !nonInteractive && args.every((a) => !a.startsWith('-') || a === '-')
+  const wantsHelpOrVersion = args.some((a) =>
+    ['-h', '--help', '-V', '--version'].includes(a),
+  )
+  // Offer the mode menu for any bare invocation on a TTY, including one with only flags.
+  const showModeMenu =
+    !hasExplicitSubcommand &&
+    !nonInteractive &&
+    !wantsHelpOrVersion &&
+    Boolean(process.stdin.isTTY)
 
-  if (bareInteractive && args.length === 0) {
+  let argv = process.argv
+  if (showModeMenu) {
     banner()
     const mode = await promptRunMode()
     if (!mode) {
       p.cancel('Cancelled')
       process.exit(1)
     }
-    if (mode === 'rectify') {
-      process.exitCode = await runRectify({ interactive: true })
-      return
-    }
+    // Re-dispatch through commander so any flags the user passed still apply.
+    argv = [process.argv[0]!, process.argv[1]!, mode, ...args]
   }
 
   const program = new Command()
@@ -911,7 +1045,7 @@ async function main(): Promise<void> {
       p.outro('Ready to schedule.')
     })
 
-  await program.parseAsync(process.argv)
+  await program.parseAsync(argv)
 }
 
 void main()
