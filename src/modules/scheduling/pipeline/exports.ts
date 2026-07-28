@@ -2,12 +2,28 @@ import type { ClashReport, EnrollmentRow, Schedule } from '../types'
 import type { SchedulingSnapshot } from '../merge/snapshot'
 import type { ExportDeterminismOptions } from '../io/deterministicExport'
 import type { ScheduleWorkbookBranding } from '../io/excelScheduleWorkbook'
+import type { LateMarking } from '../io/excelLateMarking'
+import type { RunLogEntry } from '../merge/runLog'
+import type { ClashProvenanceMap } from '../merge/clashProvenance'
 
 export type PipelineExportKind = 'schedule' | 'clash' | 'courseEmails'
 
 export type ScheduleExportOptions = ExportDeterminismOptions & {
   branding?: ScheduleWorkbookBranding
   snapshot?: SchedulingSnapshot | null
+  lateMarking?: LateMarking | null
+  runLog?: RunLogEntry[]
+  clashProvenance?: ClashProvenanceMap
+}
+
+export type ClashExportOptions = ExportDeterminismOptions & {
+  lateMarking?: LateMarking | null
+  runLog?: RunLogEntry[]
+  clashProvenance?: ClashProvenanceMap
+}
+
+export type CourseEmailsExportOptions = ExportDeterminismOptions & {
+  lateMarking?: LateMarking | null
 }
 
 export async function buildScheduleXlsxBuffer(
@@ -18,7 +34,12 @@ export async function buildScheduleXlsxBuffer(
   const opts: ScheduleExportOptions =
     options &&
     typeof options === 'object' &&
-    ('branding' in options || 'snapshot' in options || 'seed' in options)
+    ('branding' in options ||
+      'snapshot' in options ||
+      'seed' in options ||
+      'lateMarking' in options ||
+      'runLog' in options ||
+      'clashProvenance' in options)
       ? (options as ScheduleExportOptions)
       : { branding: options as ScheduleWorkbookBranding | undefined }
   return scheduleToWorkbookBuffer(schedule, opts)
@@ -26,7 +47,7 @@ export async function buildScheduleXlsxBuffer(
 
 export async function buildClashXlsxBuffer(
   clashReport: ClashReport,
-  options?: ExportDeterminismOptions,
+  options?: ClashExportOptions,
 ): Promise<ArrayBuffer> {
   const { clashReportToRichWorkbookBuffer } = await import('../io/excelClashReport')
   return clashReportToRichWorkbookBuffer(clashReport, options)
@@ -34,7 +55,7 @@ export async function buildClashXlsxBuffer(
 
 export async function buildCourseEmailsXlsxBuffer(
   rows: EnrollmentRow[],
-  options?: ExportDeterminismOptions,
+  options?: CourseEmailsExportOptions,
 ): Promise<ArrayBuffer> {
   const { courseEmailsToWorkbookBuffer } = await import('../io/excelCourseEmails')
   return courseEmailsToWorkbookBuffer(rows, options)
@@ -49,9 +70,17 @@ export async function buildPipelineExportBuffer(
     allowScheduleXlsx: boolean
     snapshot?: SchedulingSnapshot | null
     seed?: number
+    lateMarking?: LateMarking | null
+    runLog?: RunLogEntry[]
+    clashProvenance?: ClashProvenanceMap
   },
 ): Promise<ArrayBuffer> {
-  const exportOpts = artifacts.seed !== undefined ? { seed: artifacts.seed } : undefined
+  const exportOpts = {
+    ...(artifacts.seed !== undefined ? { seed: artifacts.seed } : {}),
+    lateMarking: artifacts.lateMarking,
+    runLog: artifacts.runLog,
+    clashProvenance: artifacts.clashProvenance,
+  }
   switch (kind) {
     case 'schedule': {
       if (!artifacts.allowScheduleXlsx || !artifacts.schedule) {

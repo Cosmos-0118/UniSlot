@@ -43,15 +43,18 @@ export type ScheduleAudit = {
  * Post-solve audit for Constraints.md hard rules (bundle weekday, faculty, capacity, range, Saturday maths).
  * Student same-day overlaps are reported here for diagnostics; clash weight remains the soft primary objective,
  * so callers deciding whether a schedule is shippable should gate on {@link ScheduleAudit.structuralFeasible}.
+ *
+ * `waivedSectionIds` — sections allowed to exceed capacity (late-enrollment "fit" strategy).
  */
 export function auditScheduleHardConstraints(
   courseSections: Record<string, Section[]>,
   slotAssignments: Record<string, number>,
   _parallelCap: number,
   facultyConstraints: Record<string, string[]>,
-  options?: { allowSaturdayForMath?: boolean },
+  options?: { allowSaturdayForMath?: boolean; waivedSectionIds?: Set<string> },
 ): ScheduleAudit {
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
+  const waived = options?.waivedSectionIds ?? new Set<string>()
   const structuralViolations: string[] = []
   const studentOverlapViolations: string[] = []
   const sections = Object.values(courseSections).flat()
@@ -72,7 +75,7 @@ export function auditScheduleHardConstraints(
     if (sl === undefined || sl < 0 || sl >= TOTAL_WEEKLY_SLOTS) {
       structuralViolations.push(`Section ${sec.section_id}: invalid slot ${String(sl)}`)
     }
-    if (sec.enrolled_students.length > sec.capacity) {
+    if (sec.enrolled_students.length > sec.capacity && !waived.has(sec.section_id)) {
       structuralViolations.push(
         `Section ${sec.section_id}: enrollment ${sec.enrolled_students.length} > capacity ${sec.capacity}`,
       )

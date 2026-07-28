@@ -144,7 +144,55 @@ Long stretches on **proving** with an unchanged clash number are normal: CP-SAT 
 | Seems stuck on prove | Watch elapsed time and “since last improve”; leave it running or use `--time-limit` only if you accept a non-proven result |
 | Ctrl+C | Aborts the Python child and exits; no partial Excel unless the run already finished exports |
 
-## 8. Commands cheat sheet
+## 8. Rectify and late enrollment
+
+### Rectify (registration changes)
+
+Use when students drop/add courses or new course codes appear and you want continuing courses to keep their weekdays:
+
+```powershell
+npm run unislot -- rectify --baseline old.xlsx --rectified new.xlsx --previous .\unislot-out -o .\unislot-out-rectified
+```
+
+Or pick **Rectify schedule** from the interactive menu.
+
+### Late enrollment (freeze existing schedule)
+
+Use when students register late *after* a schedule is already published. Existing course weekdays, section IDs, and untouched students never move.
+
+```powershell
+npm run unislot -- late --previous .\Unislot-Final --late .\late.xlsx -o .\unislot-out-late
+```
+
+Interactive mode asks how to handle:
+
+1. **Capacity conflicts** — new section / equalize / fit in place / buffer / park  
+2. **Unavoidable clashes** — accept / drop one course / park the student  
+
+Non-interactive flags: `--on-full new-section|equalize|fit|buffer|park`, `--overflow-buffer N`, `--on-clash accept|drop-course|park-student`, `-y`.
+
+The late file can be a small delta (only the new rows) or the full updated workbook — UniSlot detects which and subtracts. Rows that only *remove* a registration are reported and ignored, because dropping courses is rectify's job.
+
+Outputs add:
+
+- `Late Adds` column (batch chain like `5 +3`)
+- Amber highlighting for late students and newly created sections
+- `Late Enrollments`, `Run Log`, and `Clash Log` sheets
+- `late-enrollment-report.json` and `run-log.json`
+
+### Reading the new columns and sheets
+
+**`Late Adds`** is a change log, not a total. `5 +3` means the first late batch added 5 students and the second added 3, so the section grew by 8. The current run's trailing segment is bold amber. A blank cell means no late run has ever touched that section or course. The column is per-section on `Schedule` and `Details`, per-course on `Course Catalog` and `Course Emails`.
+
+**`Late Enrollments`** lists this batch only: who went into which section, on which weekday, how they were absorbed (`existing`, `new_section`, `overflow`, `equalized`), and their resulting clash status. Anything the run could not place appears under `PARKED` with the reason.
+
+**`Run Log`** is one row per run ever, oldest first, carried forward from the previous output folder. It records what each run changed, RED before→after, and which option was chosen in each panel — so a later reader can tell that an unusual section shape was a deliberate human choice and which one.
+
+**`Clash Log`** is one row per clash *event*, with the run that first caused it, the operation (`solve` / `rectify` / `late`), the late batch number, and a plain-language `Why`. A clash that survives several runs keeps pointing at the run that actually caused it rather than being lumped in as "pre-existing"; once it goes away the row is marked `resolved #N`.
+
+Rectify runs carry the same trail forward, so `Run Log`, `Clash Log`, and `Late Adds` all survive a later rectification.
+
+## 9. Commands cheat sheet
 
 ```powershell
 npm install
@@ -153,7 +201,8 @@ npm run unislot -- doctor
 npm run unislot
 npm run unislot -- solve -i enroll.xlsx -o .\out -y
 npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
-npm run unislot -- solve -i enroll.xlsx -o .\out -y --workers 8
+npm run unislot -- rectify --baseline old.xlsx --rectified new.xlsx --previous .\out -o .\out-r -y
+npm run unislot -- late --previous .\out --late late.xlsx -o .\out-late -y
 npm test
 ```
 

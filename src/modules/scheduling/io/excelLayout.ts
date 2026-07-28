@@ -24,7 +24,8 @@ export function colWidthFromText(s: string, min: number, max: number): number {
 
 /**
  * Estimate how many visual lines wrapped text will occupy at a given column width.
- * `columnWidth` is Excel's width in character units (Calibri 11 baseline).
+ * Uses greedy word wrapping (Excel never breaks mid-word) rather than character division,
+ * so long program lists like "B.Tech.-Computer Science and Engineering, …" are not under-counted.
  */
 export function estimateWrappedLineCount(text: string, columnWidth: number): number {
   const t = text.trim()
@@ -37,7 +38,29 @@ export function estimateWrappedLineCount(text: string, columnWidth: number): num
       total += 1
       continue
     }
-    total += Math.max(1, Math.ceil(line.length / usable))
+    const words = line.split(/\s+/).filter(Boolean)
+    if (words.length === 0) {
+      total += 1
+      continue
+    }
+    let lines = 1
+    let current = 0
+    for (const word of words) {
+      const needed = current === 0 ? word.length : word.length + 1
+      if (current > 0 && current + needed > usable) {
+        lines += 1
+        current = word.length
+      } else {
+        current += needed
+      }
+      // A single word longer than the column still wraps mid-token in Excel.
+      if (word.length > usable) {
+        lines += Math.ceil(word.length / usable) - 1
+        current = word.length % usable
+      }
+    }
+    // Safety: tall wrapped cells need a little extra so middle-aligned text is not clipped.
+    total += lines >= 3 ? lines + 1 : lines
   }
   return Math.max(1, total)
 }
@@ -48,7 +71,7 @@ export function rowHeightForWrappedLines(
   opts?: { min?: number; max?: number; pointsPerLine?: number; padding?: number },
 ): number {
   const min = opts?.min ?? 18
-  const max = opts?.max ?? 140
+  const max = opts?.max ?? 180
   const pointsPerLine = opts?.pointsPerLine ?? 15
   const padding = opts?.padding ?? 6
   return Math.min(max, Math.max(min, lineCount * pointsPerLine + padding))
@@ -61,6 +84,7 @@ export type DataRowCellSpec = {
   wrap?: boolean
   horizontal?: 'left' | 'center' | 'right'
   numFmt?: string
+  font?: Partial<ExcelJS.Font>
 }
 
 export type ApplyDataRowOptions = {
@@ -103,10 +127,11 @@ export function applyDataRow(
 
     cell.alignment = {
       horizontal: spec.horizontal ?? opts.defaultHorizontal ?? 'left',
-      vertical: wrap ? 'top' : (opts.defaultVertical ?? 'middle'),
+      vertical: opts.defaultVertical ?? 'middle',
       wrapText: wrap,
     }
     if (spec.numFmt) cell.numFmt = spec.numFmt
+    if (spec.font) cell.font = spec.font
 
     cell.fill = {
       type: 'pattern',

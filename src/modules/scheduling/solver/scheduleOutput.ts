@@ -137,7 +137,11 @@ export function buildSchedule(
     zero_clash_structurally_impossible?: boolean
     lower_bound_notes?: string[]
   },
-  opts?: { programNomenclature?: Record<string, string> },
+  opts?: {
+    programNomenclature?: Record<string, string>
+    /** Previous parallel lane numbers — preserve them so late/rectify inserts do not renumber. */
+    previousLanes?: Record<string, number>
+  },
 ): Schedule {
   const entries: ScheduleEntry[] = []
 
@@ -173,10 +177,32 @@ export function buildSchedule(
     if (!entriesByDay.has(entry.day)) entriesByDay.set(entry.day, [])
     entriesByDay.get(entry.day)!.push(entry)
   }
+  const previousLanes = opts?.previousLanes
   for (const dayEntries of entriesByDay.values()) {
-    for (let i = 0; i < dayEntries.length; i++) {
-      dayEntries[i]!.slot_band = i + 1
-      dayEntries[i]!.parallel_lane_count = dayEntries.length
+    if (previousLanes && Object.keys(previousLanes).length > 0) {
+      // Stable order: keep prior lane numbers, append new sections at the end.
+      dayEntries.sort((a, b) => {
+        const la = previousLanes[a.section_id]
+        const lb = previousLanes[b.section_id]
+        if (la != null && lb != null) return la - lb
+        if (la != null) return -1
+        if (lb != null) return 1
+        return (
+          a.course_code.localeCompare(b.course_code) ||
+          a.section_number - b.section_number
+        )
+      })
+      let nextNew = Math.max(0, ...dayEntries.map((e) => previousLanes[e.section_id] ?? 0)) + 1
+      for (const entry of dayEntries) {
+        const prev = previousLanes[entry.section_id]
+        entry.slot_band = prev ?? nextNew++
+        entry.parallel_lane_count = dayEntries.length
+      }
+    } else {
+      for (let i = 0; i < dayEntries.length; i++) {
+        dayEntries[i]!.slot_band = i + 1
+        dayEntries[i]!.parallel_lane_count = dayEntries.length
+      }
     }
   }
 

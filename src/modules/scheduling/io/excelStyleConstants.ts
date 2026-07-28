@@ -9,6 +9,14 @@ export const XL = {
   textMuted: 'FF64748B',
   rowAlt: 'FFF8FAFC',
   clashRow: 'FFFEE2E2',
+  /** Late-enrolled student / Late Adds highlight (amber 300). */
+  late: 'FFFDE68A',
+  /** Section created during a late-enrollment run. */
+  lateSection: 'FFFEF9C3',
+  /** Student relocated between sections by equalize (violet). */
+  moved: 'FFEDE9FE',
+  /** Readable amber for the current late batch's "+n" segment (amber 800). */
+  lateText: 'FF92400E',
 } as const
 
 export const DAY_FILL: Record<string, string> = {

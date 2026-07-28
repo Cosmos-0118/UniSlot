@@ -31,6 +31,8 @@ import {
   WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
 } from '../merge/snapshot'
+import type { RunLogEntry } from '../merge/runLog'
+import type { ClashProvenanceMap } from '../merge/clashProvenance'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
 import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
 import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
@@ -110,6 +112,9 @@ export type RectifyPipelineResult = {
   schedulingSnapshot: SchedulingSnapshot | null
   rectificationReport: RectificationReport | null
   enrollmentDelta: EnrollmentDelta | null
+  /** Accumulated run trail including this rectify (empty when the run bailed out early). */
+  runLog: RunLogEntry[]
+  clashProvenance: ClashProvenanceMap
   allowSaturdayForMath?: boolean
   proven_optimal?: boolean
   proven_levels?: string[]
@@ -459,9 +464,51 @@ export async function runRectifyPipeline(
       zero_clash_structurally_impossible: lb?.zero_clash_structurally_impossible,
       lower_bound_notes: lb?.notes,
     },
-    { programNomenclature: programNomenclatureMap },
+    {
+      programNomenclature: programNomenclatureMap,
+      previousLanes: snapshot.section_lanes,
+    },
   )
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
+
+  const { createRunLogEntry, appendRunLog, nextRunSeq } = await import('../merge/runLog')
+  const { updateClashProvenance } = await import('../merge/clashProvenance')
+  const { sectionLanesFromEntries } = await import('../merge/snapshot')
+  const runAt = new Date().toISOString()
+  const seq = nextRunSeq(snapshot.run_log ?? [])
+  const runEntry = createRunLogEntry({
+    seq,
+    at: runAt,
+    mode: 'rectify',
+    inputs: {},
+    seed: options?.seed,
+    solver_status: solverStatus,
+    students_before: Object.keys(snapshot.students).length,
+    students_after: Object.keys(students).length,
+    students_added: Object.keys(students).length - Object.keys(snapshot.students).length,
+    registrations_added: enrollmentDelta.changed_students.reduce(
+      (n, s) => n + s.added.length,
+      0,
+    ),
+    courses_added: enrollmentDelta.new_course_codes.length,
+    sections_created: [],
+    students_moved_between_sections: 0,
+    capacity_waivers: [],
+    parked: [],
+    red_before: previousClashReport.students_with_clashes,
+    red_after: clashReport.students_with_clashes,
+    clashes_introduced: clashDiff.introduced.length,
+    clashes_resolved: clashDiff.resolved.length,
+    decisions: [],
+    notes: [],
+  })
+  const runLog = appendRunLog(snapshot.run_log ?? [], runEntry)
+  const clashProvenance = updateClashProvenance(snapshot.clash_provenance ?? {}, clashDiff, {
+    seq,
+    at: runAt,
+    operation: 'rectify',
+    newlyAddedCourses: enrollmentDelta.new_course_codes,
+  })
 
   const schedulingSnapshot: SchedulingSnapshot = {
     slot_model: WEEKDAY_SLOT_MODEL,
@@ -471,6 +518,10 @@ export async function runRectifyPipeline(
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+    section_lanes: sectionLanesFromEntries(schedule.entries),
+    run_log: runLog,
+    clash_provenance: clashProvenance,
+    late_enrollments: snapshot.late_enrollments,
   }
 
   let scheduleXlsx: ArrayBuffer | null = null
@@ -483,10 +534,27 @@ export async function runRectifyPipeline(
     courseEmails: true,
   }
 
+  // Carry the late-enrollment history forward so rectified workbooks keep the Late Adds
+  // column and amber tinting; batch 0 means "no new batch", so no detail sheet is emitted.
+  const { buildLateMarking } = await import('../io/excelLateMarking')
+  const lateMarking = snapshot.late_enrollments?.length
+    ? buildLateMarking({
+        records: snapshot.late_enrollments,
+        batch: 0,
+        students,
+        clashReport,
+      })
+    : null
+
   if (options?.eagerExports) {
     emit({ stage: 'export', message: 'Building rectified exports…', fraction: 0.9 })
     throwIfAborted(signal)
-    const exportOpts = options.seed !== undefined ? { seed: options.seed } : undefined
+    const exportOpts = {
+      ...(options.seed !== undefined ? { seed: options.seed } : {}),
+      lateMarking,
+      runLog,
+      clashProvenance,
+    }
     if (eagerKinds.schedule) {
       scheduleXlsx = await buildScheduleXlsxBuffer(schedule, {
         snapshot: schedulingSnapshot,
@@ -524,6 +592,8 @@ export async function runRectifyPipeline(
     schedulingSnapshot,
     rectificationReport,
     enrollmentDelta,
+    runLog,
+    clashProvenance,
     allowSaturdayForMath,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
@@ -692,6 +762,8 @@ function emptyRectifyResult(validation: ValidationResult): RectifyPipelineResult
     schedulingSnapshot: null,
     rectificationReport: null,
     enrollmentDelta: null,
+    runLog: [],
+    clashProvenance: {},
   }
 }
 

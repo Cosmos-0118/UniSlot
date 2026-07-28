@@ -4,6 +4,19 @@ import { writeExportBrandHeader } from './excelBranding'
 import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
+import type { LateMarking } from './excelLateMarking'
+import type { RunLogEntry } from '../merge/runLog'
+import {
+  clashProvenanceKey,
+  type ClashProvenanceMap,
+} from '../merge/clashProvenance'
+import { buildClashLogSheet, buildRunLogSheet } from './excelLogSheets'
+
+export type ClashWorkbookOptions = ExportDeterminismOptions & {
+  lateMarking?: LateMarking | null
+  runLog?: RunLogEntry[]
+  clashProvenance?: ClashProvenanceMap
+}
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
   if (buf instanceof ArrayBuffer) return buf
@@ -49,12 +62,16 @@ function writeStudentClashRow(
  */
 export async function clashReportToRichWorkbookBuffer(
   report: ClashReport,
-  options?: ExportDeterminismOptions,
+  options?: ClashWorkbookOptions,
 ): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options?.seed)
   const red = clashers(report)
+  const late = options?.lateMarking ?? null
+  const provenance = options?.clashProvenance ?? {}
+  const showLate = Boolean(late)
+  const showProvenance = Object.keys(provenance).length > 0
 
   // ---------- Summary ----------
   const wsSummary = wb.addWorksheet('Summary')
@@ -93,14 +110,18 @@ export async function clashReportToRichWorkbookBuffer(
   for (const [name, val, unit] of metrics) {
     wsSummary.getCell(row, 1).value = name
     wsSummary.getCell(row, 1).font = { size: 11 }
+    wsSummary.getCell(row, 1).alignment = { vertical: 'middle' }
     const vc = wsSummary.getCell(row, 2)
     vc.value = val
     let colorArgb: string = XL.primaryLight
     if (name.includes('Clashes') && typeof val === 'number') colorArgb = val > 0 ? XL.danger : XL.success
     else if (name.includes('Success') || name.includes('Free')) colorArgb = XL.success
     vc.font = { bold: true, size: 12, color: { argb: colorArgb } }
+    vc.alignment = { vertical: 'middle' }
     wsSummary.getCell(row, 3).value = unit
     wsSummary.getCell(row, 3).font = { size: 10, color: { argb: XL.textMuted } }
+    wsSummary.getCell(row, 3).alignment = { vertical: 'middle' }
+    wsSummary.getRow(row).height = 20
     row++
   }
   row += 1
@@ -180,11 +201,21 @@ export async function clashReportToRichWorkbookBuffer(
   if (red.length) {
     let r = writeExportBrandHeader(
       wsC,
-      7,
+      7 + (showLate ? 1 : 0) + (showProvenance ? 3 : 0),
       `STUDENTS WITH SCHEDULING CONFLICTS (${red.length})`,
     )
 
-    const heads = ['S.No', 'Register No.', 'Student Name', 'Program', 'Enrolled Courses', 'Clashing Courses', 'Clash Day']
+    const heads = [
+      'S.No',
+      'Register No.',
+      'Student Name',
+      'Program',
+      'Enrolled Courses',
+      'Clashing Courses',
+      'Clash Day',
+      ...(showLate ? ['Late'] : []),
+      ...(showProvenance ? ['Origin', 'Since', 'Why'] : []),
+    ]
     heads.forEach((text, i) => {
       const c = wsC.getRow(r).getCell(i + 1)
       c.value = text
@@ -195,7 +226,7 @@ export async function clashReportToRichWorkbookBuffer(
     wsC.getRow(r).height = 28
     r++
 
-    const colWidths = new ColumnWidthTracker([
+    const colSpecs = [
       { col: 1, width: 6, min: 5, max: 8 },
       { col: 2, width: 18, min: 14, max: 24 },
       { col: 3, width: 28, min: 20, max: 36 },
@@ -203,25 +234,50 @@ export async function clashReportToRichWorkbookBuffer(
       { col: 5, width: 36, min: 24, max: 60 },
       { col: 6, width: 36, min: 24, max: 60 },
       { col: 7, width: 14, min: 12, max: 20 },
-    ])
+    ]
+    let nextCol = 8
+    if (showLate) {
+      colSpecs.push({ col: nextCol, width: 8, min: 6, max: 12 })
+      nextCol++
+    }
+    if (showProvenance) {
+      colSpecs.push({ col: nextCol, width: 10, min: 8, max: 14 })
+      colSpecs.push({ col: nextCol + 1, width: 10, min: 8, max: 12 })
+      colSpecs.push({ col: nextCol + 2, width: 48, min: 28, max: 72 })
+    }
+    const colWidths = new ColumnWidthTracker(colSpecs)
 
     const sorted = [...red].sort(
       (a, b) => a.program.localeCompare(b.program) || a.student_name.localeCompare(b.student_name),
     )
     sorted.forEach((student, idx) => {
       const clashText = student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
+      const day = student.clashing_day ?? student.clashing_days[0]
+      const origin = day
+        ? provenance[clashProvenanceKey(student.register_number, day)]
+        : undefined
+      const isLate = late?.lateStudents.has(student.register_number)
+      const values: (string | number)[] = [
+        idx + 1,
+        student.register_number,
+        student.student_name,
+        student.program,
+        student.enrolled_courses.join(', '),
+        clashText,
+        student.clashing_day ?? '',
+      ]
+      if (showLate) values.push(isLate ? 'LATE' : '')
+      if (showProvenance) {
+        values.push(origin?.operation ?? '')
+        values.push(origin ? `#${origin.first_seen_seq}` : '')
+        values.push(origin?.cause ?? '')
+      }
+      const wrapCols = new Set([4, 5, 6])
+      if (showProvenance) wrapCols.add(values.length)
       writeStudentClashRow(wsC.getRow(r), {
-        values: [
-          idx + 1,
-          student.register_number,
-          student.student_name,
-          student.program,
-          student.enrolled_courses.join(', '),
-          clashText,
-          student.clashing_day ?? '',
-        ],
-        wrapCols: new Set([4, 5, 6]),
-        centerCols: new Set([1, 7]),
+        values,
+        wrapCols,
+        centerCols: new Set([1, 7, ...(showLate ? [8] : [])]),
         fillArgb: XL.clashRow,
         colWidths,
       })
@@ -417,9 +473,23 @@ export async function clashReportToRichWorkbookBuffer(
 
   // ---------- Full Report ----------
   const wsF = wb.addWorksheet('Full Report')
-  let rf = writeExportBrandHeader(wsF, 7, 'COMPLETE STUDENT STATUS REPORT')
+  let rf = writeExportBrandHeader(
+    wsF,
+    7 + (showLate ? 1 : 0) + (showProvenance ? 2 : 0),
+    'COMPLETE STUDENT STATUS REPORT',
+  )
 
-  const fh = ['S.No', 'Register No.', 'Student Name', 'Program', 'Enrolled Courses', 'Status', 'Clash Details']
+  const fh = [
+    'S.No',
+    'Register No.',
+    'Student Name',
+    'Program',
+    'Enrolled Courses',
+    'Status',
+    'Clash Details',
+    ...(showLate ? ['Late'] : []),
+    ...(showProvenance ? ['Origin', 'Why'] : []),
+  ]
   fh.forEach((text, i) => {
     const c = wsF.getRow(rf).getCell(i + 1)
     c.value = text
@@ -430,7 +500,7 @@ export async function clashReportToRichWorkbookBuffer(
   wsF.getRow(rf).height = 28
   rf++
 
-  const fullColWidths = new ColumnWidthTracker([
+  const fullColSpecs = [
     { col: 1, width: 6, min: 5, max: 8 },
     { col: 2, width: 18, min: 14, max: 24 },
     { col: 3, width: 28, min: 20, max: 36 },
@@ -438,7 +508,17 @@ export async function clashReportToRichWorkbookBuffer(
     { col: 5, width: 36, min: 24, max: 60 },
     { col: 6, width: 10, min: 8, max: 14 },
     { col: 7, width: 36, min: 24, max: 60 },
-  ])
+  ]
+  let fc = 8
+  if (showLate) {
+    fullColSpecs.push({ col: fc, width: 8, min: 6, max: 12 })
+    fc++
+  }
+  if (showProvenance) {
+    fullColSpecs.push({ col: fc, width: 10, min: 8, max: 14 })
+    fullColSpecs.push({ col: fc + 1, width: 48, min: 28, max: 72 })
+  }
+  const fullColWidths = new ColumnWidthTracker(fullColSpecs)
 
   const sortedAll = [...report.reports].sort(
     (a, b) =>
@@ -452,18 +532,32 @@ export async function clashReportToRichWorkbookBuffer(
         ? student.clashing_courses.map(([c1, c2]) => `${c1} & ${c2}`).join('; ')
         : '—'
     const statusText = student.status === 'Red' ? 'CLASH' : 'OK'
-    const fillArgb = student.status === 'Red' ? XL.clashRow : idx % 2 === 0 ? XL.rowAlt : XL.white
+    const isLate = late?.lateStudents.has(student.register_number)
+    let fillArgb: string = student.status === 'Red' ? XL.clashRow : idx % 2 === 0 ? XL.rowAlt : XL.white
+    if (student.status !== 'Red' && isLate) fillArgb = XL.late
+    const day = student.clashing_day ?? student.clashing_days[0]
+    const origin = day
+      ? provenance[clashProvenanceKey(student.register_number, day)]
+      : undefined
+    const values: (string | number)[] = [
+      idx + 1,
+      student.register_number,
+      student.student_name,
+      student.program,
+      student.enrolled_courses.join(', '),
+      statusText,
+      clashText,
+    ]
+    if (showLate) values.push(isLate ? 'LATE' : '')
+    if (showProvenance) {
+      values.push(origin?.operation ?? '')
+      values.push(origin?.cause ?? '')
+    }
+    const wrapCols = new Set([4, 5, 7])
+    if (showProvenance) wrapCols.add(values.length)
     writeStudentClashRow(wsF.getRow(rf), {
-      values: [
-        idx + 1,
-        student.register_number,
-        student.student_name,
-        student.program,
-        student.enrolled_courses.join(', '),
-        statusText,
-        clashText,
-      ],
-      wrapCols: new Set([4, 5, 7]),
+      values,
+      wrapCols,
       centerCols: new Set([1, 6]),
       fillArgb,
       colWidths: fullColWidths,
@@ -471,6 +565,9 @@ export async function clashReportToRichWorkbookBuffer(
     rf++
   })
   fullColWidths.apply(wsF)
+
+  if (options?.runLog?.length) buildRunLogSheet(wb, options.runLog)
+  if (showProvenance) buildClashLogSheet(wb, provenance)
 
   const buf = await wb.xlsx.writeBuffer()
   return writeBufferToArrayBuffer(buf)

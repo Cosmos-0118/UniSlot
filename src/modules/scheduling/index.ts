@@ -22,8 +22,8 @@ export type { SchedulingStats } from './solver/metrics'
 export type { PipelineResult, RunPipelineOptions, PipelineProgressEvent } from './pipeline/run'
 export { runPipeline, computeCourseEmailGroups } from './pipeline/run'
 export { PipelineCancelledError, throwIfAborted } from './pipeline/cancellation'
-export type { SchedulingSnapshot } from './merge/snapshot'
-export { cloneSchedulingSnapshot, loadSchedulingSnapshot } from './merge/snapshot'
+export type { SchedulingSnapshot, LateEnrollmentRecord } from './merge/snapshot'
+export { cloneSchedulingSnapshot, loadSchedulingSnapshot, sectionLanesFromEntries } from './merge/snapshot'
 export type {
   PlacementMethod,
   RectifyPipelineResult,
@@ -35,6 +35,51 @@ export {
   parseEnrollmentWorkbook,
   loadPreviousSummary,
 } from './pipeline/rectifyRun'
+export type {
+  LatePipelineResult,
+  LateEnrollmentReport,
+  RunLateOptions,
+  ClashDecision,
+} from './pipeline/lateRun'
+export { runLatePipeline } from './pipeline/lateRun'
+export type {
+  LateAddition,
+  LateAdditionsResult,
+  CapacityConflict,
+  CapacityDecision,
+  OnFullStrategy,
+} from './merge/lateEnrollment'
+export {
+  computeLateAdditions,
+  preflightLateCapacity,
+  mergeLateStudentsIntoSections,
+  assertFrozenInvariants,
+  nextSectionId,
+  equalizeCourseSections,
+} from './merge/lateEnrollment'
+export type { CapacityPanel, ClashPanel, PredictedClash } from './merge/lateResolution'
+export {
+  buildCapacityPanel,
+  buildClashPanel,
+  predictLateClashes,
+  formatProjectedLoads,
+} from './merge/lateResolution'
+export type { RunLogEntry, RunMode } from './merge/runLog'
+export { nextRunSeq, nextLateBatch, createRunLogEntry, appendRunLog, cloneRunLog } from './merge/runLog'
+export type { ClashOrigin, ClashProvenanceMap } from './merge/clashProvenance'
+export {
+  updateClashProvenance,
+  buildClashCause,
+  activeClashOrigins,
+  allClashOrigins,
+  clashProvenanceKey,
+} from './merge/clashProvenance'
+export type { LateMarking } from './io/excelLateMarking'
+export {
+  buildLateMarking,
+  formatLateAddsChain,
+  lateAddsIncludesBatch,
+} from './io/excelLateMarking'
 export type {
   BaselineValidationWarning,
   EnrollmentDelta,

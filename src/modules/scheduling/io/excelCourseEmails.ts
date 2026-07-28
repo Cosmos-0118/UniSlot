@@ -2,8 +2,14 @@ import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
 import { writeExportBrandHeader } from './excelBranding'
 import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
-import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
+import {
+  applyDataRow,
+  ColumnWidthTracker,
+  fitRowHeight,
+  type DataRowCellSpec,
+} from './excelLayout'
 import { XL } from './excelStyleConstants'
+import { formatLateAddsChain, lateAddsFont, type LateMarking } from './excelLateMarking'
 
 function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
   if (buf instanceof ArrayBuffer) return buf
@@ -13,12 +19,16 @@ function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
   throw new Error('Unexpected workbook buffer type')
 }
 
+export type CourseEmailsWorkbookOptions = ExportDeterminismOptions & {
+  lateMarking?: LateMarking | null
+}
+
 /**
  * Course-wise deduplicated email lists + students missing email (legacy `export_course_grouping_xlsx`).
  */
 export async function courseEmailsToWorkbookBuffer(
   rows: EnrollmentRow[],
-  options?: ExportDeterminismOptions,
+  options?: CourseEmailsWorkbookOptions,
 ): Promise<ArrayBuffer> {
   type Group = {
     title: string
@@ -27,6 +37,8 @@ export async function courseEmailsToWorkbookBuffer(
     missing: EnrollmentRow[]
   }
   const courseMap = new Map<string, Group>()
+  const late = options?.lateMarking ?? null
+  const showLate = Boolean(late)
 
   for (const row of rows) {
     const code = row.course_code
@@ -48,8 +60,15 @@ export async function courseEmailsToWorkbookBuffer(
   wb.created = workbookCreatedAt(options?.seed)
   const ws = wb.addWorksheet('Course Emails')
 
-  const headerRow = writeExportBrandHeader(ws, 5, 'COURSE EMAIL GROUPS')
-  const headers = ['Course Code', 'Course Title', 'Student Count', 'Email Count', 'Emails']
+  const headerRow = writeExportBrandHeader(ws, showLate ? 6 : 5, 'COURSE EMAIL GROUPS')
+  const headers = [
+    'Course Code',
+    'Course Title',
+    'Student Count',
+    'Email Count',
+    'Emails',
+    ...(showLate ? ['Late Adds'] : []),
+  ]
   headers.forEach((h, i) => {
     const c = ws.getRow(headerRow).getCell(i + 1)
     c.value = h
@@ -59,13 +78,15 @@ export async function courseEmailsToWorkbookBuffer(
   })
   ws.getRow(headerRow).height = 28
 
-  const colWidths = new ColumnWidthTracker([
+  const colSpecs = [
     { col: 1, width: 16, min: 14, max: 24 },
     { col: 2, width: 45, min: 28, max: 56 },
     { col: 3, width: 14, min: 12, max: 18 },
     { col: 4, width: 12, min: 10, max: 16 },
     { col: 5, width: 60, min: 40, max: 100 },
-  ])
+  ]
+  if (showLate) colSpecs.push({ col: 6, width: 12, min: 8, max: 18 })
+  const colWidths = new ColumnWidthTracker(colSpecs)
 
   let r = headerRow + 1
   for (const code of [...courseMap.keys()].sort()) {
@@ -80,17 +101,23 @@ export async function courseEmailsToWorkbookBuffer(
     }
     const rowFill = r % 2 === 0 ? XL.rowAlt : XL.white
     const row = ws.getRow(r)
-    const wrappedLines = applyDataRow(
-      row,
-      [
-        { col: 1, value: code },
-        { col: 2, value: info.title, wrap: true },
-        { col: 3, value: info.students.size, horizontal: 'center', numFmt: '0' },
-        { col: 4, value: emails.length, horizontal: 'center', numFmt: '0' },
-        { col: 5, value: emails.join(', '), wrap: true },
-      ],
-      { fillArgb: rowFill, columnWidths: colWidths },
-    )
+    const cells: DataRowCellSpec[] = [
+      { col: 1, value: code },
+      { col: 2, value: info.title, wrap: true },
+      { col: 3, value: info.students.size, horizontal: 'center', numFmt: '0' },
+      { col: 4, value: emails.length, horizontal: 'center', numFmt: '0' },
+      { col: 5, value: emails.join(', '), wrap: true },
+    ]
+    if (showLate && late) {
+      const chain = late.lateAddsByCourse[code]
+      cells.push({
+        col: 6,
+        value: formatLateAddsChain(chain),
+        horizontal: 'center',
+        font: lateAddsFont(chain, late.batch, XL.lateText),
+      })
+    }
+    const wrappedLines = applyDataRow(row, cells, { fillArgb: rowFill, columnWidths: colWidths })
     fitRowHeight(row, wrappedLines, true)
     r++
   }

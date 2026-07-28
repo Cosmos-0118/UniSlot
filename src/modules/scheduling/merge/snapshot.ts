@@ -2,8 +2,20 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { EnrollmentRow, Section, Student } from '../types'
 import { legacySlotToWeekday } from '../solver/timeModel'
+import {
+  cloneClashProvenance,
+  type ClashProvenanceMap,
+} from './clashProvenance'
+import { cloneRunLog, type RunLogEntry } from './runLog'
 
 export const WEEKDAY_SLOT_MODEL = 'weekday-v2'
+
+export type LateEnrollmentRecord = {
+  register_number: string
+  course_code: string
+  batch: number
+  section_id?: string
+}
 
 /** Serializable state needed to attach late registrations without re-solving slots. */
 export type SchedulingSnapshot = {
@@ -23,6 +35,14 @@ export type SchedulingSnapshot = {
   portfolio?: number
   /** Whether Saturday evening was available for maths courses in this run. */
   allowSaturdayForMath?: boolean
+  /** Accumulated late enrollments across batches. */
+  late_enrollments?: LateEnrollmentRecord[]
+  /** Append-only run trail (solve → rectify/late…). */
+  run_log?: RunLogEntry[]
+  /** Clash origins keyed by register_number\\tday. */
+  clash_provenance?: ClashProvenanceMap
+  /** Parallel lane numbers keyed by section_id (stable across late/rectify). */
+  section_lanes?: Record<string, number>
 }
 
 export function cloneStudents(students: Record<string, Student>): Record<string, Student> {
@@ -62,6 +82,10 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     workers: s.workers,
     portfolio: s.portfolio,
     allowSaturdayForMath: s.allowSaturdayForMath,
+    late_enrollments: s.late_enrollments?.map((r) => ({ ...r })),
+    run_log: cloneRunLog(s.run_log),
+    clash_provenance: cloneClashProvenance(s.clash_provenance),
+    section_lanes: s.section_lanes ? { ...s.section_lanes } : undefined,
   }
 }
 
@@ -74,4 +98,13 @@ export async function loadSchedulingSnapshot(dirOrPath: string): Promise<Schedul
     throw new Error(`Invalid snapshot at ${direct}: missing slot_assignments or courseSections`)
   }
   return cloneSchedulingSnapshot(parsed)
+}
+
+/** Extract parallel lane numbers from a schedule's entries. */
+export function sectionLanesFromEntries(
+  entries: { section_id: string; slot_band: number }[],
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const e of entries) out[e.section_id] = e.slot_band
+  return out
 }

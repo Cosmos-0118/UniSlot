@@ -25,6 +25,12 @@ import {
   type RectifyPipelineResult,
 } from '../src/modules/scheduling/pipeline/rectifyRun.ts'
 import {
+  runLatePipeline,
+  type ClashDecision,
+  type LateEnrollmentReport,
+  type LatePipelineResult,
+} from '../src/modules/scheduling/pipeline/lateRun.ts'
+import {
   loadSchedulingSnapshot,
   type SchedulingSnapshot,
 } from '../src/modules/scheduling/merge/snapshot.ts'
@@ -36,6 +42,12 @@ import {
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
 } from '../src/modules/scheduling/merge/enrollmentDelta.ts'
+import {
+  formatProjectedLoads,
+  type CapacityPanel,
+  type ClashPanel,
+} from '../src/modules/scheduling/merge/lateResolution.ts'
+import type { CapacityDecision, OnFullStrategy } from '../src/modules/scheduling/merge/lateEnrollment.ts'
 import { slotIndexToDay } from '../src/modules/scheduling/solver/timeModel.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -143,6 +155,11 @@ async function writeRectifyExports(
   if (result.rectificationReport) {
     const fp = path.join(outDir, 'rectification-report.json')
     await writeFile(fp, JSON.stringify(result.rectificationReport, null, 2), 'utf8')
+    written.push(fp)
+  }
+  if (result.runLog.length) {
+    const fp = path.join(outDir, 'run-log.json')
+    await writeFile(fp, JSON.stringify(result.runLog, null, 2), 'utf8')
     written.push(fp)
   }
   const report = result.rectificationReport
@@ -267,16 +284,17 @@ function formatRectifyResult(
   return lines.join('\n')
 }
 
-async function promptRunMode(): Promise<'solve' | 'rectify' | null> {
+async function promptRunMode(): Promise<'solve' | 'rectify' | 'late' | null> {
   const mode = await p.select({
     message: 'What would you like to do?',
     options: [
       { value: 'solve', label: 'Create schedule' },
       { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
+      { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
     ],
   })
   if (p.isCancel(mode)) return null
-  return mode as 'solve' | 'rectify'
+  return mode as 'solve' | 'rectify' | 'late'
 }
 
 async function runRectify(opts: {
@@ -555,6 +573,489 @@ async function runRectify(opts: {
     if (ac.signal.aborted || err instanceof PipelineCancelledError) {
       spin.cancel()
       p.cancel('Rectify cancelled.')
+      return 130
+    }
+    spin.stop('Failed')
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+}
+
+const ON_FULL_STRATEGIES: OnFullStrategy[] = [
+  'new-section',
+  'equalize',
+  'fit',
+  'buffer',
+  'park',
+]
+const ON_CLASH_STRATEGIES: ClashDecision['choice'][] = ['accept', 'drop-course', 'park-student']
+
+async function writeLateExports(
+  outDir: string,
+  result: LatePipelineResult,
+  meta: { workers: number; seed?: number },
+): Promise<string[]> {
+  await mkdir(outDir, { recursive: true })
+  const written: string[] = []
+  if (result.scheduleXlsx) {
+    const fp = path.join(outDir, 'schedule.xlsx')
+    await writeFile(fp, Buffer.from(result.scheduleXlsx))
+    written.push(fp)
+  }
+  if (result.clashXlsx) {
+    const fp = path.join(outDir, 'clash-report.xlsx')
+    await writeFile(fp, Buffer.from(result.clashXlsx))
+    written.push(fp)
+  }
+  if (result.courseEmailsXlsx) {
+    const fp = path.join(outDir, 'course-emails.xlsx')
+    await writeFile(fp, Buffer.from(result.courseEmailsXlsx))
+    written.push(fp)
+  }
+  if (result.schedulingSnapshot) {
+    const fp = path.join(outDir, 'snapshot.json')
+    await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
+    written.push(fp)
+  }
+  if (result.lateReport) {
+    const fp = path.join(outDir, 'late-enrollment-report.json')
+    await writeFile(fp, JSON.stringify(result.lateReport, null, 2), 'utf8')
+    written.push(fp)
+  }
+  if (result.runLog.length) {
+    const fp = path.join(outDir, 'run-log.json')
+    await writeFile(fp, JSON.stringify(result.runLog, null, 2), 'utf8')
+    written.push(fp)
+  }
+  const report = result.lateReport
+  const summary = {
+    mode: 'late',
+    status: result.solver_status,
+    proven_optimal: result.proven_optimal,
+    proven_levels: result.proven_levels,
+    message: result.solver_message,
+    batch: report?.batch,
+    run_seq: report?.run_seq,
+    clash_weight: result.stats?.scheduling?.total_clash_weight,
+    red_students: result.clashReport?.students_with_clashes,
+    red_before: report?.red_before,
+    red_after: report?.red_after,
+    new_clashes: report?.clash_diff.introduced.length ?? 0,
+    registrations_added: report?.assignments.length ?? 0,
+    sections_created: report?.new_section_ids ?? [],
+    parked: report?.parked.length ?? 0,
+    capacity_waivers: report?.capacity_waivers.length ?? 0,
+    new_course_codes: report?.new_course_codes ?? [],
+    placement_method: report?.placement_method,
+    infeasible: result.infeasible ?? false,
+    allow_saturday_for_math: result.allowSaturdayForMath,
+    seed: meta.seed,
+    workers: meta.workers,
+    introduced_clash_causes:
+      report?.clash_diff.introduced.map((c) => ({
+        register_number: c.register_number,
+        day: c.day,
+        courses: c.courses,
+      })) ?? [],
+  }
+  const summaryPath = path.join(outDir, 'summary.json')
+  await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
+  written.push(summaryPath)
+  return written
+}
+
+function formatLateResult(report: LateEnrollmentReport): string {
+  const lines: string[] = []
+  lines.push(chalk.bold(`Late batch ${report.batch} (run #${report.run_seq})`))
+  lines.push(`  Placed: ${report.assignments.length} registration(s)`)
+  if (report.new_section_ids.length) {
+    lines.push(`  New sections: ${report.new_section_ids.join(', ')}`)
+  }
+  if (report.moved_students.length) {
+    lines.push(`  Students moved between sections (equalize): ${report.moved_students.length}`)
+  }
+  if (report.capacity_waivers.length) {
+    lines.push(chalk.yellow(`  Capacity waivers: ${report.capacity_waivers.length}`))
+  }
+  if (report.parked.length) {
+    lines.push(chalk.yellow(`  Parked: ${report.parked.length}`))
+  }
+  lines.push(`  RED ${report.red_before} → ${report.red_after}`)
+  const newClashLine = `  New clashes: ${report.clash_diff.introduced.length}`
+  lines.push(
+    report.clash_diff.introduced.length > 0 ? chalk.red(newClashLine) : chalk.green(newClashLine),
+  )
+  for (const c of report.clash_diff.introduced.slice(0, 8)) {
+    lines.push(`    ${c.register_number} · ${c.student_name} · ${c.day} · ${c.courses.join(', ')}`)
+  }
+  if (report.clash_diff.introduced.length > 8) {
+    lines.push(chalk.dim(`    … ${report.clash_diff.introduced.length - 8} more`))
+  }
+  return lines.join('\n')
+}
+
+async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDecision[]> {
+  const decisions: CapacityDecision[] = []
+  let applyAll: CapacityDecision | null = null
+
+  for (const panel of panels) {
+    if (applyAll) {
+      decisions.push({ ...applyAll, course_code: panel.conflict.course_code })
+      continue
+    }
+    const c = panel.conflict
+    const lines = [
+      chalk.bold(`${c.course_code} · ${c.course_title}`),
+      `  Frozen weekday   ${panel.frozen_day} — cannot change (${c.sections.reduce((n, s) => n + s.enrollment, 0)} students already scheduled)`,
+      `  Sections now     ${c.sections.length} section(s) — ${c.sections.map((s) => `${s.enrollment}/${s.capacity}`).join(' · ')} (${c.seats_free} free)`,
+      `  Late demand      ${c.late_demand} student(s)`,
+      `  The problem      ${c.shortfall} of them have no seat`,
+      '',
+      '  How do you want to fit them?',
+    ]
+    for (let i = 0; i < panel.options.length; i++) {
+      const opt = panel.options[i]!
+      lines.push(`  ${i + 1}  ${opt.label}`)
+      lines.push(`     ${formatProjectedLoads(opt.projected)}`)
+      lines.push(`     ${opt.summary}`)
+    }
+    p.note(lines.join('\n'), 'Capacity conflict')
+
+    const choice = await p.select({
+      message: `Strategy for ${c.course_code}`,
+      options: panel.options.map((o) => ({
+        value: o.strategy,
+        label: o.label,
+        hint: o.summary.slice(0, 80),
+      })),
+    })
+    if (p.isCancel(choice)) throw new Error('Cancelled')
+
+    const decided: CapacityDecision = {
+      course_code: c.course_code,
+      strategy: choice as OnFullStrategy,
+      buffer_per_section: panel.options.find((o) => o.strategy === choice)?.buffer_per_section,
+    }
+
+    if (panels.indexOf(panel) < panels.length - 1) {
+      const all = await p.confirm({
+        message: 'Apply this choice to all remaining over-capacity courses?',
+        initialValue: false,
+      })
+      if (p.isCancel(all)) throw new Error('Cancelled')
+      if (all) applyAll = decided
+    }
+    decisions.push(decided)
+  }
+  return decisions
+}
+
+async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]> {
+  const decisions: ClashDecision[] = []
+  let applyAll: ClashDecision | null = null
+
+  for (const panel of panels) {
+    if (applyAll) {
+      decisions.push({
+        ...applyAll,
+        register_number: panel.clash.register_number,
+        drop_course_code:
+          applyAll.choice === 'drop-course'
+            ? panel.clash.late_courses[0]
+            : applyAll.drop_course_code,
+      })
+      continue
+    }
+    const cl = panel.clash
+    const whyLines = cl.clashing_courses.map((code) => {
+      const n = cl.course_enrollments[code] ?? 0
+      return `    ${code} is frozen to ${cl.day} — ${n} student(s) already scheduled`
+    })
+    const lines = [
+      chalk.bold(`${cl.register_number} · ${cl.student_name} · ${cl.program}`),
+      `  Late registrations   ${cl.late_courses.join(', ')}`,
+      `  The problem          ${cl.clashing_courses.join(' + ')} sit on ${cl.day}`,
+      '',
+      '  Why it cannot be avoided',
+      ...whyLines,
+      '    Neither course can move without breaking the published timetable.',
+      '',
+      '  What do you want to do?',
+    ]
+    for (let i = 0; i < panel.options.length; i++) {
+      const opt = panel.options[i]!
+      lines.push(`  ${i + 1}  ${opt.label}`)
+      lines.push(`     ${opt.summary}`)
+    }
+    p.note(lines.join('\n'), 'Unavoidable clash')
+
+    const choice = await p.select({
+      message: `Clash decision for ${cl.register_number}`,
+      options: panel.options.map((o, i) => ({
+        value: String(i),
+        label: o.label,
+        hint: o.summary.slice(0, 80),
+      })),
+    })
+    if (p.isCancel(choice)) throw new Error('Cancelled')
+    const opt = panel.options[Number(choice)]!
+    const decided: ClashDecision = {
+      register_number: cl.register_number,
+      choice: opt.choice,
+      drop_course_code: opt.drop_course_code,
+    }
+
+    if (panels.indexOf(panel) < panels.length - 1) {
+      const all = await p.confirm({
+        message: 'Apply the same choice to all remaining clashing students?',
+        initialValue: false,
+      })
+      if (p.isCancel(all)) throw new Error('Cancelled')
+      if (all) applyAll = decided
+    }
+    decisions.push(decided)
+  }
+  return decisions
+}
+
+async function runLate(opts: {
+  previous?: string
+  late?: string
+  output?: string
+  nomenclature?: string
+  timeLimit?: number
+  workers?: number
+  absoluteGap?: number
+  provePlateau?: number
+  prove?: boolean
+  saturday?: boolean
+  seed?: number
+  onFull?: OnFullStrategy
+  overflowBuffer?: number
+  onClash?: 'accept' | 'drop-course' | 'park-student'
+  skipPrompts?: boolean
+  interactive: boolean
+}): Promise<number> {
+  banner()
+  const python = await ensurePythonReady()
+  p.log.info(`Python · ${python}`)
+  const cpuN = cpus().length
+  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+
+  let previousDir = opts.previous
+  let latePath = opts.late
+  let outDir = opts.output
+
+  if (!previousDir && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick previous output folder…')
+    previousDir = (await pickPreviousOutputFolder()) ?? undefined
+    pick.stop(previousDir ? path.basename(previousDir) : 'Cancelled')
+  }
+  if (!latePath && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick late enrollments workbook…')
+    latePath = (await pickEnrollmentFile('Select late enrollments Excel')) ?? undefined
+    pick.stop(latePath ? path.basename(latePath) : 'Cancelled')
+  }
+  if (!outDir && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick new output folder…')
+    outDir = (await pickOutputFolder('Choose folder for late-enrollment exports')) ?? undefined
+    pick.stop(outDir ? path.basename(outDir) : 'Cancelled — using ./unislot-out-late')
+    outDir = outDir || path.join(process.cwd(), 'unislot-out-late')
+  }
+
+  if (!previousDir || !latePath) {
+    p.log.error('Late mode requires --previous and --late (or interactive pickers).')
+    return 1
+  }
+  outDir = outDir || path.join(process.cwd(), 'unislot-out-late')
+
+  try {
+    await assertReadableFile(latePath)
+    await assertSnapshotFolder(previousDir)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  let snapshot: SchedulingSnapshot
+  try {
+    snapshot = await loadSchedulingSnapshot(previousDir)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  const inferredSaturday = inferAllowSaturdayFromSnapshot(snapshot)
+  let allowSaturdayForMath = opts.saturday
+  if (allowSaturdayForMath === undefined) {
+    allowSaturdayForMath = inferredSaturday
+  }
+
+  let programNomenclatureXlsx: ArrayBuffer | undefined
+  if (opts.nomenclature) {
+    try {
+      await assertReadableFile(opts.nomenclature)
+      const nomBuffer = await readFile(opts.nomenclature)
+      programNomenclatureXlsx = nomBuffer.buffer.slice(
+        nomBuffer.byteOffset,
+        nomBuffer.byteOffset + nomBuffer.byteLength,
+      )
+    } catch (err) {
+      p.log.error(err instanceof Error ? err.message : String(err))
+      return 1
+    }
+  }
+
+  const lateBuffer = await readFile(latePath)
+  const lateArrayBuffer = lateBuffer.buffer.slice(
+    lateBuffer.byteOffset,
+    lateBuffer.byteOffset + lateBuffer.byteLength,
+  )
+  const lateParsed = await parseEnrollmentWorkbook(lateArrayBuffer)
+  if (!lateParsed.validation.is_valid) {
+    p.log.error('Late workbook failed validation:')
+    for (const e of lateParsed.validation.errors.slice(0, 12)) {
+      p.log.error(`${e.field}: ${e.message}`)
+    }
+    return 1
+  }
+
+  if (lateParsed.validation.errors.length > 0 && opts.interactive && !opts.skipPrompts) {
+    p.note(
+      lateParsed.validation.errors
+        .slice(0, 12)
+        .map((e) => `row ${e.row_number ?? '?'}: ${e.field} — ${e.message}`)
+        .join('\n'),
+      'Skipped / warning rows',
+    )
+    const proceed = await p.confirm({
+      message: 'Continue despite skipped/warning rows?',
+      initialValue: true,
+    })
+    if (p.isCancel(proceed) || !proceed) {
+      p.cancel('Cancelled')
+      return 1
+    }
+  }
+
+  const previousSummary = await loadPreviousSummary(previousDir)
+  const ac = new AbortController()
+  const spin = createSolveSpinner(requestedWorkers)
+  process.on('SIGINT', () => {
+    ac.abort()
+    void killAllCpsatChildren()
+  })
+
+  spin.start('Merging late enrollments…')
+
+  try {
+    const result = await runLatePipeline(
+      (evt) => {
+        if (ac.signal.aborted) return
+        if (evt.cpsat) spin.applyCpsat(evt.cpsat)
+        else spin.updateFromPipeline(evt.message)
+      },
+      {
+        previousSnapshot: snapshot,
+        lateRows: lateParsed.rows,
+        previousSummary,
+        cpsatTimeLimitSeconds: opts.timeLimit,
+        cpsatWorkers: opts.workers,
+        cpsatAbsoluteGap: opts.absoluteGap,
+        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatFullProve: opts.prove,
+        allowSaturdayForMath,
+        programNomenclatureXlsx,
+        seed: opts.seed,
+        eagerExports: true,
+        eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
+        signal: ac.signal,
+        inputFileName: path.basename(latePath),
+        previousDir,
+        outputDir: outDir,
+        defaultOnFull: opts.onFull ?? 'new-section',
+        defaultBuffer: opts.overflowBuffer ?? 2,
+        defaultOnClash: opts.onClash ?? 'accept',
+        onCapacityConflicts:
+          opts.interactive && !opts.skipPrompts && !opts.onFull
+            ? async (panels) => {
+                spin.stop('Capacity decision needed')
+                const d = await promptCapacityPanels(panels)
+                spin.start('Continuing late merge…')
+                return d
+              }
+            : undefined,
+        onPredictedClashes:
+          opts.interactive && !opts.skipPrompts && !opts.onClash
+            ? async (panels) => {
+                spin.stop('Clash decision needed')
+                const d = await promptClashPanels(panels)
+                spin.start('Continuing late merge…')
+                return d
+              }
+            : undefined,
+      },
+    )
+
+    if (result.infeasible) {
+      spin.stop('Late merge blocked')
+      p.log.error(result.infeasible_reason ?? 'Frozen invariants or structural constraints violated')
+      const files = await writeLateExports(outDir, result, {
+        workers: requestedWorkers,
+        seed: opts.seed,
+      })
+      p.log.warn(`Partial report written to ${outDir} (${files.length} file(s))`)
+      return 1
+    }
+
+    if (!result.schedule) {
+      spin.stop('Nothing to merge (or failed)')
+      if (result.lateReport == null) {
+        p.log.warn('No late registrations to add.')
+        return 0
+      }
+      return 1
+    }
+
+    spin.stop(chalk.green('Late merge complete'))
+
+    const report = result.lateReport
+    if (report) {
+      p.note(formatLateResult(report), 'Late enrollment')
+      if (report.clash_diff.introduced.length > 0 && opts.interactive && !opts.skipPrompts) {
+        const proceed = await p.confirm({
+          message: `Write exports despite ${report.clash_diff.introduced.length} newly introduced clash(es)?`,
+          initialValue: true,
+        })
+        if (p.isCancel(proceed) || !proceed) {
+          p.cancel('Cancelled — nothing written.')
+          return 1
+        }
+      }
+    }
+
+    const writeSpin = p.spinner()
+    writeSpin.start(`Writing late exports to ${outDir}…`)
+    const files = await writeLateExports(outDir, result, {
+      workers: requestedWorkers,
+      seed: opts.seed,
+    })
+    writeSpin.stop(`Wrote ${files.length} file(s)`)
+
+    outroSuccess([
+      chalk.green('Late enrollments integrated.'),
+      chalk.dim(`Previous folder unchanged: ${previousDir}`),
+      ...files.map((f) => chalk.dim('  · ') + f),
+    ])
+    return 0
+  } catch (err) {
+    await killAllCpsatChildren().catch(() => undefined)
+    if (ac.signal.aborted || err instanceof PipelineCancelledError) {
+      spin.cancel()
+      p.cancel('Late merge cancelled.')
       return 130
     }
     spin.stop('Failed')
@@ -865,7 +1366,7 @@ async function runSolve(opts: {
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const hasExplicitSubcommand =
-    args[0] === 'doctor' || args[0] === 'rectify' || args[0] === 'solve'
+    args[0] === 'doctor' || args[0] === 'rectify' || args[0] === 'solve' || args[0] === 'late'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -1027,6 +1528,92 @@ async function main(): Promise<void> {
           provePlateau: flags.provePlateau,
           prove: flags.prove,
           saturday: saturdayFlag,
+          skipPrompts: Boolean(flags.yes),
+          interactive,
+        })
+      },
+    )
+
+  program
+    .command('late')
+    .description(
+      'Add late enrollments into a frozen prior schedule — existing course weekdays never move',
+    )
+    .option('--previous <dir>', 'Previous output folder containing snapshot.json')
+    .option('--late <file>', 'Late enrollments .xlsx (delta or full updated workbook)')
+    .option('-o, --output <dir>', 'New output directory for late-enrollment exports')
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
+    .option('--time-limit <seconds>', 'Optional wall-clock limit', (v) => Number(v))
+    .option('--workers <n>', 'CP-SAT workers (default: all CPUs)', (v) => Number(v))
+    .option('--seed <n>', 'Solver seed', (v) => {
+      const n = parseSeedInput(String(v))
+      if (n === undefined) throw new Error('--seed must be a non-negative integer')
+      return n
+    })
+    .option('--absolute-gap <n>', 'Stop when clash gap ≤ n', (v) => Number(v))
+    .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
+    .option('--prove', 'Full optimality proof', false)
+    .option('--saturday', 'Allow Saturday for maths')
+    .option(
+      '--on-full <strategy>',
+      'When a course is full: new-section | equalize | fit | buffer | park (default: ask / new-section)',
+    )
+    .option('--overflow-buffer <n>', 'Soft seats past capacity for buffer strategy (default: 2)', (v) =>
+      Number(v),
+    )
+    .option(
+      '--on-clash <strategy>',
+      'When a late student clashes: accept | drop-course | park-student (default: ask / accept)',
+    )
+    .option('-y, --yes', 'Non-interactive when paths are provided', false)
+    .action(
+      async (flags: {
+        previous?: string
+        late?: string
+        output?: string
+        nomenclature?: string
+        timeLimit?: number
+        workers?: number
+        seed?: number
+        absoluteGap?: number
+        provePlateau?: number
+        prove?: boolean
+        saturday?: boolean
+        onFull?: string
+        overflowBuffer?: number
+        onClash?: string
+        yes?: boolean
+      }) => {
+        const interactive = !flags.yes && (!flags.previous || !flags.late)
+        const saturdayFlag =
+          typeof flags.saturday === 'boolean' ? flags.saturday : undefined
+        const onFull = flags.onFull as OnFullStrategy | undefined
+        const onClash = flags.onClash as 'accept' | 'drop-course' | 'park-student' | undefined
+        if (onFull && !ON_FULL_STRATEGIES.includes(onFull)) {
+          p.log.error(`--on-full must be one of: ${ON_FULL_STRATEGIES.join(' | ')}`)
+          process.exitCode = 1
+          return
+        }
+        if (onClash && !ON_CLASH_STRATEGIES.includes(onClash)) {
+          p.log.error(`--on-clash must be one of: ${ON_CLASH_STRATEGIES.join(' | ')}`)
+          process.exitCode = 1
+          return
+        }
+        process.exitCode = await runLate({
+          previous: flags.previous,
+          late: flags.late,
+          output: flags.output,
+          nomenclature: flags.nomenclature,
+          timeLimit: flags.timeLimit,
+          workers: flags.workers,
+          seed: flags.seed,
+          absoluteGap: flags.absoluteGap,
+          provePlateau: flags.provePlateau,
+          prove: flags.prove,
+          saturday: saturdayFlag,
+          onFull,
+          overflowBuffer: flags.overflowBuffer,
+          onClash,
           skipPrompts: Boolean(flags.yes),
           interactive,
         })

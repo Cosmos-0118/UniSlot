@@ -457,6 +457,51 @@ export async function runPipeline(
   const clashReport = computeClashReport(students, courseSections, slotAssignments)
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
 
+  const { createRunLogEntry, appendRunLog } = await import('../merge/runLog')
+  const { updateClashProvenance } = await import('../merge/clashProvenance')
+  const { diffClashReports } = await import('../merge/rectifyDiff')
+  const emptyDiff = diffClashReports(
+    {
+      total_students: 0,
+      students_with_clashes: 0,
+      clash_free_students: 0,
+      clash_percentage: 0,
+      reports: [],
+    },
+    clashReport,
+  )
+  const runAt = new Date().toISOString()
+  const runEntry = createRunLogEntry({
+    seq: 1,
+    at: runAt,
+    mode: 'solve',
+    inputs: {},
+    seed: solverSeed,
+    solver_status: solverStatus,
+    students_before: 0,
+    students_after: Object.keys(students).length,
+    students_added: Object.keys(students).length,
+    registrations_added: enrollmentRows.length,
+    courses_added: Object.keys(courses).length,
+    sections_created: [],
+    students_moved_between_sections: 0,
+    capacity_waivers: [],
+    parked: [],
+    red_before: 0,
+    red_after: clashReport.students_with_clashes,
+    clashes_introduced: emptyDiff.introduced.length,
+    clashes_resolved: 0,
+    decisions: [],
+    notes: provenOptimal ? ['Clash weight proven optimal under course→weekday model'] : [],
+  })
+  const runLog = appendRunLog([], runEntry)
+  const clashProvenance = updateClashProvenance({}, emptyDiff, {
+    seq: 1,
+    at: runAt,
+    operation: 'solve',
+    provenMinimal: provenOptimal,
+  })
+
   const schedulingSnapshot: SchedulingSnapshot = {
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...slotAssignments },
@@ -465,6 +510,9 @@ export async function runPipeline(
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(solverSeed !== undefined ? { seed: solverSeed } : {}),
+    section_lanes: Object.fromEntries(schedule.entries.map((e) => [e.section_id, e.slot_band])),
+    run_log: runLog,
+    clash_provenance: clashProvenance,
   }
 
   const eagerKinds = options?.eagerExportKinds ?? {
