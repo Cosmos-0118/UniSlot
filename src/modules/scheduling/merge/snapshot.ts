@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { EnrollmentRow, Section, Student } from '../types'
 import { legacySlotToWeekday } from '../solver/timeModel'
 
@@ -19,6 +21,8 @@ export type SchedulingSnapshot = {
   workers?: number
   /** Portfolio race size used (0 = off). */
   portfolio?: number
+  /** Whether Saturday evening was available for maths courses in this run. */
+  allowSaturdayForMath?: boolean
 }
 
 export function cloneStudents(students: Record<string, Student>): Record<string, Student> {
@@ -57,5 +61,17 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     seed: s.seed,
     workers: s.workers,
     portfolio: s.portfolio,
+    allowSaturdayForMath: s.allowSaturdayForMath,
   }
+}
+
+/** Load and clone a snapshot from a directory (snapshot.json) or direct file path. */
+export async function loadSchedulingSnapshot(dirOrPath: string): Promise<SchedulingSnapshot> {
+  const direct = dirOrPath.endsWith('.json') ? dirOrPath : path.join(dirOrPath, 'snapshot.json')
+  const raw = await readFile(direct, 'utf8')
+  const parsed = JSON.parse(raw) as SchedulingSnapshot
+  if (!parsed.slot_assignments || !parsed.courseSections) {
+    throw new Error(`Invalid snapshot at ${direct}: missing slot_assignments or courseSections`)
+  }
+  return cloneSchedulingSnapshot(parsed)
 }

@@ -462,6 +462,7 @@ export async function runPipeline(
     courseSections: deepCloneCourseSections(courseSections),
     students: cloneStudents(students),
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
+    allowSaturdayForMath,
     ...(solverSeed !== undefined ? { seed: solverSeed } : {}),
   }
 

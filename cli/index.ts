@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
-import { assertReadableFile, pickEnrollmentFile, pickOutputFolder } from './fileDialog.ts'
+import { assertReadableFile, pickEnrollmentFile, pickOutputFolder, pickPreviousOutputFolder, assertSnapshotFolder } from './fileDialog.ts'
 import { parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
 import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts'
 import {
@@ -17,6 +17,20 @@ import {
 } from '../src/modules/scheduling/solver/cpsatBridge.ts'
 import { PipelineCancelledError } from '../src/modules/scheduling/pipeline/cancellation.ts'
 import { runPipeline } from '../src/modules/scheduling/pipeline/run.ts'
+import {
+  loadPreviousSummary,
+  parseEnrollmentWorkbook,
+  runRectifyPipeline,
+  type RectifyPipelineResult,
+} from '../src/modules/scheduling/pipeline/rectifyRun.ts'
+import { loadSchedulingSnapshot } from '../src/modules/scheduling/merge/snapshot.ts'
+import {
+  buildFixedDays,
+  computeEnrollmentDelta,
+  formatEnrollmentDeltaSummary,
+  freeCourseCodes,
+  inferAllowSaturdayFromSnapshot,
+} from '../src/modules/scheduling/merge/enrollmentDelta.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -91,6 +105,334 @@ async function writeExports(
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
   written.push(summaryPath)
   return written
+}
+
+async function writeRectifyExports(
+  outDir: string,
+  result: RectifyPipelineResult,
+  meta: { workers: number },
+): Promise<string[]> {
+  await mkdir(outDir, { recursive: true })
+  const written: string[] = []
+  if (result.scheduleXlsx) {
+    const fp = path.join(outDir, 'schedule.xlsx')
+    await writeFile(fp, Buffer.from(result.scheduleXlsx))
+    written.push(fp)
+  }
+  if (result.clashXlsx) {
+    const fp = path.join(outDir, 'clash-report.xlsx')
+    await writeFile(fp, Buffer.from(result.clashXlsx))
+    written.push(fp)
+  }
+  if (result.courseEmailsXlsx) {
+    const fp = path.join(outDir, 'course-emails.xlsx')
+    await writeFile(fp, Buffer.from(result.courseEmailsXlsx))
+    written.push(fp)
+  }
+  if (result.schedulingSnapshot) {
+    const fp = path.join(outDir, 'snapshot.json')
+    await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
+    written.push(fp)
+  }
+  if (result.rectificationReport) {
+    const fp = path.join(outDir, 'rectification-report.json')
+    await writeFile(fp, JSON.stringify(result.rectificationReport, null, 2), 'utf8')
+    written.push(fp)
+  }
+  const summary = {
+    mode: 'rectify',
+    status: result.solver_status,
+    proven_optimal: result.proven_optimal,
+    message: result.solver_message,
+    clash_weight: result.stats?.scheduling?.total_clash_weight,
+    red_students: result.clashReport?.students_with_clashes,
+    changed_students: result.enrollmentDelta?.changed_students.length ?? 0,
+    new_courses: result.enrollmentDelta?.new_course_codes ?? [],
+    infeasible: result.infeasible ?? false,
+    workers: meta.workers,
+  }
+  const summaryPath = path.join(outDir, 'summary.json')
+  await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
+  written.push(summaryPath)
+  return written
+}
+
+async function promptRunMode(): Promise<'solve' | 'rectify' | null> {
+  const mode = await p.select({
+    message: 'What would you like to do?',
+    options: [
+      { value: 'solve', label: 'Create schedule' },
+      { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
+    ],
+  })
+  if (p.isCancel(mode)) return null
+  return mode as 'solve' | 'rectify'
+}
+
+async function runRectify(opts: {
+  baseline?: string
+  rectified?: string
+  previous?: string
+  output?: string
+  nomenclature?: string
+  timeLimit?: number
+  workers?: number
+  portfolio?: number
+  absoluteGap?: number
+  provePlateau?: number
+  prove?: boolean
+  saturday?: boolean
+  seed?: number
+  skipPrompts?: boolean
+  interactive: boolean
+}): Promise<number> {
+  banner()
+  const python = await ensurePythonReady()
+  p.log.info(`Python · ${python}`)
+  const cpuN = cpus().length
+  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+  const portfolioK = opts.portfolio === undefined ? 0 : Math.max(0, Math.floor(opts.portfolio))
+
+  let baselinePath = opts.baseline
+  let rectifiedPath = opts.rectified
+  let previousDir = opts.previous
+  let outDir = opts.output
+
+  if (!baselinePath && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick original registration workbook…')
+    baselinePath = (await pickEnrollmentFile('Select original registration Excel')) ?? undefined
+    pick.stop(baselinePath ? path.basename(baselinePath) : 'Cancelled')
+  }
+  if (!rectifiedPath && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick rectified registration workbook…')
+    rectifiedPath =
+      (await pickEnrollmentFile('Select rectified (updated) registration Excel')) ?? undefined
+    pick.stop(rectifiedPath ? path.basename(rectifiedPath) : 'Cancelled')
+  }
+  if (!previousDir && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick previous output folder…')
+    previousDir = (await pickPreviousOutputFolder()) ?? undefined
+    pick.stop(previousDir ? path.basename(previousDir) : 'Cancelled')
+  }
+  if (!outDir && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick new output folder…')
+    outDir = (await pickOutputFolder('Choose folder for rectified exports')) ?? undefined
+    pick.stop(outDir ? path.basename(outDir) : 'Cancelled — using ./unislot-out-rectified')
+    outDir = outDir || path.join(process.cwd(), 'unislot-out-rectified')
+  }
+
+  if (!baselinePath || !rectifiedPath || !previousDir) {
+    p.log.error(
+      'Rectify requires --baseline, --rectified, and --previous (or interactive pickers).',
+    )
+    return 1
+  }
+  outDir = outDir || path.join(process.cwd(), 'unislot-out-rectified')
+
+  try {
+    await assertReadableFile(baselinePath)
+    await assertReadableFile(rectifiedPath)
+    await assertSnapshotFolder(previousDir)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  let snapshot
+  try {
+    snapshot = await loadSchedulingSnapshot(previousDir)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  const inferredSaturday = inferAllowSaturdayFromSnapshot(snapshot)
+  let allowSaturdayForMath = opts.saturday
+  if (allowSaturdayForMath === undefined) {
+    if (opts.interactive && !opts.skipPrompts) {
+      const answer = await p.confirm({
+        message: `Use Saturday slot for maths courses? (previous run: ${inferredSaturday ? 'enabled' : 'blocked'})`,
+        initialValue: inferredSaturday,
+      })
+      if (p.isCancel(answer)) {
+        p.cancel('Cancelled')
+        return 1
+      }
+      allowSaturdayForMath = Boolean(answer)
+    } else {
+      allowSaturdayForMath = inferredSaturday
+    }
+  }
+
+  let programNomenclatureXlsx: ArrayBuffer | undefined
+  if (opts.nomenclature) {
+    try {
+      await assertReadableFile(opts.nomenclature)
+      const nomBuffer = await readFile(opts.nomenclature)
+      programNomenclatureXlsx = nomBuffer.buffer.slice(
+        nomBuffer.byteOffset,
+        nomBuffer.byteOffset + nomBuffer.byteLength,
+      )
+    } catch (err) {
+      p.log.error(err instanceof Error ? err.message : String(err))
+      return 1
+    }
+  }
+
+  const baselineBuffer = await readFile(baselinePath)
+  const baselineParsed = await parseEnrollmentWorkbook(
+    baselineBuffer.buffer.slice(
+      baselineBuffer.byteOffset,
+      baselineBuffer.byteOffset + baselineBuffer.byteLength,
+    ),
+  )
+
+  const rectifiedBuffer = await readFile(rectifiedPath)
+  const rectifiedArrayBuffer = rectifiedBuffer.buffer.slice(
+    rectifiedBuffer.byteOffset,
+    rectifiedBuffer.byteOffset + rectifiedBuffer.byteLength,
+  )
+
+  const rectifiedParsed = await parseEnrollmentWorkbook(rectifiedArrayBuffer)
+  if (!rectifiedParsed.validation.is_valid) {
+    p.log.error('Rectified workbook failed validation:')
+    for (const e of rectifiedParsed.validation.errors.slice(0, 12)) {
+      p.log.error(`${e.field}: ${e.message}`)
+    }
+    return 1
+  }
+
+  const enrollmentDelta = computeEnrollmentDelta(baselineParsed.rows, rectifiedParsed.rows)
+  const newCourseCodes = new Set(
+    rectifiedParsed.rows.map((r) => r.course_code).filter(Boolean),
+  )
+  const fixedDays = buildFixedDays(snapshot, newCourseCodes)
+  const free = freeCourseCodes(newCourseCodes, fixedDays)
+
+  p.note(
+    formatEnrollmentDeltaSummary(enrollmentDelta, free, Object.keys(fixedDays).length),
+    'Rectify preview',
+  )
+
+  if (opts.interactive && !opts.skipPrompts) {
+    const proceed = await p.confirm({
+      message: 'Apply these changes and write rectified exports?',
+      initialValue: true,
+    })
+    if (p.isCancel(proceed) || !proceed) {
+      p.cancel('Cancelled')
+      return 1
+    }
+  }
+
+  const previousSummary = await loadPreviousSummary(previousDir)
+
+  const ac = new AbortController()
+  const spin = createSolveSpinner(requestedWorkers)
+  process.on('SIGINT', () => {
+    ac.abort()
+    void killAllCpsatChildren()
+  })
+
+  spin.start('Rectifying schedule…')
+
+  try {
+    const result = await runRectifyPipeline(
+      rectifiedArrayBuffer,
+      (evt) => {
+        if (ac.signal.aborted) return
+        if (evt.cpsat) spin.applyCpsat(evt.cpsat)
+        else spin.updateFromPipeline(evt.message)
+      },
+      {
+        baselineRows: baselineParsed.rows,
+        previousSnapshot: snapshot,
+        previousSummary,
+        cpsatTimeLimitSeconds: opts.timeLimit,
+        cpsatWorkers: opts.workers,
+        cpsatPortfolio: portfolioK,
+        cpsatAbsoluteGap: opts.absoluteGap,
+        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatFullProve: opts.prove,
+        allowSaturdayForMath,
+        programNomenclatureXlsx,
+        seed: opts.seed,
+        eagerExports: true,
+        eagerExportKinds: { schedule: true, clash: true, courseEmails: true },
+        signal: ac.signal,
+      },
+    )
+
+    if (!result.validation.is_valid) {
+      spin.stop('Validation failed')
+      for (const e of result.validation.errors.slice(0, 12)) {
+        p.log.error(`${e.field}: ${e.message}`)
+      }
+      return 1
+    }
+
+    if (result.infeasible) {
+      spin.stop('Rectify infeasible')
+      p.log.error(result.infeasible_reason ?? 'Hard constraints violated')
+      if (result.rectificationReport?.hard_constraint_violations.length) {
+        p.note(result.rectificationReport.hard_constraint_violations.join('\n'), 'Violations')
+      }
+      const files = await writeRectifyExports(outDir, result, { workers: requestedWorkers })
+      p.log.warn(`Partial report written to ${outDir} (${files.length} file(s))`)
+      return 1
+    }
+
+    if (!result.schedule) {
+      spin.stop('Rectify failed')
+      return 1
+    }
+
+    spin.stop(chalk.green('Rectify complete'))
+
+    const delta = result.enrollmentDelta
+    if (delta) {
+      p.note(
+        [
+          `${delta.changed_students.length} student(s) changed`,
+          `${delta.new_course_codes.length} new course(s): ${delta.new_course_codes.join(', ') || '—'}`,
+          `${delta.removed_course_codes.length} removed course(s): ${delta.removed_course_codes.join(', ') || '—'}`,
+        ].join('\n'),
+        'Changes',
+      )
+    }
+
+    if (result.rectificationReport?.baseline_warnings.length) {
+      p.log.warn(
+        result.rectificationReport.baseline_warnings.map((w) => w.message).join('\n'),
+      )
+    }
+
+    const writeSpin = p.spinner()
+    writeSpin.start(`Writing rectified exports to ${outDir}…`)
+    const files = await writeRectifyExports(outDir, result, { workers: requestedWorkers })
+    writeSpin.stop(`Wrote ${files.length} file(s)`)
+
+    outroSuccess([
+      chalk.green('Rectified schedule written.'),
+      chalk.dim(`Previous folder unchanged: ${previousDir}`),
+      ...files.map((f) => chalk.dim('  · ') + f),
+    ])
+    return 0
+  } catch (err) {
+    await killAllCpsatChildren().catch(() => undefined)
+    if (ac.signal.aborted || err instanceof PipelineCancelledError) {
+      spin.cancel()
+      p.cancel('Rectify cancelled.')
+      return 130
+    }
+    spin.stop('Failed')
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
 }
 
 async function runSolve(opts: {
@@ -393,6 +735,26 @@ async function runSolve(opts: {
 }
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2)
+  const hasExplicitSubcommand =
+    args[0] === 'doctor' || args[0] === 'rectify' || args[0] === 'solve'
+  const nonInteractive = args.includes('-y') || args.includes('--yes')
+  const bareInteractive =
+    !hasExplicitSubcommand && !nonInteractive && args.every((a) => !a.startsWith('-') || a === '-')
+
+  if (bareInteractive && args.length === 0) {
+    banner()
+    const mode = await promptRunMode()
+    if (!mode) {
+      p.cancel('Cancelled')
+      process.exit(1)
+    }
+    if (mode === 'rectify') {
+      process.exitCode = await runRectify({ interactive: true })
+      return
+    }
+  }
+
   const program = new Command()
   program
     .name('unislot')
@@ -472,6 +834,70 @@ async function main(): Promise<void> {
       })
       process.exitCode = code
     })
+
+  program
+    .command('rectify')
+    .description(
+      'Rectify a schedule after registration changes — pins existing course weekdays, places new courses only',
+    )
+    .option('--baseline <file>', 'Original registration .xlsx (before changes)')
+    .option('--rectified <file>', 'Updated full registration .xlsx')
+    .option('--previous <dir>', 'Previous output folder containing snapshot.json')
+    .option('-o, --output <dir>', 'New output directory for rectified exports')
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
+    .option('--time-limit <seconds>', 'Optional wall-clock limit', (v) => Number(v))
+    .option('--workers <n>', 'CP-SAT workers (default: all CPUs)', (v) => Number(v))
+    .option('--portfolio <k>', 'Portfolio race size (default: 0)', (v) => Number(v))
+    .option('--seed <n>', 'Solver seed', (v) => {
+      const n = parseSeedInput(String(v))
+      if (n === undefined) throw new Error('--seed must be a non-negative integer')
+      return n
+    })
+    .option('--absolute-gap <n>', 'Stop when clash gap ≤ n', (v) => Number(v))
+    .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
+    .option('--prove', 'Full optimality proof', false)
+    .option('--saturday', 'Allow Saturday for maths')
+    .option('-y, --yes', 'Non-interactive when paths are provided', false)
+    .action(
+      async (flags: {
+        baseline?: string
+        rectified?: string
+        previous?: string
+        output?: string
+        nomenclature?: string
+        timeLimit?: number
+        workers?: number
+        portfolio?: number
+        seed?: number
+        absoluteGap?: number
+        provePlateau?: number
+        prove?: boolean
+        saturday?: boolean
+        yes?: boolean
+      }) => {
+        const interactive =
+          !flags.yes && (!flags.baseline || !flags.rectified || !flags.previous)
+        const saturdayFlag =
+          typeof flags.saturday === 'boolean' ? flags.saturday : undefined
+        process.exitCode = await runRectify({
+          baseline: flags.baseline,
+          rectified: flags.rectified,
+          previous: flags.previous,
+          output: flags.output,
+          nomenclature: flags.nomenclature,
+          timeLimit: flags.timeLimit,
+          workers: flags.workers,
+          portfolio: flags.portfolio,
+          seed: flags.seed,
+          absoluteGap: flags.absoluteGap,
+          provePlateau: flags.provePlateau,
+          prove: flags.prove,
+          saturday: saturdayFlag,
+          skipPrompts: Boolean(flags.yes),
+          interactive,
+        })
+      },
+    )
 
   program
     .command('doctor')

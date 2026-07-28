@@ -23,7 +23,13 @@ export type { PipelineResult, RunPipelineOptions, PipelineProgressEvent } from '
 export { runPipeline, computeCourseEmailGroups } from './pipeline/run'
 export { PipelineCancelledError, throwIfAborted } from './pipeline/cancellation'
 export type { SchedulingSnapshot } from './merge/snapshot'
-export { cloneSchedulingSnapshot } from './merge/snapshot'
+export { cloneSchedulingSnapshot, loadSchedulingSnapshot } from './merge/snapshot'
+export type { RectifyPipelineResult, RectificationReport, RunRectifyOptions } from './pipeline/rectifyRun'
+export {
+  runRectifyPipeline,
+  parseEnrollmentWorkbook,
+  loadPreviousSummary,
+} from './pipeline/rectifyRun'
 export { parseExcelRows, loadAndValidate } from './parse/parser'
 export {
   auditScheduleHardConstraints,

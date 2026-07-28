@@ -52,6 +52,10 @@ export type RunCpsatOptions = {
   fullProve?: boolean
   /** When false, Saturday is excluded for all courses (including maths). Default true. */
   allowSaturdayForMath?: boolean
+  /** Hard-pinned course→weekday (rectification). */
+  fixedDays?: Record<string, number>
+  /** Clash-only solve (skip RED/balance prove phases). */
+  clashOnly?: boolean
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
   /** Override python executable (default: solver/cpsat/.venv or python3). */
@@ -321,9 +325,20 @@ export function spawnCpsatSolve(
           const raw = await readFile(outputPath, 'utf8')
           solution = JSON.parse(raw) as CpsatSolution
         } catch {
+          let detail = ''
+          try {
+            const raw = await readFile(outputPath, 'utf8')
+            const partial = JSON.parse(raw) as CpsatSolution
+            if (partial.error) detail = partial.error
+            else if (partial.status) {
+              detail = `${partial.status}${partial.message ? `: ${partial.message}` : ''}`
+            }
+          } catch {
+            /* ignore */
+          }
           throw new Error(
             exitCode !== 0
-              ? `CP-SAT solver failed (exit ${exitCode}) with no solution file`
+              ? `CP-SAT solver failed (exit ${exitCode})${detail ? ` — ${detail}` : ' with no solution file'}`
               : 'CP-SAT solver produced no solution file',
           )
         }
@@ -468,6 +483,7 @@ export async function runCpsatScheduler(
     students,
     {
       hint,
+      fixed_days: options?.fixedDays,
       min_clash_weight_lower_bound: options?.minClashWeightLowerBound,
       min_red_students_lower_bound: options?.minRedStudentsLowerBound,
       allowSaturdayForMath: options?.allowSaturdayForMath,
@@ -510,7 +526,7 @@ export async function runCpsatScheduler(
     workers: totalWorkers,
     timeLimitSeconds: proveLimit,
     seed: options?.seed,
-    clashOnly: false,
+    clashOnly: options?.clashOnly ?? false,
   })
 
   if (options?.signal?.aborted) throw new PipelineCancelledError()

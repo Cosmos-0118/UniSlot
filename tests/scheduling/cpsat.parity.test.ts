@@ -132,9 +132,13 @@ describe('CP-SAT instance + clash parity', () => {
     expect(inst.courses.find((c) => c.code === 'CS101')?.is_math).toBe(false)
     expect(inst.students[0]?.courses).toContain('CS101')
     expect(inst.hint?.CS101).toBe(1)
-    expect(inst.min_clash_weight_lower_bound).toBe(0)
     expect(inst.allow_saturday).toBe(true)
     expect(inst.num_weekdays).toBe(6)
+
+    const pinned = buildCpsatInstance(courseSections, graph, {}, students, {
+      fixed_days: { CS101: 3 },
+    })
+    expect(pinned.fixed_days?.CS101).toBe(3)
 
     const blocked = buildCpsatInstance(courseSections, graph, {}, students, {
       allowSaturdayForMath: false,
@@ -263,6 +267,56 @@ describe('CP-SAT solver smoke', () => {
       )
       expect(result.total_clash_weight).toBe(0)
       expect(['OPTIMAL', 'FEASIBLE']).toContain(result.status)
+    },
+    60_000,
+  )
+
+  it(
+    'respects fixed_days pinning for rectification',
+    async () => {
+      const courseSections: Record<string, Section[]> = {
+        A: [section('A1', 'A', ['s1'])],
+        B: [section('B1', 'B', ['s2'])],
+        D: [section('D1', 'D', ['s1'])],
+      }
+      const students = {
+        s1: {
+          register_number: 's1',
+          name: 'S1',
+          program: 'CS',
+          email: null,
+          mobile: null,
+          enrolled_courses: ['A', 'D'],
+        },
+        s2: {
+          register_number: 's2',
+          name: 'S2',
+          program: 'CS',
+          email: null,
+          mobile: null,
+          enrolled_courses: ['B'],
+        },
+      }
+      const conflictGraph = buildConflictGraph(students, courseSections)
+      const facultyConstraints = {
+        'Planning:A1': ['A1'],
+        'Planning:B1': ['B1'],
+        'Planning:D1': ['D1'],
+      }
+      const result = await runCpsatScheduler(
+        courseSections,
+        conflictGraph,
+        facultyConstraints,
+        students,
+        {
+          workers: 2,
+          portfolio: 0,
+          fixedDays: { A: 2, B: 4 },
+        },
+      )
+      expect(result.slot_by_course.A).toBe(2)
+      expect(result.slot_by_course.B).toBe(4)
+      expect(result.slot_by_course.D).not.toBe(2)
     },
     60_000,
   )

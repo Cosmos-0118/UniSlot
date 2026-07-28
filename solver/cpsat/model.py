@@ -76,6 +76,12 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
             # Non-mathematics courses: Mon–Fri only (Constraints.md).
             model.Add(day[code] <= saturday - 1)
 
+    # Hard-pinned weekdays (rectification mode).
+    for code, fixed in (instance.get("fixed_days") or {}).items():
+        code = str(code)
+        if code in day:
+            model.Add(day[code] == int(fixed))
+
     course_codes = list(day.keys())
 
     # Faculty: courses taught by the same person cannot share a weekday.

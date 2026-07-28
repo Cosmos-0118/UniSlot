@@ -30,6 +30,8 @@ export type CpsatInstance = {
   faculty_groups: Array<{ faculty: string; course_codes: string[] }>
   students: Array<{ id: string; courses: string[] }>
   hint?: Record<string, number>
+  /** Hard-pinned course→weekday assignments (rectification mode). */
+  fixed_days?: Record<string, number>
   /** Structural lower bound injected as CP-SAT cut (clash_weight >= lb). */
   min_clash_weight_lower_bound?: number
   /** Structural lower bound injected as CP-SAT cut (red_students >= lb). */
@@ -148,6 +150,7 @@ export function buildCpsatInstance(
   students: Record<string, Student>,
   options?: {
     hint?: Record<string, number>
+    fixed_days?: Record<string, number>
     min_clash_weight_lower_bound?: number
     min_red_students_lower_bound?: number
     /** Default true (Constraints.md). Pass false to exclude Saturday entirely. */
@@ -209,6 +212,7 @@ export function buildCpsatInstance(
     faculty_groups,
     students: studentRows,
     hint,
+    fixed_days: options?.fixed_days,
     min_clash_weight_lower_bound: options?.min_clash_weight_lower_bound,
     min_red_students_lower_bound: options?.min_red_students_lower_bound,
   }

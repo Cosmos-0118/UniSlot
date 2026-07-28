@@ -152,6 +152,22 @@ export async function pickOutputFolder(prompt = 'Choose folder for UniSlot expor
   return zenityFolder(prompt)
 }
 
+/** Folder picker for a prior run that must contain snapshot.json. */
+export async function pickPreviousOutputFolder(
+  prompt = 'Choose previous UniSlot output folder (must contain snapshot.json)',
+): Promise<string | null> {
+  return pickOutputFolder(prompt)
+}
+
+export async function assertSnapshotFolder(dirPath: string): Promise<void> {
+  const snapPath = path.join(dirPath, 'snapshot.json')
+  try {
+    await access(snapPath)
+  } catch {
+    throw new Error(`Previous output folder must contain snapshot.json: ${dirPath}`)
+  }
+}
+
 export async function assertReadableFile(filePath: string): Promise<void> {
   await access(filePath)
   if (!/\.xlsx$/i.test(filePath)) {
