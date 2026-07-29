@@ -163,6 +163,8 @@ export type LatePipelineResult = {
   solver_message?: string
   infeasible?: boolean
   infeasible_reason?: string
+  ortools_version?: string
+  python_version?: string
 }
 
 const DEFAULT_LATE_TIME_LIMIT_SECONDS = 300
@@ -244,6 +246,8 @@ export async function runLatePipeline(
   let provenLevels: string[] = []
   let solverStatus = 'PINNED'
   let solverMessage: string | undefined
+  let ortoolsVersion: string | undefined
+  let pythonVersion: string | undefined
 
   const unknownSet = new Set(unknown_course_codes)
   const unknownAdds = additions.filter((a) => unknownSet.has(a.course_code))
@@ -327,6 +331,8 @@ export async function runLatePipeline(
       provenLevels = solved.proven_levels
       solverStatus = solved.status
       solverMessage = solved.message
+      ortoolsVersion = solved.ortools_version
+      pythonVersion = solved.python_version
     } else {
       const greedy = placeFreeCourseWeekdays(
         free,
@@ -736,6 +742,8 @@ export async function runLatePipeline(
     enrollmentRows: merged.enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
+    ...(pythonVersion ? { python_version: pythonVersion } : {}),
     late_enrollments: lateRecords,
     run_log: runLog,
     clash_provenance: clashProvenance,
@@ -827,6 +835,8 @@ export async function runLatePipeline(
     proven_levels: provenLevels,
     solver_status: solverStatus,
     solver_message: solverMessage,
+    ortools_version: ortoolsVersion,
+    python_version: pythonVersion,
   }
 }
 

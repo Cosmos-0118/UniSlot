@@ -168,7 +168,12 @@ async function writeRectifyExports(
   }
   if (result.schedulingSnapshot) {
     const fp = path.join(outDir, 'snapshot.json')
-    await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
+    const snapshot = {
+      ...result.schedulingSnapshot,
+      ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
+      ...(result.python_version ? { python_version: result.python_version } : {}),
+    }
+    await writeFile(fp, JSON.stringify(snapshot, null, 2), 'utf8')
     written.push(fp)
   }
   if (result.rectificationReport) {
@@ -202,6 +207,8 @@ async function writeRectifyExports(
     allow_saturday_for_math: result.allowSaturdayForMath,
     seed: meta.seed,
     workers: meta.workers,
+    ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
+    ...(result.python_version ? { python_version: result.python_version } : {}),
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
@@ -633,7 +640,12 @@ async function writeLateExports(
   }
   if (result.schedulingSnapshot) {
     const fp = path.join(outDir, 'snapshot.json')
-    await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
+    const snapshot = {
+      ...result.schedulingSnapshot,
+      ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
+      ...(result.python_version ? { python_version: result.python_version } : {}),
+    }
+    await writeFile(fp, JSON.stringify(snapshot, null, 2), 'utf8')
     written.push(fp)
   }
   if (result.lateReport) {
@@ -670,6 +682,8 @@ async function writeLateExports(
     allow_saturday_for_math: result.allowSaturdayForMath,
     seed: meta.seed,
     workers: meta.workers,
+    ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
+    ...(result.python_version ? { python_version: result.python_version } : {}),
     introduced_clash_causes:
       report?.clash_diff.introduced.map((c) => ({
         register_number: c.register_number,

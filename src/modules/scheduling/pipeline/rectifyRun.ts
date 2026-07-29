@@ -122,6 +122,8 @@ export type RectifyPipelineResult = {
   solver_message?: string
   infeasible?: boolean
   infeasible_reason?: string
+  ortools_version?: string
+  python_version?: string
 }
 
 const READ_END = 0.08
@@ -295,6 +297,8 @@ export async function runRectifyPipeline(
   let solverStatus = 'PINNED'
   let solverMessage: string | undefined
   let cpsatRan = false
+  let ortoolsVersion: string | undefined
+  let pythonVersion: string | undefined
 
   if (freeCourses.length === 0) {
     emit({
@@ -354,6 +358,8 @@ export async function runRectifyPipeline(
       provenLevels = solved.proven_levels
       solverStatus = solved.status
       solverMessage = solved.message
+      ortoolsVersion = solved.ortools_version
+      pythonVersion = solved.python_version
     } else {
       // CP-SAT unavailable or returned nothing: clash-only greedy keeps the run usable,
       // but weekday balance is no longer guaranteed, so the report says so.
@@ -518,6 +524,8 @@ export async function runRectifyPipeline(
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+    ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
+    ...(pythonVersion ? { python_version: pythonVersion } : {}),
     section_lanes: sectionLanesFromEntries(schedule.entries),
     run_log: runLog,
     clash_provenance: clashProvenance,
@@ -599,6 +607,8 @@ export async function runRectifyPipeline(
     proven_levels: provenLevels,
     solver_status: solverStatus,
     solver_message: solverMessage,
+    ortools_version: ortoolsVersion,
+    python_version: pythonVersion,
   }
 }
 
