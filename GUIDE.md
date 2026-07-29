@@ -45,18 +45,23 @@ What happens:
 
 1. **File picker** — choose the enrollment `.xlsx` (macOS / Windows / Linux dialogs).
 2. **Parse** — row counts, students, courses.
-3. **CP-SAT search** — live status line, for example:
+3. **CP-SAT search** — a live multi-line panel with short stage-transition animations. Example:
 
    ```text
-   1/3 Minimizing clashes  clash 18  RED 18 · proving (12.4s since last improve)  2m 05s · 10w
+   ⠋ 1/3 Clash  minimize clash weight  ·  10w  ·  2m 05s
+     ⣿⣼⢠⠀…  warm 22/30  →  clash   18  RED   18  bound 12 · gap 6  proving 12.4s
+     ● 1/3 clash  ○ 2/3 RED  ○ 3/3 balance
+     ────────────────────────────────────────
    ```
 
-   - **1/3 Minimizing clashes** — primary objective (clash weight).
-   - **2/3 Minimizing RED students** — fewest students with a same-day conflict.
-   - **3/3 Balancing weekdays** — soft load balance after clashes are fixed.
+   - **1/3 Clash** — primary objective (clash weight).
+   - **2/3 RED** — fewest students with a same-day conflict.
+   - **3/3 Balance** — soft load balance after clashes are fixed.
    - **clash / RED** — best solution found so far.
    - **proving** — no better clash weight found recently; solver is closing the optimality proof. This can take a while on large enrollments; the clock still advances.
    - **gap / bound** — when shown, distance between best solution and proven lower bound.
+
+   Short intro / stage / result / outro animations play on a TTY; they are skipped in non-interactive logs.
 
 4. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED count, whether clashes are proven minimal.
 5. **Output folder** — optional folder picker, or default `./unislot-out/`.

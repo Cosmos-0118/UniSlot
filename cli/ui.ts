@@ -1,10 +1,17 @@
 import * as p from '@clack/prompts'
-import chalk from 'chalk'
 import { cpus } from 'node:os'
 import type {
   CpsatPortfolioMeta,
   CpsatProgressEvent,
 } from '../src/modules/scheduling/solver/cpsatInstance.ts'
+import {
+  box,
+  divider,
+  glyphs,
+  palette,
+  visibleLen,
+  type Tone,
+} from './theme.ts'
 
 export type LiveSolveState = {
   phase: string
@@ -55,6 +62,28 @@ const BRAILLE_LEVEL = ['⠀', '⢀', '⢠', '⢰', '⢸', '⣸', '⣼', '⣾', '
 const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
 const HISTORY_CAP = 24
 
+/** Named stage transitions — one short animation each. */
+export type TransitionName =
+  | 'scan'
+  | 'assemble'
+  | 'clash_enter'
+  | 'red_enter'
+  | 'balance_enter'
+  | 'write'
+  | 'stamp'
+  | 'burst'
+
+export const TRANSITION_TICKS: Record<TransitionName, number> = {
+  scan: 8,
+  assemble: 9,
+  clash_enter: 7,
+  red_enter: 7,
+  balance_enter: 8,
+  write: 8,
+  stamp: 6,
+  burst: 7,
+}
+
 function formatDuration(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '0.0s'
   if (sec < 60) return `${sec.toFixed(1)}s`
@@ -68,38 +97,32 @@ function liveOf(elapsed: number, elapsedAt: number): number {
 }
 
 function padNum(n: number | null, width = 4): string {
-  if (n == null) return chalk.dim('—'.padStart(width))
-  return chalk.bold(String(n).padStart(width))
+  if (n == null) return palette.dim('—'.padStart(width))
+  return palette.bold(String(n).padStart(width))
 }
 
 function activityLabel(activity: LiveSolveState['activity'], idle: number): string {
   switch (activity) {
     case 'improving':
-      return chalk.green('improving')
+      return palette.ok('improving')
     case 'proving':
-      return chalk.yellow(`proving ${formatDuration(idle)}`)
+      return palette.warn(`proving ${formatDuration(idle)}`)
     case 'searching':
-      return chalk.cyan('searching')
+      return palette.brand('searching')
     default:
-      return chalk.dim('idle')
+      return palette.dim('idle')
   }
 }
 
 function laneStatus(activity: LiveSolveState['activity'], idle: number, done: boolean): string {
-  if (done) return chalk.dim('done')
+  if (done) return palette.dim('done')
   return activityLabel(activity, idle)
 }
 
 function gapLabel(value: number | null, bound: number | null): string {
-  if (value == null || bound == null) return chalk.dim('gap —')
+  if (value == null || bound == null) return palette.dim('gap —')
   const g = value - bound
-  return g <= 0 ? chalk.green('gap 0') : chalk.dim(`bound ${bound} · gap ${g}`)
-}
-
-/** Visible length ignoring ANSI CSI sequences. */
-function visibleLen(s: string): number {
-  // Build without a literal ESC so eslint no-control-regex stays clean.
-  return s.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'), '').length
+  return g <= 0 ? palette.ok('gap 0') : palette.dim(`bound ${bound} · gap ${g}`)
 }
 
 function padLine(s: string, width = COLS): string {
@@ -113,11 +136,34 @@ function stripMotion(s: string): string {
   return s.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠀⢀⢠⢰⢸⣸⣼⣾⣿▁▂▃▄▅▆▇█●○★·]/g, '')
 }
 
+function toneColor(tone: Tone | 'cyan' | 'green' | 'yellow' | 'dim'): (s: string) => string {
+  switch (tone) {
+    case 'ok':
+    case 'green':
+      return palette.ok
+    case 'warn':
+    case 'yellow':
+      return palette.warn
+    case 'dim':
+      return palette.dim
+    case 'bad':
+      return palette.bad
+    case 'accent':
+      return palette.accent
+    default:
+      return palette.brand
+  }
+}
+
 /**
  * Sliding Braille ribbon — ambient “still working” motion that never hard-loops
  * the same shape (phase drifts with tick; soft Gaussian hotspot).
  */
-function brailleRibbon(tick: number, width = 18, tone: 'cyan' | 'green' | 'yellow' | 'dim' = 'cyan'): string {
+function brailleRibbon(
+  tick: number,
+  width = 18,
+  tone: 'cyan' | 'green' | 'yellow' | 'dim' | Tone = 'brand',
+): string {
   const cells: string[] = []
   const center = ((tick * 0.35) % (width + 6)) - 3
   for (let i = 0; i < width; i++) {
@@ -127,17 +173,7 @@ function brailleRibbon(tick: number, width = 18, tone: 'cyan' | 'green' | 'yello
     const idx = Math.min(BRAILLE_LEVEL.length - 1, Math.floor(breathe * (BRAILLE_LEVEL.length - 1) + 0.001))
     cells.push(BRAILLE_LEVEL[idx]!)
   }
-  const raw = cells.join('')
-  switch (tone) {
-    case 'green':
-      return chalk.green(raw)
-    case 'yellow':
-      return chalk.yellow(raw)
-    case 'dim':
-      return chalk.dim(raw)
-    default:
-      return chalk.cyan(raw)
-  }
+  return toneColor(tone)(cells.join(''))
 }
 
 /** Determinate bar with Braille sub-cell fill. */
@@ -160,13 +196,12 @@ function progressBar(frac: number, width = 18): string {
       bar += '⠀'
     }
   }
-  const colored =
-    t >= 1 ? chalk.green(bar) : t > 0.75 ? chalk.yellow(bar) : chalk.cyan(bar)
+  const colored = t >= 1 ? palette.ok(bar) : t > 0.75 ? palette.warn(bar) : palette.brand(bar)
   return colored
 }
 
 function sparkline(history: number[], width = 16): string {
-  if (history.length === 0) return chalk.dim('░'.repeat(Math.min(width, 8)))
+  if (history.length === 0) return palette.dim('░'.repeat(Math.min(width, 8)))
   const slice = history.slice(-width)
   const min = Math.min(...slice)
   const max = Math.max(...slice)
@@ -176,7 +211,7 @@ function sparkline(history: number[], width = 16): string {
     .map((v) => {
       const norm = 1 - (v - min) / span
       const idx = Math.min(SPARK.length - 1, Math.floor(norm * (SPARK.length - 1) + 0.001))
-      return chalk.cyan(SPARK[idx]!)
+      return palette.brand(SPARK[idx]!)
     })
     .join('')
 }
@@ -202,13 +237,155 @@ function pushHistory(buf: number[], value: number | null | undefined): void {
   if (buf.length > HISTORY_CAP) buf.shift()
 }
 
-function stepTrack(active: 1 | 2 | 3): string {
+function stepTrack(active: 1 | 2 | 3): string[] {
   const mark = (n: 1 | 2 | 3, label: string) => {
-    if (n < active) return chalk.dim(`✓ ${n}/3 ${label}`)
-    if (n === active) return chalk.cyan(`● ${n}/3 ${label}`)
-    return chalk.dim(`○ ${n}/3 ${label}`)
+    if (n < active) return palette.dim(`${glyphs.step.done} ${n}/3 ${label}`)
+    if (n === active) return palette.brand(`${glyphs.step.active} ${n}/3 ${label}`)
+    return palette.dim(`${glyphs.step.pending} ${n}/3 ${label}`)
   }
-  return `  ${mark(1, 'clash')}  ${mark(2, 'RED')}  ${mark(3, 'balance')}`
+  return [
+    `  ${mark(1, 'clash')}  ${mark(2, 'RED')}  ${mark(3, 'balance')}`,
+    `  ${divider(40)}`,
+  ]
+}
+
+/**
+ * Pure transition frames — exported for tests. `t` is 0..totalTicks-1.
+ */
+export function transitionFrame(name: TransitionName, t: number, totalTicks: number): string[] {
+  const frac = totalTicks <= 1 ? 1 : t / (totalTicks - 1)
+  switch (name) {
+    case 'scan': {
+      const width = 28
+      const pos = Math.floor(frac * (width - 1))
+      let row = ''
+      for (let i = 0; i < width; i++) {
+        const d = Math.abs(i - pos)
+        row += d === 0 ? '⣿' : d === 1 ? '⣼' : d === 2 ? '⢠' : '⠀'
+      }
+      return [
+        `${palette.brand(BRAILLE_SPIN[t % BRAILLE_SPIN.length]!)}  ${palette.bold('Reading workbook')}`,
+        `  ${palette.brand(row)}  ${palette.dim('scanning rows…')}`,
+        '',
+      ]
+    }
+    case 'assemble': {
+      const blocks = Math.min(8, Math.max(1, Math.floor(frac * 8) + 1))
+      const bar = '⣿'.repeat(blocks) + '⠀'.repeat(8 - blocks)
+      return [
+        `${palette.brand(BRAILLE_SPIN[t % BRAILLE_SPIN.length]!)}  ${palette.bold('Building model')}`,
+        `  ${palette.brand(bar)}  ${palette.dim('encoding courses · edges · students')}`,
+        '',
+      ]
+    }
+    case 'clash_enter': {
+      const glow = frac < 0.5 ? palette.accent : palette.brand
+      return [
+        `${glow(`${glyphs.step.active} 1/3 Clash`)}  ${palette.dim('minimize clash weight')}`,
+        `  ${brailleRibbon(t, 16, 'cyan')}  ${palette.dim('starting lex level 1…')}`,
+        ...stepTrack(1),
+      ]
+    }
+    case 'red_enter': {
+      const glow = frac < 0.5 ? palette.accent : palette.brand
+      return [
+        `${glow(`${glyphs.step.active} 2/3 RED`)}  ${palette.dim('minimize students with clashes')}`,
+        `  ${brailleRibbon(t, 16, 'cyan')}  ${palette.dim('starting lex level 2…')}`,
+        ...stepTrack(2),
+      ]
+    }
+    case 'balance_enter': {
+      // Scale settling: left/right bars converge toward center.
+      const span = Math.max(0, 6 - Math.floor(frac * 6))
+      const mid = '⣿⣿'
+      const left = '⠀'.repeat(span) + '⣼'.repeat(Math.min(2, 6 - span))
+      const right = '⣿'.repeat(Math.min(2, 6 - span)) + '⠀'.repeat(span)
+      const scale = left.slice(-6).padStart(6, '⠀') + mid + right.slice(0, 6).padEnd(6, '⠀')
+      return [
+        `${palette.brand(`${glyphs.step.active} 3/3 Balance`)}  ${palette.dim('spread load across weekdays')}`,
+        `  ${palette.brand(scale)}  ${palette.dim('settling weekday load…')}`,
+        ...stepTrack(3),
+      ]
+    }
+    case 'write': {
+      const width = 24
+      const filled = Math.floor(frac * width)
+      const bar = '━'.repeat(filled) + '─'.repeat(width - filled)
+      return [
+        `${palette.brand(BRAILLE_SPIN[t % BRAILLE_SPIN.length]!)}  ${palette.bold('Writing exports')}`,
+        `  ${palette.ok(bar)}  ${palette.dim(`${Math.round(frac * 100)}%`)}`,
+        '',
+      ]
+    }
+    case 'stamp': {
+      const labels = ['[ ······ ]', '[ ·· ·· ]', '[ OPT·· ]', '[ OPTIM ]', '[OPTIMAL]', '[OPTIMAL]']
+      const label = labels[Math.min(t, labels.length - 1)]!
+      const glow = t < totalTicks - 2 ? palette.accent(label) : palette.ok(label)
+      return [
+        `${palette.bold('Status')}     ${glow}`,
+        palette.dim('  stamping result…'),
+        '',
+      ]
+    }
+    case 'burst': {
+      const stars = ['    ★    ', '  ★ · ★  ', '★ · ★ · ★', ' · ★ · ★ ', '  · ★ ·  ', '    ·    ', '         ']
+      const frame = stars[Math.min(t, stars.length - 1)]!
+      return [palette.ok(frame), palette.dim('  done'), '']
+    }
+    default:
+      return ['']
+  }
+}
+
+/**
+ * Play a short transition on a TTY. No-op when stdout is not a TTY.
+ * Returns the number of frames that would play (useful for tests).
+ * Uses in-place line updates so the terminal does not fill with scrollback junk.
+ */
+export async function playTransition(
+  name: TransitionName,
+  opts: { isTty?: boolean; paint?: (lines: string[]) => void } = {},
+): Promise<number> {
+  const total = TRANSITION_TICKS[name]
+  const isTty = opts.isTty ?? Boolean(process.stdout.isTTY)
+  if (!isTty) return 0
+
+  if (opts.paint) {
+    for (let t = 0; t < total; t++) {
+      opts.paint(transitionFrame(name, t, total))
+      if (t < total - 1) {
+        await new Promise<void>((r) => setTimeout(r, TICK_MS))
+      }
+    }
+    return total
+  }
+
+  const out = process.stdout
+  out.write('\x1b[?25l')
+  let prev = 0
+  for (let t = 0; t < total; t++) {
+    const lines = transitionFrame(name, t, total).map((l) => padLine(l))
+    if (prev > 0) {
+      out.write(`\x1b[${prev}A`)
+    }
+    const height = Math.max(prev, lines.length)
+    for (let i = 0; i < height; i++) {
+      const next = lines[i] ?? padLine('')
+      out.write(`\x1b[2K\r${next}\n`)
+    }
+    prev = lines.length
+    if (t < total - 1) {
+      await new Promise<void>((r) => setTimeout(r, TICK_MS))
+    }
+  }
+  // Clear the transition block before returning control to Clack.
+  if (prev > 0) {
+    out.write(`\x1b[${prev}A`)
+    for (let i = 0; i < prev; i++) out.write('\x1b[2K\n')
+    out.write(`\x1b[${prev}A`)
+  }
+  out.write('\x1b[?25h')
+  return total
 }
 
 /**
@@ -348,6 +525,22 @@ export function createSolveSpinner(workers = cpus().length) {
   const clashHistory: number[] = []
   const redHistory: number[] = []
 
+  /** Overlay transition played on the same tick loop (never blocks solver events). */
+  let transition: { name: TransitionName; tick: number; total: number } | null = null
+  /** Brief count-drop pop when clash/RED first improves. */
+  let popClashTicks = 0
+  let popRedTicks = 0
+  let prevBestClash: number | null = null
+  let prevBestRed: number | null = null
+  let scanPlayed = false
+  let assemblePlayed = false
+
+  const startTransition = (name: TransitionName) => {
+    if (!panel.isTty) return
+    transition = { name, tick: 0, total: TRANSITION_TICKS[name] }
+    dirty = true
+  }
+
   const ensureLane = (meta: CpsatPortfolioMeta): RaceLane => {
     if (!race) {
       race = {
@@ -410,10 +603,10 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 
   const liveElapsed = () => liveOf(state.solverElapsed, state.solverElapsedAt)
-  const spinGlyph = () => chalk.cyan(BRAILLE_SPIN[tick % BRAILLE_SPIN.length])
+  const spinGlyph = () => palette.brand(BRAILLE_SPIN[tick % BRAILLE_SPIN.length])
 
   const laneLines = (): string[] => {
-    if (!race) return [chalk.dim('  waiting for solver…')]
+    if (!race) return [palette.dim('  waiting for solver…')]
     const ordered = [...race.lanes.values()].sort((a, b) => a.index - b.index)
     const width = Math.max(1, String(race.size).length)
     return ordered.map((lane) => {
@@ -424,23 +617,33 @@ export function createSolveSpinner(workers = cpus().length) {
         (lane.red ?? null) === (race!.bestRed ?? null)
       const tag = String(lane.index).padStart(width)
       const seedLabel = `seed ${lane.seed}`.padEnd(10)
-      const mark = isBest ? chalk.green('★') : chalk.dim('·')
+      const mark = isBest ? palette.ok(glyphs.star) : palette.dim(glyphs.dot)
       const status = laneStatus(lane.activity, lane.secondsSinceImprove, lane.done)
       const secs = lane.done ? lane.elapsed : liveOf(lane.elapsed, lane.elapsedAt)
       const time = formatDuration(secs).padStart(6)
       return (
-        `  ${mark} ${chalk.dim(`#${tag}`)} ${seedLabel} ` +
+        `  ${mark} ${palette.dim(`#${tag}`)} ${seedLabel} ` +
         `clash ${padNum(lane.clash)}  RED ${padNum(lane.red)}  ` +
         `${status}  ` +
-        chalk.dim(time)
+        palette.dim(time)
       )
     })
   }
 
   const header = (title: string, detail: string) =>
-    `${spinGlyph()} ${chalk.bold(title)}` +
-    (detail ? chalk.dim(`  ${detail}`) : '') +
-    chalk.dim(`  ·  ${state.workers}w  ·  ${formatDuration(liveElapsed())}`)
+    `${spinGlyph()} ${palette.bold(title)}` +
+    (detail ? palette.dim(`  ${detail}`) : '') +
+    palette.dim(`  ${glyphs.dot}  ${state.workers}w  ${glyphs.dot}  ${formatDuration(liveElapsed())}`)
+
+  const metricClash = (clash: number | null, popping: boolean) => {
+    const v = padNum(clash)
+    return popping ? palette.accent(String(clash ?? '—').padStart(4)) : v
+  }
+
+  const metricRed = (red: number | null, popping: boolean) => {
+    const v = padNum(red)
+    return popping ? palette.accent(String(red ?? '—').padStart(4)) : v
+  }
 
   const buildRaceFrame = (): string[] => {
     if (!race) return [`${spinGlyph()}  ${rawMessage}`, `  ${brailleRibbon(tick, 20)}`]
@@ -449,14 +652,14 @@ export function createSolveSpinner(workers = cpus().length) {
     const totalW = race.size * race.memberWorkers
     const timeBit =
       race.raceSeconds > 0
-        ? chalk.dim(
+        ? palette.dim(
             `${formatDuration(Math.min(wall, race.raceSeconds))} / ${race.raceSeconds}s`,
           )
-        : chalk.dim(formatDuration(wall))
+        : palette.dim(formatDuration(wall))
     const headerBest =
       race.bestClash == null
-        ? chalk.dim('best —')
-        : `best ${chalk.bold.green(String(race.bestClash))} · RED ${chalk.bold.green(String(race.bestRed ?? '—'))}`
+        ? palette.dim('best —')
+        : `best ${palette.ok(String(race.bestClash))} · RED ${palette.ok(String(race.bestRed ?? '—'))}`
 
     const ribbon =
       race.raceSeconds > 0
@@ -464,8 +667,8 @@ export function createSolveSpinner(workers = cpus().length) {
         : `${brailleRibbon(tick, 20)}  ${timeBit}`
 
     return [
-      `${spinGlyph()} ${chalk.bold('Portfolio race')}  ` +
-        chalk.dim(`${race.size} seeds × ${race.memberWorkers}w · ${totalW} workers`),
+      `${spinGlyph()} ${palette.bold('Portfolio race')}  ` +
+        palette.dim(`${race.size} seeds × ${race.memberWorkers}w · ${totalW} workers`),
       `  ${ribbon}    ${headerBest}`,
       ...lanes,
     ]
@@ -477,8 +680,8 @@ export function createSolveSpinner(workers = cpus().length) {
     const act = activityLabel(state.activity, state.secondsSinceImprove)
     const warm =
       warmClash != null
-        ? chalk.dim(`warm ${warmClash}/${warmRed ?? '—'}`)
-        : chalk.dim('warm —')
+        ? palette.dim(`warm ${warmClash}/${warmRed ?? '—'}`)
+        : palette.dim('warm —')
     const tone = activityTone(state.activity)
     const motion =
       clashHistory.length > 1
@@ -486,9 +689,9 @@ export function createSolveSpinner(workers = cpus().length) {
         : brailleRibbon(tick, 16, tone)
     return [
       header('1/3 Clash', 'minimize clash weight'),
-      `  ${motion}  ${warm}  →  clash ${padNum(clash)}  RED ${padNum(red)}  ` +
-        `${gapLabel(clash, state.bound)}  ${act}`,
-      stepTrack(1),
+      `  ${motion}  ${warm}  ${glyphs.arrow}  clash ${metricClash(clash, popClashTicks > 0)}  ` +
+        `RED ${metricRed(red, false)}  ${gapLabel(clash, state.bound)}  ${act}`,
+      ...stepTrack(1),
     ]
   }
 
@@ -497,8 +700,8 @@ export function createSolveSpinner(workers = cpus().length) {
     const act = activityLabel(state.activity, state.secondsSinceImprove)
     const locked =
       state.bestClash != null
-        ? chalk.dim(`locked clash ${state.bestClash}${clashProven ? ' ✓' : ''}`)
-        : chalk.dim('locked clash —')
+        ? palette.dim(`locked clash ${state.bestClash}${clashProven ? ` ${glyphs.check}` : ''}`)
+        : palette.dim('locked clash —')
     const tone = activityTone(state.activity)
     const motion =
       redHistory.length > 1
@@ -506,26 +709,31 @@ export function createSolveSpinner(workers = cpus().length) {
         : brailleRibbon(tick, 16, tone)
     return [
       header('2/3 RED', 'minimize students with clashes'),
-      `  ${motion}  ${locked}  →  RED ${padNum(red)}  ${gapLabel(red, state.bound)}  ${act}`,
-      stepTrack(2),
+      `  ${motion}  ${locked}  ${glyphs.arrow}  RED ${metricRed(red, popRedTicks > 0)}  ` +
+        `${gapLabel(red, state.bound)}  ${act}`,
+      ...stepTrack(2),
     ]
   }
 
   const buildBalanceFrame = (): string[] => {
     const act = activityLabel(state.activity, state.secondsSinceImprove)
-    const locked = chalk.dim(
-      `locked clash ${state.bestClash ?? '—'}${clashProven ? ' ✓' : ''}` +
-        ` · RED ${state.bestRed ?? '—'}${redProven ? ' ✓' : ''}`,
+    const locked = palette.dim(
+      `locked clash ${state.bestClash ?? '—'}${clashProven ? ` ${glyphs.check}` : ''}` +
+        ` · RED ${state.bestRed ?? '—'}${redProven ? ` ${glyphs.check}` : ''}`,
     )
     const ribbon = brailleRibbon(tick, 14, activityTone(state.activity))
     return [
       header('3/3 Balance', 'spread load across weekdays'),
-      `  ${ribbon}  ${locked}  →  balance ${padNum(state.bestBalance)}  parallel ${padNum(state.bestParallelExcess)}  ${act}`,
-      stepTrack(3),
+      `  ${ribbon}  ${locked}  ${glyphs.arrow}  ` +
+        `balance ${padNum(state.bestBalance)}  parallel ${padNum(state.bestParallelExcess)}  ${act}`,
+      ...stepTrack(3),
     ]
   }
 
   const buildFrame = (): string[] => {
+    if (transition && transition.tick < transition.total) {
+      return transitionFrame(transition.name, transition.tick, transition.total)
+    }
     if (stage === 'pipeline') {
       return [
         `${spinGlyph()}  ${rawMessage}`,
@@ -548,7 +756,7 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 
   const paint = () => {
-    if (!dirty && stage === 'pipeline') return
+    if (!dirty && stage === 'pipeline' && !transition) return
     const lines = buildFrame()
     if (!panel.isTty) {
       const key = stripMotion(lines.join('\n'))
@@ -570,8 +778,8 @@ export function createSolveSpinner(workers = cpus().length) {
     const c = race?.bestClash ?? warmClash
     const r = race?.bestRed ?? warmRed
     panel.checkpoint(
-      chalk.bold('Portfolio race') +
-        chalk.dim(' · ') +
+      palette.bold('Portfolio race') +
+        palette.dim(` ${glyphs.dot} `) +
         `best clash ${c ?? '—'} · RED ${r ?? '—'}`,
     )
   }
@@ -586,6 +794,7 @@ export function createSolveSpinner(workers = cpus().length) {
       freezeLaneClocks()
       checkpointRace()
     }
+    startTransition('clash_enter')
     stage = 'clash'
     if (state.bestClash == null && warmClash != null) state.bestClash = warmClash
     if (state.bestRed == null && warmRed != null) state.bestRed = warmRed
@@ -597,10 +806,10 @@ export function createSolveSpinner(workers = cpus().length) {
   const enterLexStage = (next: Stage, phase: string, phaseLabel?: string) => {
     if (next === 'red' && stage === 'clash') {
       panel.checkpoint(
-        chalk.cyan('1/3 Clash') +
-          chalk.dim(' · ') +
+        palette.brand('1/3 Clash') +
+          palette.dim(` ${glyphs.dot} `) +
           `clash ${state.bestClash ?? '—'}` +
-          (clashProven ? chalk.green(' · proven minimal') : chalk.dim(' · best feasible')),
+          (clashProven ? palette.ok(' · proven minimal') : palette.dim(' · best feasible')),
       )
       state.bound = null
       state.activity = 'searching'
@@ -608,20 +817,20 @@ export function createSolveSpinner(workers = cpus().length) {
       state.solutions = 0
       clashHistory.length = 0
       redHistory.length = 0
+      startTransition('red_enter')
     } else if (next === 'balance' && (stage === 'red' || stage === 'clash')) {
       if (stage === 'clash') {
-        // Skipped red somehow — still checkpoint clash.
         panel.checkpoint(
-          chalk.cyan('1/3 Clash') +
-            chalk.dim(' · ') +
+          palette.brand('1/3 Clash') +
+            palette.dim(` ${glyphs.dot} `) +
             `clash ${state.bestClash ?? '—'}`,
         )
       }
       panel.checkpoint(
-        chalk.cyan('2/3 RED') +
-          chalk.dim(' · ') +
+        palette.brand('2/3 RED') +
+          palette.dim(` ${glyphs.dot} `) +
           `RED ${state.bestRed ?? '—'}` +
-          (redProven ? chalk.green(' · proven minimal') : chalk.dim(' · best feasible')),
+          (redProven ? palette.ok(' · proven minimal') : palette.dim(' · best feasible')),
       )
       state.bound = null
       state.bestBalance = null
@@ -629,6 +838,7 @@ export function createSolveSpinner(workers = cpus().length) {
       state.activity = 'searching'
       state.secondsSinceImprove = 0
       state.solutions = 0
+      startTransition('balance_enter')
     }
 
     stage = next
@@ -639,6 +849,14 @@ export function createSolveSpinner(workers = cpus().length) {
 
   const refresh = () => {
     tick++
+    if (transition) {
+      transition.tick++
+      if (transition.tick >= transition.total) {
+        transition = null
+      }
+    }
+    if (popClashTicks > 0) popClashTicks--
+    if (popRedTicks > 0) popRedTicks--
     dirty = true
     paint()
   }
@@ -647,6 +865,10 @@ export function createSolveSpinner(workers = cpus().length) {
     start(message = 'CP-SAT searching…') {
       stage = 'pipeline'
       rawMessage = message
+      if (!scanPlayed && /reading|workbook|enrollment/i.test(message)) {
+        scanPlayed = true
+        startTransition('scan')
+      }
       markDirty()
       if (!tickTimer) {
         tickTimer = setInterval(refresh, TICK_MS)
@@ -772,6 +994,10 @@ export function createSolveSpinner(workers = cpus().length) {
           state.activity = 'searching'
           state.workers = evt.workers
         } else {
+          if (!assemblePlayed) {
+            assemblePlayed = true
+            startTransition('assemble')
+          }
           state.phaseLabel = '1/3 Minimizing clashes'
           state.activity = 'searching'
         }
@@ -783,7 +1009,10 @@ export function createSolveSpinner(workers = cpus().length) {
         const lex = lexStageFromPhase(evt.phase)
         if (lex === 'clash') {
           if (stage === 'race' || (race && stage === 'pipeline')) enterClashProve()
-          else stage = 'clash'
+          else {
+            if (stage !== 'clash') startTransition('clash_enter')
+            stage = 'clash'
+          }
         } else if (lex === 'red' || lex === 'balance') {
           enterLexStage(lex, evt.phase, evt.phase_label)
           if (typeof evt.workers === 'number' && evt.workers > 0) state.workers = evt.workers
@@ -818,10 +1047,18 @@ export function createSolveSpinner(workers = cpus().length) {
         state.phaseLabel = evt.phase_label ?? evt.phase
         // Never wipe established metrics with null mid-phase heartbeats.
         if (evt.best_clash != null) {
+          if (prevBestClash != null && evt.best_clash < prevBestClash) {
+            popClashTicks = 6
+          }
+          prevBestClash = evt.best_clash
           state.bestClash = evt.best_clash
           pushHistory(clashHistory, evt.best_clash)
         }
         if (evt.best_red != null) {
+          if (prevBestRed != null && evt.best_red < prevBestRed) {
+            popRedTicks = 6
+          }
+          prevBestRed = evt.best_red
           state.bestRed = evt.best_red
           pushHistory(redHistory, evt.best_red)
         }
@@ -848,7 +1085,7 @@ export function createSolveSpinner(workers = cpus().length) {
         markDirty()
       }
     },
-    stop(finalMessage?: string) {
+    async stop(finalMessage?: string) {
       if (tickTimer) {
         clearInterval(tickTimer)
         tickTimer = null
@@ -865,6 +1102,21 @@ export function createSolveSpinner(workers = cpus().length) {
       }
       panel.finish(summary)
     },
+    /** Play the result stamp animation (TTY only), then return. */
+    async playStamp(status: string) {
+      if (!panel.isTty) return
+      const total = TRANSITION_TICKS.stamp
+      // Customize last frames with actual status.
+      for (let t = 0; t < total; t++) {
+        const lines = transitionFrame('stamp', t, total)
+        if (t >= total - 2) {
+          lines[0] = `${palette.bold('Status')}     ${palette.ok(`[${status}]`)}`
+        }
+        panel.paint(lines.map((l) => padLine(l)))
+        if (t < total - 1) await new Promise<void>((r) => setTimeout(r, TICK_MS))
+      }
+      panel.clear()
+    },
     cancel() {
       if (tickTimer) {
         clearInterval(tickTimer)
@@ -878,19 +1130,135 @@ export function createSolveSpinner(workers = cpus().length) {
 
 let bannerShown = false
 
-/** Idempotent: the mode menu prints the banner before commander re-dispatches into a subcommand. */
-export function banner(): void {
-  if (bannerShown) return
-  bannerShown = true
-  p.intro(chalk.bold.cyan('UniSlot') + chalk.dim(' · terminal CP-SAT scheduler'))
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((r) => setTimeout(r, ms))
 }
 
-export function outroSuccess(lines: string[]): void {
+function drawBannerFrame(step: number): string[] {
+  const width = 40
+  const { tl, tr, bl, br, h, v } = glyphs.box
+  const title = ' UniSlot '
+  const subtitle = '  terminal CP-SAT scheduler'
+  // step 0: left corner + growing top rule
+  // step 1: top complete + title
+  // step 2: body line
+  // step 3: bottom rule
+  const topFill = Math.max(0, width - 2 - visibleLen(title) - 1)
+  const top = `${tl}${h}${title}${h.repeat(topFill)}${tr}`
+  const mid = `${v}${subtitle.padEnd(width - 2)}${v}`
+  const bot = `${bl}${h.repeat(width - 2)}${br}`
+
+  if (step <= 0) {
+    const grow = Math.min(width - 2, 8)
+    return [palette.brand(`${tl}${h.repeat(grow)}`)]
+  }
+  if (step === 1) {
+    return [palette.brand(top)]
+  }
+  if (step === 2) {
+    return [palette.brand(top), palette.dim(mid)]
+  }
+  return [palette.brand(top), palette.dim(mid), palette.dim(bot)]
+}
+
+/** Animated banner draw-in (TTY). Falls back to a static intro on non-TTY. */
+export async function bannerAnimated(): Promise<void> {
+  if (bannerShown) return
+  bannerShown = true
+  const isTty = Boolean(process.stdout.isTTY)
+  if (isTty) {
+    process.stdout.write('\x1b[?25l')
+    let prevLines = 0
+    for (let step = 0; step <= 3; step++) {
+      const lines = drawBannerFrame(step)
+      if (prevLines > 0) {
+        process.stdout.write(`\x1b[${prevLines}A`)
+        for (let i = 0; i < prevLines; i++) process.stdout.write('\x1b[2K\n')
+        process.stdout.write(`\x1b[${prevLines}A`)
+      }
+      process.stdout.write(lines.join('\n') + '\n')
+      prevLines = lines.length
+      await sleep(150)
+    }
+    process.stdout.write('\x1b[?25h')
+  }
+  p.intro(palette.accent('UniSlot') + palette.dim(' · terminal CP-SAT scheduler'))
+}
+
+export async function outroSuccess(lines: string[]): Promise<void> {
+  const isTty = Boolean(process.stdout.isTTY)
+  if (isTty) {
+    const total = TRANSITION_TICKS.burst
+    process.stdout.write('\x1b[?25l')
+    let prev = 0
+    for (let t = 0; t < total; t++) {
+      const frame = transitionFrame('burst', t, total)
+      if (prev > 0) {
+        process.stdout.write(`\x1b[${prev}A`)
+        for (let i = 0; i < prev; i++) process.stdout.write('\x1b[2K\n')
+        process.stdout.write(`\x1b[${prev}A`)
+      }
+      process.stdout.write(frame.join('\n') + '\n')
+      prev = frame.length
+      if (t < total - 1) await sleep(TICK_MS)
+    }
+    // Clear burst before outro.
+    process.stdout.write(`\x1b[${prev}A`)
+    for (let i = 0; i < prev; i++) process.stdout.write('\x1b[2K\n')
+    process.stdout.write(`\x1b[${prev}A`)
+    process.stdout.write('\x1b[?25h')
+  }
   p.outro(lines.join('\n'))
 }
 
+/** Play write-exports sweep (TTY). Used around the export spinner stop. */
+export async function playWriteSweep(): Promise<void> {
+  await playTransition('write')
+}
+
 function levelMark(ok: boolean): string {
-  return ok ? chalk.green('✓ proven') : chalk.yellow('best found (not proven)')
+  return ok ? palette.ok(`${glyphs.check} proven`) : palette.warn('best found (not proven)')
+}
+
+/** Inner metrics lines (no box). Use with `showPanel` or `box`. */
+export function formatMetricsLines(opts: {
+  clashWeight: number
+  red: number
+  proven: boolean
+  provenLevels?: string[]
+  status: string
+  seconds: number
+  workers: number
+  structuralImpossible?: boolean
+}): string[] {
+  const levels = new Set(opts.provenLevels ?? [])
+  const clashOk = levels.has('clash_weight') || opts.proven
+  const redOk = levels.has('red_students')
+  const balOk = levels.has('balance_and_parallel')
+  const fullLex = clashOk && redOk && balOk
+  const proof = fullLex
+    ? palette.ok('full lex optimal — clash, RED, and balance are all proven minimal')
+    : opts.proven
+      ? palette.warn('clash proven · later lex levels not fully proven')
+      : palette.warn('best feasible (clash not fully proven)')
+  const row = (label: string, value: string, mark: string) => {
+    const left = `${palette.bold(label.padEnd(10))} ${value.padEnd(6)}`
+    return mark ? `${left}  ${mark}` : left
+  }
+  const aligned = [
+    row('Status', opts.status, ''),
+    row('Clash wt', String(opts.clashWeight), levelMark(clashOk)),
+    row('RED', String(opts.red), levelMark(redOk)),
+    row('Balance', '', levelMark(balOk)),
+    `${palette.bold('Proof'.padEnd(10))} ${proof}`,
+    `${palette.bold('Time'.padEnd(10))} ${opts.seconds.toFixed(2)}s · ${opts.workers} workers`,
+  ]
+  if (opts.structuralImpossible) {
+    aligned.push(
+      palette.dim('Note: structural lower bounds say zero-clash is impossible for this enrollment.'),
+    )
+  }
+  return aligned
 }
 
 export function formatMetrics(opts: {
@@ -903,28 +1271,16 @@ export function formatMetrics(opts: {
   workers: number
   structuralImpossible?: boolean
 }): string {
-  const levels = new Set(opts.provenLevels ?? [])
-  const clashOk = levels.has('clash_weight') || opts.proven
-  const redOk = levels.has('red_students')
-  const balOk = levels.has('balance_and_parallel')
-  const fullLex = clashOk && redOk && balOk
-  const proof = fullLex
-    ? chalk.green('full lex optimal — clash, RED, and balance are all proven minimal')
-    : opts.proven
-      ? chalk.yellow('clash proven · later lex levels not fully proven')
-      : chalk.yellow('best feasible (clash not fully proven)')
-  const structural = opts.structuralImpossible
-    ? chalk.dim('\n  Note: structural lower bounds say zero-clash is impossible for this enrollment.')
-    : ''
-  return [
-    `${chalk.bold('Status')}     ${opts.status}`,
-    `${chalk.bold('Clash wt')}   ${opts.clashWeight}  ${levelMark(clashOk)}`,
-    `${chalk.bold('RED')}        ${opts.red}  ${levelMark(redOk)}`,
-    `${chalk.bold('Balance')}    ${levelMark(balOk)}`,
-    `${chalk.bold('Proof')}      ${proof}`,
-    `${chalk.bold('Time')}       ${opts.seconds.toFixed(2)}s · ${opts.workers} workers`,
-    structural,
-  ]
-    .filter(Boolean)
-    .join('\n')
+  return box('Result', formatMetricsLines(opts))
+}
+
+/** Print a boxed panel to stdout (replaces p.note for result summaries). */
+export function showPanel(title: string, body: string): void {
+  const lines = body.split('\n').filter((l, i, arr) => !(l === '' && (i === 0 || i === arr.length - 1)))
+  // If body is already a box (starts with ╭), print as-is; otherwise wrap.
+  if (body.trimStart().startsWith(glyphs.box.tl) || body.trimStart().startsWith('╭')) {
+    process.stdout.write('\n' + body + '\n')
+    return
+  }
+  process.stdout.write('\n' + box(title, lines) + '\n')
 }

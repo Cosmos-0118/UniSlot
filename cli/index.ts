@@ -8,7 +8,15 @@ import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
 import { assertReadableFile, pickEnrollmentFile, pickOutputFolder, pickPreviousOutputFolder, assertSnapshotFolder } from './fileDialog.ts'
 import { formatReproToken, parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
-import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts'
+import {
+  bannerAnimated,
+  createSolveSpinner,
+  formatMetrics,
+  outroSuccess,
+  playWriteSweep,
+  showPanel,
+} from './ui.ts'
+import { palette, spinOk, spinWarn } from './theme.ts'
 import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
@@ -340,7 +348,7 @@ async function runRectify(opts: {
   skipPrompts?: boolean
   interactive: boolean
 }): Promise<number> {
-  banner()
+  await bannerAnimated()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
@@ -359,26 +367,36 @@ async function runRectify(opts: {
     const pick = p.spinner()
     pick.start('Pick original registration workbook…')
     baselinePath = (await pickEnrollmentFile('Select original registration Excel')) ?? undefined
-    pick.stop(baselinePath ? path.basename(baselinePath) : 'Cancelled')
+    pick.stop(
+      baselinePath ? spinOk(path.basename(baselinePath)) : spinWarn('Cancelled'),
+    )
   }
   if (!rectifiedPath && opts.interactive) {
     const pick = p.spinner()
     pick.start('Pick rectified registration workbook…')
     rectifiedPath =
       (await pickEnrollmentFile('Select rectified (updated) registration Excel')) ?? undefined
-    pick.stop(rectifiedPath ? path.basename(rectifiedPath) : 'Cancelled')
+    pick.stop(
+      rectifiedPath ? spinOk(path.basename(rectifiedPath)) : spinWarn('Cancelled'),
+    )
   }
   if (!previousDir && opts.interactive) {
     const pick = p.spinner()
     pick.start('Pick previous output folder…')
     previousDir = (await pickPreviousOutputFolder()) ?? undefined
-    pick.stop(previousDir ? path.basename(previousDir) : 'Cancelled')
+    pick.stop(
+      previousDir ? spinOk(path.basename(previousDir)) : spinWarn('Cancelled'),
+    )
   }
   if (!outDir && opts.interactive) {
     const pick = p.spinner()
     pick.start('Pick new output folder…')
     outDir = (await pickOutputFolder('Choose folder for rectified exports')) ?? undefined
-    pick.stop(outDir ? path.basename(outDir) : 'Cancelled — using ./unislot-out-rectified')
+    pick.stop(
+      outDir
+        ? spinOk(path.basename(outDir))
+        : spinWarn('Cancelled — using ./unislot-out-rectified'),
+    )
     outDir = outDir || path.join(process.cwd(), 'unislot-out-rectified')
   }
 
@@ -470,9 +488,9 @@ async function runRectify(opts: {
   const fixedDays = buildFixedDays(snapshot, newCourseCodes)
   const free = freeCourseCodes(newCourseCodes, fixedDays)
 
-  p.note(
-    formatEnrollmentDeltaSummary(enrollmentDelta, free, Object.keys(fixedDays).length),
+  showPanel(
     'Rectify preview',
+    formatEnrollmentDeltaSummary(enrollmentDelta, free, Object.keys(fixedDays).length),
   )
 
   if (enrollmentDelta.changed_students.length === 0 && free.length === 0) {
@@ -536,11 +554,11 @@ async function runRectify(opts: {
     }
 
     if (result.infeasible) {
-      spin.stop('Rectify blocked')
+      spin.stop(spinWarn('Rectify blocked'))
       p.log.error(result.infeasible_reason ?? 'Structural constraints violated')
       const violations = result.rectificationReport?.hard_constraint_violations ?? []
       if (violations.length > 1) {
-        p.note(violations.slice(0, 12).join('\n'), 'Structural violations')
+        showPanel('Structural violations', violations.slice(0, 12).join('\n'))
       }
       const files = await writeRectifyExports(outDir, result, {
         workers: requestedWorkers,
@@ -551,15 +569,15 @@ async function runRectify(opts: {
     }
 
     if (!result.schedule) {
-      spin.stop('Rectify failed')
+      spin.stop(spinWarn('Rectify failed'))
       return 1
     }
 
-    spin.stop(chalk.green('Rectify complete'))
+    spin.stop(spinOk('Rectify complete'))
 
     const report = result.rectificationReport
     if (report) {
-      p.note(formatRectifyResult(report, snapshot), 'Rectified')
+      showPanel('Rectified', formatRectifyResult(report, snapshot))
       if (report.placement_method === 'greedy-fallback') {
         p.log.warn(
           'CP-SAT was unavailable, so new courses were placed by the greedy fallback. Weekday balance is not guaranteed — re-run once the solver is available.',
@@ -580,18 +598,19 @@ async function runRectify(opts: {
       }
     }
 
+    await playWriteSweep()
     const writeSpin = p.spinner()
     writeSpin.start(`Writing rectified exports to ${outDir}…`)
     const files = await writeRectifyExports(outDir, result, {
       workers: requestedWorkers,
       seed: opts.seed,
     })
-    writeSpin.stop(`Wrote ${files.length} file(s)`)
+    writeSpin.stop(spinOk(`Wrote ${files.length} file(s)`))
 
-    outroSuccess([
-      chalk.green('Rectified schedule written.'),
-      chalk.dim(`Previous folder unchanged: ${previousDir}`),
-      ...files.map((f) => chalk.dim('  · ') + f),
+    await outroSuccess([
+      palette.ok('Rectified schedule written.'),
+      palette.dim(`Previous folder unchanged: ${previousDir}`),
+      ...files.map((f) => palette.dim('  · ') + f),
     ])
     return 0
   } catch (err) {
@@ -601,7 +620,7 @@ async function runRectify(opts: {
       p.cancel('Rectify cancelled.')
       return 130
     }
-    spin.stop('Failed')
+    spin.stop(spinWarn('Failed'))
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }
@@ -752,7 +771,7 @@ async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDe
       lines.push(`     ${formatProjectedLoads(opt.projected)}`)
       lines.push(`     ${opt.summary}`)
     }
-    p.note(lines.join('\n'), 'Capacity conflict')
+    showPanel('Capacity conflict', lines.join('\n'))
 
     const choice = await p.select({
       message: `Strategy for ${c.course_code}`,
@@ -820,7 +839,7 @@ async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]>
       lines.push(`  ${i + 1}  ${opt.label}`)
       lines.push(`     ${opt.summary}`)
     }
-    p.note(lines.join('\n'), 'Unavoidable clash')
+    showPanel('Unavoidable clash', lines.join('\n'))
 
     const choice = await p.select({
       message: `Clash decision for ${cl.register_number}`,
@@ -869,7 +888,7 @@ async function runLate(opts: {
   skipPrompts?: boolean
   interactive: boolean
 }): Promise<number> {
-  banner()
+  await bannerAnimated()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
@@ -883,19 +902,25 @@ async function runLate(opts: {
     const pick = p.spinner()
     pick.start('Pick previous output folder…')
     previousDir = (await pickPreviousOutputFolder()) ?? undefined
-    pick.stop(previousDir ? path.basename(previousDir) : 'Cancelled')
+    pick.stop(
+      previousDir ? spinOk(path.basename(previousDir)) : spinWarn('Cancelled'),
+    )
   }
   if (!latePath && opts.interactive) {
     const pick = p.spinner()
     pick.start('Pick late enrollments workbook…')
     latePath = (await pickEnrollmentFile('Select late enrollments Excel')) ?? undefined
-    pick.stop(latePath ? path.basename(latePath) : 'Cancelled')
+    pick.stop(latePath ? spinOk(path.basename(latePath)) : spinWarn('Cancelled'))
   }
   if (!outDir && opts.interactive) {
     const pick = p.spinner()
     pick.start('Pick new output folder…')
     outDir = (await pickOutputFolder('Choose folder for late-enrollment exports')) ?? undefined
-    pick.stop(outDir ? path.basename(outDir) : 'Cancelled — using ./unislot-out-late')
+    pick.stop(
+      outDir
+        ? spinOk(path.basename(outDir))
+        : spinWarn('Cancelled — using ./unislot-out-late'),
+    )
     outDir = outDir || path.join(process.cwd(), 'unislot-out-late')
   }
 
@@ -957,12 +982,12 @@ async function runLate(opts: {
   }
 
   if (lateParsed.validation.errors.length > 0 && opts.interactive && !opts.skipPrompts) {
-    p.note(
+    showPanel(
+      'Skipped / warning rows',
       lateParsed.validation.errors
         .slice(0, 12)
         .map((e) => `row ${e.row_number ?? '?'}: ${e.field} — ${e.message}`)
         .join('\n'),
-      'Skipped / warning rows',
     )
     const proceed = await p.confirm({
       message: 'Continue despite skipped/warning rows?',
@@ -1034,7 +1059,7 @@ async function runLate(opts: {
     )
 
     if (result.infeasible) {
-      spin.stop('Late merge blocked')
+      spin.stop(spinWarn('Late merge blocked'))
       p.log.error(result.infeasible_reason ?? 'Frozen invariants or structural constraints violated')
       const files = await writeLateExports(outDir, result, {
         workers: requestedWorkers,
@@ -1045,7 +1070,7 @@ async function runLate(opts: {
     }
 
     if (!result.schedule) {
-      spin.stop('Nothing to merge (or failed)')
+      spin.stop(spinWarn('Nothing to merge (or failed)'))
       if (result.lateReport == null) {
         p.log.warn('No late registrations to add.')
         return 0
@@ -1053,11 +1078,11 @@ async function runLate(opts: {
       return 1
     }
 
-    spin.stop(chalk.green('Late merge complete'))
+    spin.stop(spinOk('Late merge complete'))
 
     const report = result.lateReport
     if (report) {
-      p.note(formatLateResult(report), 'Late enrollment')
+      showPanel('Late enrollment', formatLateResult(report))
       if (report.clash_diff.introduced.length > 0 && opts.interactive && !opts.skipPrompts) {
         const proceed = await p.confirm({
           message: `Write exports despite ${report.clash_diff.introduced.length} newly introduced clash(es)?`,
@@ -1070,18 +1095,19 @@ async function runLate(opts: {
       }
     }
 
+    await playWriteSweep()
     const writeSpin = p.spinner()
     writeSpin.start(`Writing late exports to ${outDir}…`)
     const files = await writeLateExports(outDir, result, {
       workers: requestedWorkers,
       seed: opts.seed,
     })
-    writeSpin.stop(`Wrote ${files.length} file(s)`)
+    writeSpin.stop(spinOk(`Wrote ${files.length} file(s)`))
 
-    outroSuccess([
-      chalk.green('Late enrollments integrated.'),
-      chalk.dim(`Previous folder unchanged: ${previousDir}`),
-      ...files.map((f) => chalk.dim('  · ') + f),
+    await outroSuccess([
+      palette.ok('Late enrollments integrated.'),
+      palette.dim(`Previous folder unchanged: ${previousDir}`),
+      ...files.map((f) => palette.dim('  · ') + f),
     ])
     return 0
   } catch (err) {
@@ -1091,7 +1117,7 @@ async function runLate(opts: {
       p.cancel('Late merge cancelled.')
       return 130
     }
-    spin.stop('Failed')
+    spin.stop(spinWarn('Failed'))
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }
@@ -1115,7 +1141,7 @@ async function runSolve(opts: {
   skipPrompts?: boolean
   interactive: boolean
 }): Promise<number> {
-  banner()
+  await bannerAnimated()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
@@ -1226,7 +1252,11 @@ async function runSolve(opts: {
     const pick = p.spinner()
     pick.start('Opening file picker…')
     inputPath = (await pickEnrollmentFile()) ?? undefined
-    pick.stop(inputPath ? `Selected ${path.basename(inputPath)}` : 'Cancelled')
+    pick.stop(
+      inputPath
+        ? spinOk(`Selected ${path.basename(inputPath)}`)
+        : spinWarn('Cancelled'),
+    )
     if (!inputPath) {
       p.cancel('No enrollment file selected.')
       return 1
@@ -1328,28 +1358,31 @@ async function runSolve(opts: {
       Number(/(\d+)w$/.exec(result.schedule.solver_used)?.[1]) || requestedWorkers
     spin.stop(
       fullLex
-        ? chalk.green('CP-SAT finished — full lex optimal (clash · RED · balance)')
+        ? spinOk('CP-SAT finished — full lex optimal (clash · RED · balance)')
         : proven
-          ? chalk.green('CP-SAT finished — clash weight proven optimal')
-          : chalk.yellow('CP-SAT finished — best feasible solution'),
+          ? spinOk('CP-SAT finished — clash weight proven optimal')
+          : spinWarn('CP-SAT finished — best feasible solution'),
     )
 
-    p.note(
-      formatMetrics({
-        clashWeight,
-        red,
-        proven,
-        provenLevels,
-        status: result.solver_status ?? result.schedule.solver_used,
-        seconds: result.schedule.solver_time_seconds,
-        workers: workersUsed,
-        structuralImpossible: result.schedule.zero_clash_structurally_impossible,
-      }),
-      'Result',
+    const statusLabel = result.solver_status ?? result.schedule.solver_used
+    await spin.playStamp(statusLabel)
+    process.stdout.write(
+      '\n' +
+        formatMetrics({
+          clashWeight,
+          red,
+          proven,
+          provenLevels,
+          status: statusLabel,
+          seconds: result.schedule.solver_time_seconds,
+          workers: workersUsed,
+          structuralImpossible: result.schedule.zero_clash_structurally_impossible,
+        }) +
+        '\n',
     )
 
     if (result.schedule.lower_bound_notes?.length) {
-      p.note(result.schedule.lower_bound_notes.join('\n'), 'Lower bounds')
+      showPanel('Lower bounds', result.schedule.lower_bound_notes.join('\n'))
     }
 
     let outDir = opts.output
@@ -1367,7 +1400,9 @@ async function runSolve(opts: {
           const folderSpin = p.spinner()
           folderSpin.start('Opening folder picker…')
           outDir = (await pickOutputFolder()) ?? undefined
-          folderSpin.stop(outDir ? outDir : 'Cancelled — using ./unislot-out')
+          folderSpin.stop(
+            outDir ? spinOk(outDir) : spinWarn('Cancelled — using ./unislot-out'),
+          )
         }
       }
       outDir = outDir || path.join(process.cwd(), 'unislot-out')
@@ -1380,6 +1415,7 @@ async function runSolve(opts: {
       allowSaturdayForMath,
     })
 
+    await playWriteSweep()
     const writeSpin = p.spinner()
     writeSpin.start(`Writing exports to ${outDir}…`)
     const files = await writeExports(outDir, result, {
@@ -1390,30 +1426,30 @@ async function runSolve(opts: {
       ortools_version: result.ortools_version,
       python_version: result.python_version,
     })
-    writeSpin.stop(`Wrote ${files.length} file(s)`)
+    writeSpin.stop(spinOk(`Wrote ${files.length} file(s)`))
 
     const reproduceHint =
       portfolioK > 0 || opts.timeLimit != null || opts.provePlateau != null || opts.absoluteGap != null
-        ? chalk.dim(
+        ? palette.dim(
             `Repro token · ${finalToken} — reproducible only with --portfolio 0 and no time/plateau/gap escapes (same ortools/python versions).`,
           )
-        : chalk.dim(
+        : palette.dim(
             `Repro token · ${finalToken}\nSave this and enter it when prompted on any machine to reproduce this schedule.`,
           )
 
-    outroSuccess([
-      chalk.green('Done.'),
+    await outroSuccess([
+      palette.ok('Done.'),
       reproduceHint,
-      ...files.map((f) => chalk.dim('  · ') + f),
+      ...files.map((f) => palette.dim('  · ') + f),
       fullLex
-        ? chalk.green(
+        ? palette.ok(
             'Full lex optimal — clash, RED, and weekday balance are all proven best under this model.',
           )
         : proven
-          ? chalk.green(
+          ? palette.ok(
               'Clash weight is proven minimal — it is not possible to reduce clashes further under this model.',
             )
-          : chalk.yellow('Run again without --time-limit to chase a full optimality proof.'),
+          : palette.warn('Run again without --time-limit to chase a full optimality proof.'),
     ])
     return 0
   } catch (err) {
@@ -1430,7 +1466,7 @@ async function runSolve(opts: {
       return 130
     }
 
-    spin.stop('Failed')
+    spin.stop(spinWarn('Failed'))
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }
@@ -1453,7 +1489,7 @@ async function main(): Promise<void> {
 
   let argv = process.argv
   if (showModeMenu) {
-    banner()
+    await bannerAnimated()
     const mode = await promptRunMode()
     if (!mode) {
       p.cancel('Cancelled')
@@ -1697,7 +1733,7 @@ async function main(): Promise<void> {
     .command('doctor')
     .description('Check Python / OR-Tools / CP-SAT readiness')
     .action(async () => {
-      banner()
+      await bannerAnimated()
       const python = await ensurePythonReady()
       p.log.success(`Python: ${python}`)
       p.log.info(`Solver: ${path.join(CPSAT_DIR, 'solve.py')}`)
