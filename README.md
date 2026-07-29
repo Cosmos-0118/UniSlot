@@ -7,7 +7,7 @@ Terminal evening-course scheduler for universities. Upload an enrollment Excel w
 ## Prerequisites
 
 - Node.js 20+
-- Python 3.10+ (for OR-Tools)
+- Python 3.11–3.13 (setup prefers 3.12; pin with `UNISLOT_PYTHON_VERSION=3.12`)
 
 ## Install
 
@@ -22,7 +22,7 @@ npm run setup:cpsat    # creates solver/cpsat/.venv and installs ortools
 npm run unislot
 ```
 
-Interactive flow: native file picker → seed prompt (reuse or new) → parse → CP-SAT → export folder. Each run gets a seed; `summary.json` and `snapshot.json` record it (plus `workers` / `portfolio`) for reruns.
+Interactive flow: native file picker → seed / reproduction-token prompt (reuse or new) → parse → CP-SAT → export folder. Each run prints a **reproduction token** (`seed/workers/portfolio/sat`, e.g. `77/8/0/0`) and stores the same fields in `summary.json` / `snapshot.json` for reruns.
 
 Non-interactive (`-y` skips the seed prompt and auto-generates one):
 
@@ -30,13 +30,22 @@ Non-interactive (`-y` skips the seed prompt and auto-generates one):
 npm run unislot -- solve -i enrollment.xlsx -o ./unislot-out -y
 ```
 
-A new seed is generated automatically; check `summary.json` for the value. To reproduce a prior run:
+A new seed is generated automatically; check `summary.json` for `repro_token`. To reproduce a prior run interactively, enter that token when prompted. Or with flags:
 
 ```bash
 npm run unislot -- solve -i enrollment.xlsx -o ./unislot-out -y --seed 12345 --workers 8
 ```
 
-Use the same `--workers` as recorded in `summary.json`, keep `--portfolio 0` (default), and omit time/plateau/gap escapes. Seeded solves use CP-SAT interleaved search for multi-worker determinism.
+### Cross-device reproduction
+
+To get the **same schedule on another machine**:
+
+1. Enter the full reproduction token (`seed/workers/portfolio/sat`) when prompted — or pass matching `--seed` / `--workers` / `--portfolio 0`.
+2. Use the same enrollment input file.
+3. Keep `--portfolio 0` and omit `--time-limit` / `--prove-plateau` / `--absolute-gap`.
+4. Match OR-Tools and Python versions (`npm run setup:cpsat` pins both; `summary.json` records `ortools_version` and `python_version`).
+
+A plain seed number alone is still accepted, but workers then default to this machine's CPU count and the schedule may differ.
 
 Check the solver environment:
 

@@ -8,7 +8,7 @@ from pathlib import Path
 # Allow importing solve.py from the same directory when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from solve import configure_solver  # noqa: E402
+from solve import configure_solver, toolchain_info  # noqa: E402
 
 
 def test_seed_enables_interleaved_deterministic_search() -> None:
@@ -25,7 +25,16 @@ def test_unseeded_keeps_default_parallel_search() -> None:
     assert solver.parameters.interleave_search is False
 
 
+def test_toolchain_info_reports_versions() -> None:
+    tc = toolchain_info()
+    assert "python_version" in tc
+    assert "ortools_version" in tc
+    assert tc["python_version"].count(".") == 2
+    assert tc["ortools_version"]  # non-empty
+
+
 if __name__ == "__main__":
     test_seed_enables_interleaved_deterministic_search()
     test_unseeded_keeps_default_parallel_search()
+    test_toolchain_info_reports_versions()
     print("ok")

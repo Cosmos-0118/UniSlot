@@ -74,10 +74,37 @@ async function resolvePython() {
   const override = process.env.UNISLOT_PYTHON?.trim()
   if (override) return override
 
-  const candidates = ['python3.13', 'python3.12', 'python3.11', 'python3']
+  // Prefer a single pinned minor so both machines land on the same Python.
+  // Override with UNISLOT_PYTHON_VERSION=3.13 (etc.) when needed.
+  const pinnedMinor = process.env.UNISLOT_PYTHON_VERSION?.trim()
+  if (pinnedMinor) {
+    const [majS, minS] = pinnedMinor.split('.')
+    const wantMajor = Number(majS)
+    const wantMinor = Number(minS)
+    if (!Number.isInteger(wantMajor) || !Number.isInteger(wantMinor)) {
+      throw new Error(
+        `UNISLOT_PYTHON_VERSION must look like "3.12" (got "${pinnedMinor}")`,
+      )
+    }
+    const candidates = [`python${wantMajor}.${wantMinor}`, 'python3', 'python']
+    for (const cmd of candidates) {
+      const info = await probePython(cmd)
+      if (info && info.major === wantMajor && info.minor === wantMinor) {
+        console.log(`Pinned Python ${wantMajor}.${wantMinor} via UNISLOT_PYTHON_VERSION → ${cmd}`)
+        return cmd
+      }
+    }
+    throw new Error(
+      `No Python ${wantMajor}.${wantMinor} found (set UNISLOT_PYTHON or install python${wantMajor}.${wantMinor}).`,
+    )
+  }
+
+  // Default: prefer 3.12 for cross-device reproducibility, then nearby minors.
+  const candidates = ['python3.12', 'python3.13', 'python3.11', 'python3']
   for (const cmd of candidates) {
     const info = await probePython(cmd)
     if (info && info.major === 3 && info.minor >= 11 && info.minor <= 13) {
+      console.log(`Resolved Python ${info.major}.${info.minor} → ${cmd}`)
       return cmd
     }
   }

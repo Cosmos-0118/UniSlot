@@ -51,6 +51,8 @@ export type CpsatSolution = {
   num_workers: number
   message?: string
   error?: string
+  ortools_version?: string
+  python_version?: string
 }
 
 /** Present on events from a portfolio race member (multi-seed clash race). */
@@ -65,11 +67,19 @@ export type CpsatPortfolioMeta = {
 
 export type CpsatProgressEvent =
   | {
+      type: 'toolchain'
+      python_version: string
+      ortools_version: string
+      portfolio?: CpsatPortfolioMeta
+    }
+  | {
       type: 'start'
       workers: number
       courses: number
       edges?: number
       students?: number
+      python_version?: string
+      ortools_version?: string
       portfolio?: CpsatPortfolioMeta
     }
   | {

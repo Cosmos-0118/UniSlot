@@ -362,6 +362,10 @@ describe('CP-SAT solver smoke', () => {
       expect(first.slot_by_course).toEqual(second.slot_by_course)
       expect(first.total_clash_weight).toBe(second.total_clash_weight)
       expect(first.red_students).toBe(second.red_students)
+      expect(first.ortools_version).toMatch(/^\d+\.\d+/)
+      expect(first.python_version).toMatch(/^\d+\.\d+\.\d+$/)
+      expect(first.ortools_version).toBe(second.ortools_version)
+      expect(first.python_version).toBe(second.python_version)
     },
     180_000,
   )

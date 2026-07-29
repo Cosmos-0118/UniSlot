@@ -74,6 +74,8 @@ export type CpsatSchedulerResult = {
   status: string
   message?: string
   num_workers: number
+  ortools_version?: string
+  python_version?: string
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -280,7 +282,17 @@ export function spawnCpsatSolve(
         child = spawn(python, args, {
           cwd: CPSAT_DIR,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env },
+          env: {
+            ...process.env,
+            // Deterministic Python hash iteration across machines/processes.
+            PYTHONHASHSEED: '0',
+            // CP-SAT parallelism is driven by num_search_workers; keep native
+            // BLAS single-threaded so linear-algebra ordering does not vary.
+            OMP_NUM_THREADS: '1',
+            MKL_NUM_THREADS: '1',
+            OPENBLAS_NUM_THREADS: '1',
+            NUMEXPR_NUM_THREADS: '1',
+          },
           // Own process group so Ctrl+C is owned by Node and we can kill the tree.
           detached: process.platform !== 'win32',
           windowsHide: true,
@@ -568,6 +580,8 @@ export async function runCpsatScheduler(
     status: solution.status,
     message: solution.message,
     num_workers: solution.num_workers,
+    ortools_version: solution.ortools_version,
+    python_version: solution.python_version,
   }
 }
 

@@ -17,10 +17,19 @@ import traceback
 from typing import Any
 
 from ortools.sat.python import cp_model
+import ortools
 
 from model import BuiltModel, apply_hints, build_model
 
 HEARTBEAT_INTERVAL_S = 0.5
+
+
+def toolchain_info() -> dict[str, str]:
+    vi = sys.version_info
+    return {
+        "python_version": f"{vi.major}.{vi.minor}.{vi.micro}",
+        "ortools_version": getattr(ortools, "__version__", "unknown"),
+    }
 
 
 def emit(event: dict[str, Any]) -> None:
@@ -747,6 +756,8 @@ def main() -> int:
     with open(args.instance, encoding="utf-8") as f:
         instance = json.load(f)
 
+    tc = toolchain_info()
+    emit({"type": "toolchain", **tc})
     emit(
         {
             "type": "start",
@@ -759,6 +770,7 @@ def main() -> int:
             "absolute_gap": args.absolute_gap,
             "prove_plateau": args.prove_plateau,
             "full_prove": bool(args.prove),
+            **tc,
         }
     )
     try:
@@ -808,6 +820,7 @@ def main() -> int:
             gt.write(json.dumps({"event": "analysis", **analysis}, separators=(",", ":")) + "\n")
         emit({"type": "gap_analysis", **analysis})
     with open(args.output, "w", encoding="utf-8") as out:
+        result = {**result, **tc}
         json.dump(result, out, indent=2)
     emit(
         {
@@ -822,6 +835,7 @@ def main() -> int:
                     "stopped_for_plateau",
                 )
             },
+            **tc,
         }
     )
     return 0 if result.get("slot_by_course") else 1

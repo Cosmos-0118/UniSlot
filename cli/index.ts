@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
 import { assertReadableFile, pickEnrollmentFile, pickOutputFolder, pickPreviousOutputFolder, assertSnapshotFolder } from './fileDialog.ts'
-import { parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
+import { formatReproToken, parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
 import { banner, createSolveSpinner, formatMetrics, outroSuccess } from './ui.ts'
 import {
   CPSAT_DIR,
@@ -75,7 +75,14 @@ async function ensurePythonReady(): Promise<string> {
 async function writeExports(
   outDir: string,
   result: Awaited<ReturnType<typeof runPipeline>>,
-  meta: { seed: number; workers: number; portfolio: number },
+  meta: {
+    seed: number
+    workers: number
+    portfolio: number
+    allowSaturdayForMath: boolean
+    ortools_version?: string
+    python_version?: string
+  },
 ): Promise<string[]> {
   await mkdir(outDir, { recursive: true })
   const written: string[] = []
@@ -101,6 +108,9 @@ async function writeExports(
       seed: meta.seed,
       workers: meta.workers,
       portfolio: meta.portfolio,
+      allowSaturdayForMath: meta.allowSaturdayForMath,
+      ...(meta.ortools_version ? { ortools_version: meta.ortools_version } : {}),
+      ...(meta.python_version ? { python_version: meta.python_version } : {}),
     }
     await writeFile(fp, JSON.stringify(snapshot, null, 2), 'utf8')
     written.push(fp)
@@ -118,6 +128,15 @@ async function writeExports(
     seed: meta.seed,
     workers: meta.workers,
     portfolio: meta.portfolio,
+    allow_saturday_for_math: meta.allowSaturdayForMath,
+    repro_token: formatReproToken({
+      seed: meta.seed,
+      workers: meta.workers,
+      portfolio: meta.portfolio,
+      allowSaturdayForMath: meta.allowSaturdayForMath,
+    }),
+    ...(meta.ortools_version ? { ortools_version: meta.ortools_version } : {}),
+    ...(meta.python_version ? { python_version: meta.python_version } : {}),
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
@@ -1086,9 +1105,32 @@ async function runSolve(opts: {
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
-  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+
+  const seedResult = await resolveRunSeed({
+    interactive: !opts.skipPrompts && opts.seed === undefined,
+    seed: opts.seed,
+  })
+  if ('cancelled' in seedResult) {
+    p.cancel('Cancelled')
+    return 1
+  }
+  const { seed, reused, plainSeedOnly } = seedResult
+
+  // Flag > token > machine CPU count. Token workers override cpus().length on reuse.
+  const requestedWorkers =
+    opts.workers && opts.workers > 0
+      ? opts.workers
+      : seedResult.workers && seedResult.workers > 0
+        ? seedResult.workers
+        : cpuN
   const workersLabel = String(requestedWorkers)
-  const portfolioK = opts.portfolio === undefined ? 0 : Math.max(0, Math.floor(opts.portfolio))
+  const portfolioK =
+    opts.portfolio !== undefined
+      ? Math.max(0, Math.floor(opts.portfolio))
+      : seedResult.portfolio !== undefined
+        ? Math.max(0, Math.floor(seedResult.portfolio))
+        : 0
+
   if (portfolioK > 0) {
     const memberW = Math.max(2, Math.floor(requestedWorkers / portfolioK))
     p.log.info(
@@ -1101,7 +1143,18 @@ async function runSolve(opts: {
     p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)
   }
 
+  if (plainSeedOnly && reused && !(opts.workers && opts.workers > 0)) {
+    p.log.warn(
+      `Reusing seed ${seed} alone — workers will default to this machine's CPU count (${requestedWorkers}). ` +
+        `If the original run used a different worker count, the schedule will NOT reproduce. ` +
+        `Use the full token seed/workers/portfolio/sat, or pass --workers.`,
+    )
+  }
+
   let allowSaturdayForMath = opts.saturday
+  if (allowSaturdayForMath === undefined && seedResult.allowSaturdayForMath !== undefined) {
+    allowSaturdayForMath = seedResult.allowSaturdayForMath
+  }
   if (allowSaturdayForMath === undefined) {
     if (opts.interactive) {
       const answer = await p.confirm({
@@ -1123,19 +1176,16 @@ async function runSolve(opts: {
       : 'Saturday · blocked (Mon–Fri only)',
   )
 
-  const seedResult = await resolveRunSeed({
-    interactive: !opts.skipPrompts && opts.seed === undefined,
-    seed: opts.seed,
+  const reproToken = formatReproToken({
+    seed,
+    workers: requestedWorkers,
+    portfolio: portfolioK,
+    allowSaturdayForMath,
   })
-  if ('cancelled' in seedResult) {
-    p.cancel('Cancelled')
-    return 1
-  }
-  const { seed, reused } = seedResult
   p.log.info(
     reused
-      ? `Seed   · ${seed} (reused from previous run)`
-      : `Seed   · ${seed} (new run — save this to reproduce with --seed ${seed})`,
+      ? `Seed   · ${reproToken} (reused from previous run)`
+      : `Seed   · ${reproToken} (new run — save this token to reproduce)`,
   )
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
@@ -1185,7 +1235,7 @@ async function runSolve(opts: {
   const ac = new AbortController()
   let forceQuit = false
   let quitting = false
-  const spin = createSolveSpinner(opts.workers && opts.workers > 0 ? opts.workers : cpus().length)
+  const spin = createSolveSpinner(requestedWorkers)
 
   const onSigInt = () => {
     if (forceQuit) {
@@ -1227,7 +1277,7 @@ async function runSolve(opts: {
       },
       {
         cpsatTimeLimitSeconds: opts.timeLimit,
-        cpsatWorkers: opts.workers,
+        cpsatWorkers: requestedWorkers,
         cpsatPortfolio: portfolioK,
         cpsatAbsoluteGap: opts.absoluteGap,
         cpsatProvePlateauSeconds: opts.provePlateau,
@@ -1261,8 +1311,7 @@ async function runSolve(opts: {
       provenLevels.includes('red_students') &&
       provenLevels.includes('balance_and_parallel')
     const workersUsed =
-      Number(/(\d+)w$/.exec(result.schedule.solver_used)?.[1]) ||
-      (opts.workers && opts.workers > 0 ? opts.workers : cpus().length)
+      Number(/(\d+)w$/.exec(result.schedule.solver_used)?.[1]) || requestedWorkers
     spin.stop(
       fullLex
         ? chalk.green('CP-SAT finished — full lex optimal (clash · RED · balance)')
@@ -1310,22 +1359,32 @@ async function runSolve(opts: {
       outDir = outDir || path.join(process.cwd(), 'unislot-out')
     }
 
+    const finalToken = formatReproToken({
+      seed,
+      workers: workersUsed,
+      portfolio: portfolioK,
+      allowSaturdayForMath,
+    })
+
     const writeSpin = p.spinner()
     writeSpin.start(`Writing exports to ${outDir}…`)
     const files = await writeExports(outDir, result, {
       seed,
       workers: workersUsed,
       portfolio: portfolioK,
+      allowSaturdayForMath,
+      ortools_version: result.ortools_version,
+      python_version: result.python_version,
     })
     writeSpin.stop(`Wrote ${files.length} file(s)`)
 
     const reproduceHint =
       portfolioK > 0 || opts.timeLimit != null || opts.provePlateau != null || opts.absoluteGap != null
         ? chalk.dim(
-            `Seed ${seed} recorded — reproducible only with --portfolio 0, same --workers ${workersUsed}, and no time/plateau/gap escapes.`,
+            `Repro token · ${finalToken} — reproducible only with --portfolio 0 and no time/plateau/gap escapes (same ortools/python versions).`,
           )
         : chalk.dim(
-            `Seed ${seed} — reuse with --seed ${seed} --workers ${workersUsed} (same machine settings) to reproduce this schedule.`,
+            `Repro token · ${finalToken}\nSave this and enter it when prompted on any machine to reproduce this schedule.`,
           )
 
     outroSuccess([

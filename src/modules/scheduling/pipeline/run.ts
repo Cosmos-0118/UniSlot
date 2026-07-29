@@ -147,6 +147,8 @@ export interface PipelineResult {
   proven_levels?: string[]
   solver_status?: string
   solver_message?: string
+  ortools_version?: string
+  python_version?: string
 }
 
 async function buildEagerExportsSequential(
@@ -422,6 +424,8 @@ export async function runPipeline(
   const solverMessage = cpsat.message
   const solverUsed = cpsat.solver_used
   const solverTimeSeconds = cpsat.solver_time_seconds
+  const ortoolsVersion = cpsat.ortools_version
+  const pythonVersion = cpsat.python_version
 
   const flatSectionsEarly = Object.values(courseSections).flat()
   const schedulingStatsPreview = computeSchedulingStats(
@@ -510,6 +514,10 @@ export async function runPipeline(
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(solverSeed !== undefined ? { seed: solverSeed } : {}),
+    workers,
+    ...(portfolio !== undefined ? { portfolio } : {}),
+    ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
+    ...(pythonVersion ? { python_version: pythonVersion } : {}),
     section_lanes: Object.fromEntries(schedule.entries.map((e) => [e.section_id, e.slot_band])),
     run_log: runLog,
     clash_provenance: clashProvenance,
@@ -576,5 +584,7 @@ export async function runPipeline(
     proven_levels: provenLevels,
     solver_status: solverStatus,
     solver_message: solverMessage,
+    ortools_version: ortoolsVersion,
+    python_version: pythonVersion,
   }
 }

@@ -86,13 +86,27 @@ npm run unislot -- solve `
 
 Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural clash/RED lower bounds as model cuts.
 
-**Seeds:** Each run gets a seed (shown at the end and stored in `summary.json` / `snapshot.json`). To reproduce the same schedule:
+**Seeds / reproduction tokens:** Each run prints a reproduction token `seed/workers/portfolio/sat` (e.g. `77/8/0/0`) and stores the same fields in `summary.json` / `snapshot.json` (`repro_token`, `seed`, `workers`, `portfolio`, `allow_saturday_for_math`). To reproduce the same schedule:
+
+Interactive: answer yes to the seed prompt and paste the full token.
+
+Or with flags:
 
 ```powershell
 npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
 ```
 
-Use the same `--workers` as the original run (`summary.json` records `workers` and `portfolio`). Keep `--portfolio 0` (the default) and omit `--time-limit` / `--prove-plateau` / `--absolute-gap`. Interactive mode can still prompt for a prior seed if you do not pass `--seed`. With `-y` and no `--seed`, a fresh seed is generated automatically.
+Use the same `--workers` as the original run. Keep `--portfolio 0` (the default) and omit `--time-limit` / `--prove-plateau` / `--absolute-gap`. With `-y` and no `--seed`, a fresh seed is generated automatically.
+
+### Cross-device reproduction
+
+The token's `workers` field overrides the current machine's CPU count, so entering `77/8/0/0` on any device uses 8 workers. Also match:
+
+- Same enrollment input file
+- Same OR-Tools version and Python minor (`npm run setup:cpsat` pins them; check `ortools_version` / `python_version` in `summary.json`)
+- No time/plateau/gap escapes
+
+A plain seed number alone is still accepted, but the CLI warns that workers will default to this machine's CPU count and may not reproduce.
 
 When a seed is set, CP-SAT uses interleaved deterministic search so multi-worker solves are reproducible. A portfolio race (`--portfolio k` with `k>0`) uses a wall-clock budget and will not reproduce from seed alone.
 
@@ -109,9 +123,12 @@ When a seed is set, CP-SAT uses interleaved deterministic search so multi-worker
 In `summary.json`, the important fields are:
 
 - `status` — solver status string
-- `seed` — run seed (reuse with `--seed` to reproduce the schedule)
+- `repro_token` — compact `seed/workers/portfolio/sat` string to paste when prompted
+- `seed` — run seed (reuse with `--seed` or the full token to reproduce)
 - `workers` — CP-SAT worker count used (match on rerun)
 - `portfolio` — portfolio race size (`0` = off)
+- `allow_saturday_for_math` — whether Saturday was enabled for maths
+- `ortools_version` / `python_version` — toolchain used (match for cross-device repro)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash
 - `proven_optimal` — `true` means clash weight is proven minimal under the course→weekday model

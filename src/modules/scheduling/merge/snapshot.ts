@@ -33,6 +33,10 @@ export type SchedulingSnapshot = {
   workers?: number
   /** Portfolio race size used (0 = off). */
   portfolio?: number
+  /** OR-Tools version used for this run (match on rerun for cross-device repro). */
+  ortools_version?: string
+  /** Python version used for this run (match on rerun for cross-device repro). */
+  python_version?: string
   /** Whether Saturday evening was available for maths courses in this run. */
   allowSaturdayForMath?: boolean
   /** Accumulated late enrollments across batches. */
@@ -81,6 +85,8 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     seed: s.seed,
     workers: s.workers,
     portfolio: s.portfolio,
+    ortools_version: s.ortools_version,
+    python_version: s.python_version,
     allowSaturdayForMath: s.allowSaturdayForMath,
     late_enrollments: s.late_enrollments?.map((r) => ({ ...r })),
     run_log: cloneRunLog(s.run_log),
