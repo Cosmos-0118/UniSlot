@@ -108,6 +108,14 @@ export type {
 } from './merge/rectifyDiff'
 export { describePlacements, diffClashReports, diffSectionCounts } from './merge/rectifyDiff'
 export { parseExcelRows, loadAndValidate } from './parse/parser'
+export type { FilterScheduleResult } from './io/excelScheduleReader'
+export {
+  normalizeCourseCodeList,
+  filterScheduleEntries,
+  scheduleFromFilteredEntries,
+  readScheduleEntriesFromBuffer,
+  readScheduleEntriesFromFile,
+} from './io/excelScheduleReader'
 export type { ScheduleAudit } from './solver/hardConstraints'
 export {
   auditScheduleHardConstraints,

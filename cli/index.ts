@@ -61,6 +61,13 @@ import {
   normalizeSaturdayExtraCodes,
   slotIndexToDay,
 } from '../src/modules/scheduling/solver/timeModel.ts'
+import {
+  filterScheduleEntries,
+  normalizeCourseCodeList,
+  readScheduleEntriesFromFile,
+  scheduleFromFilteredEntries,
+} from '../src/modules/scheduling/io/excelScheduleReader.ts'
+import { scheduleToWorkbookBuffer } from '../src/modules/scheduling/io/excelScheduleWorkbook.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -352,17 +359,130 @@ function formatRectifyResult(
   return lines.join('\n')
 }
 
-async function promptRunMode(): Promise<'solve' | 'rectify' | 'late' | null> {
+async function promptRunMode(): Promise<'solve' | 'rectify' | 'late' | 'filter' | null> {
   const mode = await p.select({
     message: 'What would you like to do?',
     options: [
       { value: 'solve', label: 'Create schedule' },
       { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
       { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
+      { value: 'filter', label: 'Filter schedule by course codes' },
     ],
   })
   if (p.isCancel(mode)) return null
-  return mode as 'solve' | 'rectify' | 'late'
+  return mode as 'solve' | 'rectify' | 'late' | 'filter'
+}
+
+async function promptFilterCourseCodes(initial = ''): Promise<string[] | 'cancelled'> {
+  const answer = await p.text({
+    message: 'Course codes to keep (comma- or newline-separated)',
+    placeholder: 'e.g. 21CSC203P, 21CSE251T, 21CSE254T',
+    initialValue: initial,
+    validate: (v) => {
+      if (!normalizeCourseCodeList(String(v ?? '')).length) {
+        return 'Enter at least one course code'
+      }
+    },
+  })
+  if (p.isCancel(answer)) return 'cancelled'
+  return normalizeCourseCodeList(String(answer ?? ''))
+}
+
+async function runFilter(opts: {
+  input?: string
+  codes?: string
+  output?: string
+  skipPrompts?: boolean
+  interactive: boolean
+}): Promise<number> {
+  await bannerAnimated()
+
+  let inputPath = opts.input
+  let outDir = opts.output
+  let codes = normalizeCourseCodeList(opts.codes)
+
+  if (!inputPath && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick final schedule workbook…')
+    inputPath = (await pickEnrollmentFile('Select final schedule.xlsx')) ?? undefined
+    pick.stop(inputPath ? spinOk(path.basename(inputPath)) : spinWarn('Cancelled'))
+  }
+  if (!inputPath) {
+    p.log.error('No schedule.xlsx provided. Use -i or pick a file.')
+    return 1
+  }
+  try {
+    await assertReadableFile(inputPath)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  if (!codes.length && opts.interactive && !opts.skipPrompts) {
+    const prompted = await promptFilterCourseCodes()
+    if (prompted === 'cancelled') {
+      p.cancel('Cancelled')
+      return 1
+    }
+    codes = prompted
+  }
+  if (!codes.length) {
+    p.log.error('No course codes provided. Use -c or enter codes when prompted.')
+    return 1
+  }
+
+  if (!outDir && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Choose output folder…')
+    outDir = (await pickOutputFolder('Choose folder for filtered schedule')) ?? undefined
+    pick.stop(outDir ? spinOk(outDir) : spinWarn('Using default'))
+  }
+  outDir = outDir || path.join(process.cwd(), 'unislot-filtered')
+
+  try {
+    const parseSpin = p.spinner()
+    parseSpin.start('Reading schedule…')
+    const entries = await readScheduleEntriesFromFile(inputPath)
+    parseSpin.stop(spinOk(`${entries.length} section(s) in source`))
+
+    const filtered = filterScheduleEntries(entries, codes)
+    if (filtered.kept === 0) {
+      p.log.error(
+        `None of the ${codes.length} requested code(s) appear in the schedule. Check codes and try again.`,
+      )
+      if (filtered.missingCodes.length) {
+        p.log.info(`Missing: ${filtered.missingCodes.join(', ')}`)
+      }
+      return 1
+    }
+
+    p.log.info(
+      `Kept ${filtered.kept} section(s) · dropped ${filtered.dropped} · ` +
+        `${new Set(filtered.entries.map((e) => e.course_code)).size} course(s)`,
+    )
+    if (filtered.missingCodes.length) {
+      p.log.warn(`Not in schedule: ${filtered.missingCodes.join(', ')}`)
+    }
+
+    await playWriteSweep()
+    const writeSpin = p.spinner()
+    writeSpin.start(`Writing filtered schedule to ${outDir}…`)
+    await mkdir(outDir, { recursive: true })
+    const schedule = scheduleFromFilteredEntries(filtered.entries)
+    const buf = await scheduleToWorkbookBuffer(schedule)
+    const fp = path.join(outDir, 'schedule.xlsx')
+    await writeFile(fp, Buffer.from(buf))
+    writeSpin.stop(spinOk('Wrote schedule.xlsx'))
+
+    await outroSuccess([
+      palette.ok('Filtered schedule ready.'),
+      palette.dim('  · ') + fp,
+    ])
+    return 0
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
 }
 
 async function runRectify(opts: {
@@ -1550,7 +1670,11 @@ async function runSolve(opts: {
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const hasExplicitSubcommand =
-    args[0] === 'doctor' || args[0] === 'rectify' || args[0] === 'solve' || args[0] === 'late'
+    args[0] === 'doctor' ||
+    args[0] === 'rectify' ||
+    args[0] === 'solve' ||
+    args[0] === 'late' ||
+    args[0] === 'filter'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -1821,6 +1945,26 @@ async function main(): Promise<void> {
         })
       },
     )
+
+  program
+    .command('filter')
+    .description(
+      'Filter a final schedule.xlsx to only the listed course codes (same layout, subset of courses)',
+    )
+    .option('-i, --input <file>', 'Final schedule.xlsx path')
+    .option('-c, --codes <list>', 'Course codes to keep (comma- or newline-separated)')
+    .option('-o, --output <dir>', 'Output directory for filtered schedule.xlsx')
+    .option('-y, --yes', 'Non-interactive when paths and codes are provided', false)
+    .action(async (flags: { input?: string; codes?: string; output?: string; yes?: boolean }) => {
+      const interactive = !flags.yes && (!flags.input || !flags.codes)
+      process.exitCode = await runFilter({
+        input: flags.input,
+        codes: flags.codes,
+        output: flags.output,
+        skipPrompts: Boolean(flags.yes),
+        interactive: interactive || !flags.input,
+      })
+    })
 
   program
     .command('doctor')
