@@ -1,5 +1,12 @@
 import type { Section } from '../types'
-import { SATURDAY_SLOT_INDEX, TOTAL_WEEKLY_SLOTS, isMathCourse, slotIndexToDay } from './timeModel'
+import {
+  SATURDAY_SLOT_INDEX,
+  TOTAL_WEEKLY_SLOTS,
+  isSaturdayEligible,
+  normalizeSaturdayExtraCodes,
+  saturdaySlotOpen,
+  slotIndexToDay,
+} from './timeModel'
 
 /**
  * Parallel load is a soft comfort target (~11), not a hard fence.
@@ -51,9 +58,15 @@ export function auditScheduleHardConstraints(
   slotAssignments: Record<string, number>,
   _parallelCap: number,
   facultyConstraints: Record<string, string[]>,
-  options?: { allowSaturdayForMath?: boolean; waivedSectionIds?: Set<string> },
+  options?: {
+    allowSaturdayForMath?: boolean
+    saturdayExtraCourseCodes?: string[]
+    waivedSectionIds?: Set<string>
+  },
 ): ScheduleAudit {
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
+  const saturdayExtras = normalizeSaturdayExtraCodes(options?.saturdayExtraCourseCodes)
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtras)
   const waived = options?.waivedSectionIds ?? new Set<string>()
   const structuralViolations: string[] = []
   const studentOverlapViolations: string[] = []
@@ -114,13 +127,13 @@ export function auditScheduleHardConstraints(
 
   for (const [code, slot] of Object.entries(slotByCourse)) {
     if (slot !== SATURDAY_SLOT_INDEX) continue
-    if (!allowSaturdayForMath) {
+    if (!saturdayOpen) {
       structuralViolations.push(
         `Course ${code}: assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is temporarily blocked`,
       )
-    } else if (!isMathCourse(code)) {
+    } else if (!isSaturdayEligible(code, allowSaturdayForMath, saturdayExtras)) {
       structuralViolations.push(
-        `Course ${code}: non-mathematics course assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is reserved for mathematics courses`,
+        `Course ${code}: course assigned to Saturday (slot ${SATURDAY_SLOT_INDEX}); Saturday is reserved for mathematics courses or explicitly allowlisted codes`,
       )
     }
   }

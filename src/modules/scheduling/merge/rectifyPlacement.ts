@@ -3,8 +3,10 @@ import { computeClashWeight } from '../solver/conflictGraph'
 import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
 import {
   activeWeekdayCount,
-  isMathCourse,
+  isSaturdayEligible,
   maxSlotIndexForCourse,
+  normalizeSaturdayExtraCodes,
+  saturdaySlotOpen,
   SATURDAY_SLOT_INDEX,
   slotIndexToDay,
 } from '../solver/timeModel'
@@ -58,25 +60,35 @@ export function preflightRectify(args: {
   courseSections: Record<string, Section[]>
   facultyConstraints: Record<string, string[]>
   allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes?: string[]
 }): RectifyPreflight {
-  const { fixedDays, freeCourses, courseSections, facultyConstraints, allowSaturdayForMath } = args
+  const {
+    fixedDays,
+    freeCourses,
+    courseSections,
+    facultyConstraints,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+  } = args
+  const saturdayExtras = normalizeSaturdayExtraCodes(saturdayExtraCourseCodes)
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtras)
   const blockers: string[] = []
-  const weekdays = activeWeekdayCount(allowSaturdayForMath)
+  const weekdays = activeWeekdayCount(allowSaturdayForMath, saturdayExtras)
   const facultyByCourse = buildFacultyByCourse(courseSections, facultyConstraints)
 
   for (const [code, day] of Object.entries(fixedDays)) {
     if (!Number.isInteger(day) || day < 0 || day >= weekdays) {
       blockers.push(
         `Course ${code} is pinned to slot ${day}, outside the ${weekdays} active weekday(s)` +
-          (day === SATURDAY_SLOT_INDEX && !allowSaturdayForMath
+          (day === SATURDAY_SLOT_INDEX && !saturdayOpen
             ? ' — the previous run used Saturday but Saturday is now blocked.'
             : '.'),
       )
       continue
     }
-    if (day === SATURDAY_SLOT_INDEX && !isMathCourse(code)) {
+    if (day === SATURDAY_SLOT_INDEX && !isSaturdayEligible(code, allowSaturdayForMath, saturdayExtras)) {
       blockers.push(
-        `Course ${code} is pinned to Saturday but is not a mathematics course; Saturday is maths-only.`,
+        `Course ${code} is pinned to Saturday but is not eligible; Saturday is for maths (when enabled) or explicitly allowlisted codes.`,
       )
     }
   }
@@ -98,7 +110,10 @@ export function preflightRectify(args: {
 
   const facultyOnDay = facultyDaysFromPinned(fixedDays, facultyByCourse)
   for (const code of freeCourses) {
-    const maxDay = Math.min(maxSlotIndexForCourse(code, allowSaturdayForMath), weekdays - 1)
+    const maxDay = Math.min(
+      maxSlotIndexForCourse(code, allowSaturdayForMath, saturdayExtras),
+      weekdays - 1,
+    )
     if (maxDay < 0) {
       blockers.push(`Course ${code} has no available weekday under the current Saturday policy.`)
       continue
@@ -137,12 +152,14 @@ export function placeFreeCourseWeekdays(
   conflictGraph: ConflictGraph,
   facultyConstraints: Record<string, string[]>,
   allowSaturdayForMath: boolean,
+  saturdayExtraCourseCodes: readonly string[] = [],
 ): PlaceFreeCoursesResult | null {
   if (freeCodes.length === 0) {
     return { slot_by_course: { ...fixedDays }, clash_weight: 0 }
   }
 
-  const weekdays = activeWeekdayCount(allowSaturdayForMath)
+  const saturdayExtras = normalizeSaturdayExtraCodes([...saturdayExtraCourseCodes])
+  const weekdays = activeWeekdayCount(allowSaturdayForMath, saturdayExtras)
   const facultyByCourse = buildFacultyByCourse(courseSections, facultyConstraints)
   const facultyOnDay = facultyDaysFromPinned(fixedDays, facultyByCourse)
 
@@ -154,7 +171,10 @@ export function placeFreeCourseWeekdays(
   }
 
   for (const code of freeCodes) {
-    const maxDay = Math.min(maxSlotIndexForCourse(code, allowSaturdayForMath), weekdays - 1)
+    const maxDay = Math.min(
+      maxSlotIndexForCourse(code, allowSaturdayForMath, saturdayExtras),
+      weekdays - 1,
+    )
     const faculty = facultyByCourse.get(code)
     const sections = courseSections[code]
     if (!sections) continue

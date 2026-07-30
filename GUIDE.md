@@ -33,7 +33,7 @@ Required ideas:
 - Optional faculty, email, mobile
 
 Full column rules and alternates: [docs/excel_schema.md](docs/excel_schema.md).  
-Scheduling rules (Saturday maths-only, section splits, clash definition): [docs/Constraints.md](docs/Constraints.md).
+Scheduling rules (Saturday for maths when enabled, plus optional allowlisted codes): [docs/Constraints.md](docs/Constraints.md).
 
 ## 3. Interactive solve (recommended)
 
@@ -44,8 +44,9 @@ npm run unislot
 What happens:
 
 1. **File picker** — choose the enrollment `.xlsx` (macOS / Windows / Linux dialogs).
-2. **Parse** — row counts, students, courses.
-3. **CP-SAT search** — a live multi-line panel with short stage-transition animations. Example:
+2. **Saturday policy** — confirm whether maths may use Saturday, then optionally enter extra course codes (comma-separated) that may also use Saturday even if maths Saturday is off.
+3. **Parse** — row counts, students, courses.
+4. **CP-SAT search** — a live multi-line panel with short stage-transition animations. Example:
 
    ```text
    ⠋ 1/3 Clash  minimize clash weight  ·  10w  ·  2m 05s
@@ -63,8 +64,8 @@ What happens:
 
    Short intro / stage / result / outro animations play on a TTY; they are skipped in non-interactive logs.
 
-4. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED count, whether clashes are proven minimal.
-5. **Output folder** — optional folder picker, or default `./unislot-out/`.
+5. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED count, whether clashes are proven minimal.
+6. **Output folder** — optional folder picker, or default `./unislot-out/`.
 
 Cancel anytime with **Ctrl+C**.
 
@@ -84,6 +85,8 @@ npm run unislot -- solve `
 | `-i, --input <file>` | Enrollment `.xlsx` |
 | `-o, --output <dir>` | Export directory |
 | `-y, --yes` | Skip interactive prompts when paths are given |
+| `--saturday` / `--no-saturday` | Allow or block Saturday for maths |
+| `--saturday-codes <list>` | Extra course codes allowed on Saturday (comma-separated), independent of maths |
 | `--seed <n>` | Reuse a prior run seed (skips seed prompt; works with `-y`) |
 | `--workers <n>` | CP-SAT workers for the prove phase (default: all CPUs) |
 | `--portfolio <k>` | Multi-seed clash race before prove (default: `0`; `k>0` enables but breaks seed reproducibility) |
@@ -133,6 +136,7 @@ In `summary.json`, the important fields are:
 - `workers` — CP-SAT worker count used (match on rerun)
 - `portfolio` — portfolio race size (`0` = off)
 - `allow_saturday_for_math` — whether Saturday was enabled for maths
+- `saturday_extra_course_codes` — optional comma-entered course codes independently allowed on Saturday
 - `ortools_version` / `python_version` — toolchain used (match for cross-device repro)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash

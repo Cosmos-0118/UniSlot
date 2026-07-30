@@ -6,6 +6,7 @@ import {
   buildFixedDays,
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
+  inferSaturdayExtrasFromSnapshot,
   extractCourseSlotsFromSnapshot,
 } from '../merge/enrollmentDelta'
 import { placeFreeCourseWeekdays, preflightRectify } from '../merge/rectifyPlacement'
@@ -120,6 +121,7 @@ export type RunLateOptions = {
   cpsatProvePlateauSeconds?: number
   cpsatFullProve?: boolean
   allowSaturdayForMath?: boolean
+  saturdayExtraCourseCodes?: string[]
   eagerExports?: boolean
   eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
   programNomenclatureXlsx?: ArrayBuffer
@@ -157,6 +159,7 @@ export type LatePipelineResult = {
   runLog: RunLogEntry[]
   clashProvenance: ClashProvenanceMap
   allowSaturdayForMath?: boolean
+  saturdayExtraCourseCodes?: string[]
   proven_optimal?: boolean
   proven_levels?: string[]
   solver_status?: string
@@ -233,6 +236,8 @@ export async function runLatePipeline(
 
   const allowSaturdayForMath =
     options.allowSaturdayForMath ?? inferAllowSaturdayFromSnapshot(snapshot)
+  const saturdayExtraCourseCodes =
+    options.saturdayExtraCourseCodes ?? inferSaturdayExtrasFromSnapshot(snapshot)
   const slotByCourse = extractCourseSlotsFromSnapshot(snapshot)
 
   // --- Unknown courses: pin existing, place new via CP-SAT ---
@@ -298,6 +303,7 @@ export async function runLatePipeline(
       courseSections: workingSections,
       facultyConstraints,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
     })
     if (!preflight.ok) {
       return {
@@ -316,6 +322,7 @@ export async function runLatePipeline(
       students: solveStudents,
       fixedDays,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
       options,
       emit,
       signal,
@@ -341,6 +348,7 @@ export async function runLatePipeline(
         conflictGraph,
         facultyConstraints,
         allowSaturdayForMath,
+        saturdayExtraCourseCodes,
       )
       if (!greedy) {
         return {
@@ -518,7 +526,7 @@ export async function runLatePipeline(
     workingSlots,
     parallelHardCap(sectionCount),
     facultyConstraints,
-    { allowSaturdayForMath, waivedSectionIds: waived },
+    { allowSaturdayForMath, saturdayExtraCourseCodes, waivedSectionIds: waived },
   )
 
   const previousClashReport = computeClashReport(
@@ -741,6 +749,7 @@ export async function runLatePipeline(
     students: cloneStudents(workingStudents),
     enrollmentRows: merged.enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
+    ...(saturdayExtraCourseCodes.length ? { saturdayExtraCourseCodes } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
     ...(pythonVersion ? { python_version: pythonVersion } : {}),
@@ -831,6 +840,7 @@ export async function runLatePipeline(
     runLog,
     clashProvenance,
     allowSaturdayForMath,
+    saturdayExtraCourseCodes,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
     solver_status: solverStatus,
@@ -898,6 +908,7 @@ async function solveNewCourses(args: {
   students: Record<string, Student>
   fixedDays: Record<string, number>
   allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes: string[]
   options: RunLateOptions
   emit: (event: PipelineProgressEvent) => void
   signal?: AbortSignal
@@ -913,6 +924,7 @@ async function solveNewCourses(args: {
     facultyConstraints: args.facultyConstraints,
     students: args.students,
     allowSaturdayForMath: args.allowSaturdayForMath,
+    saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
     seed: options.seed ?? 42,
   })
   const hint = { ...warm.hint, ...args.fixedDays }
@@ -921,7 +933,10 @@ async function solveNewCourses(args: {
     args.courseSections,
     args.conflictGraph,
     args.students,
-    { allowSaturdayForMath: args.allowSaturdayForMath },
+    {
+      allowSaturdayForMath: args.allowSaturdayForMath,
+      saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
+    },
   )
 
   try {
@@ -944,6 +959,7 @@ async function solveNewCourses(args: {
           (options.cpsatFullProve ? undefined : DEFAULT_LATE_PLATEAU_SECONDS),
         fullProve: options.cpsatFullProve,
         allowSaturdayForMath: args.allowSaturdayForMath,
+        saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
         seed: options.seed,
         signal: args.signal,
         onProgress: (evt) => {

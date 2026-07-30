@@ -1,5 +1,5 @@
 import type { EnrollmentRow } from '../types'
-import { isMathCourse, SATURDAY_SLOT_INDEX } from '../solver/timeModel'
+import { isMathCourse, normalizeSaturdayExtraCodes, SATURDAY_SLOT_INDEX } from '../solver/timeModel'
 import type { SchedulingSnapshot } from './snapshot'
 
 export type StudentEnrollmentChange = {
@@ -113,6 +113,11 @@ export function inferAllowSaturdayFromSnapshot(snapshot: SchedulingSnapshot): bo
     if (slot === SATURDAY_SLOT_INDEX && isMathCourse(code)) return true
   }
   return false
+}
+
+/** Extra Saturday allowlist from snapshot (normalized). */
+export function inferSaturdayExtrasFromSnapshot(snapshot: SchedulingSnapshot): string[] {
+  return normalizeSaturdayExtraCodes(snapshot.saturdayExtraCourseCodes)
 }
 
 export type BaselineValidationWarning = {

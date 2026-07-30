@@ -11,6 +11,7 @@ import {
   computeEnrollmentDelta,
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
+  inferSaturdayExtrasFromSnapshot,
   validateBaselineMatchesSnapshot,
   type BaselineValidationWarning,
   type EnrollmentDelta,
@@ -88,6 +89,7 @@ export type RunRectifyOptions = {
   cpsatProvePlateauSeconds?: number
   cpsatFullProve?: boolean
   allowSaturdayForMath?: boolean
+  saturdayExtraCourseCodes?: string[]
   eagerExports?: boolean
   eagerExportKinds?: Partial<Record<PipelineExportKind, boolean>>
   programNomenclatureXlsx?: ArrayBuffer
@@ -116,6 +118,7 @@ export type RectifyPipelineResult = {
   runLog: RunLogEntry[]
   clashProvenance: ClashProvenanceMap
   allowSaturdayForMath?: boolean
+  saturdayExtraCourseCodes?: string[]
   proven_optimal?: boolean
   proven_levels?: string[]
   solver_status?: string
@@ -248,6 +251,8 @@ export async function runRectifyPipeline(
 
   const allowSaturdayForMath =
     options.allowSaturdayForMath ?? inferAllowSaturdayFromSnapshot(snapshot)
+  const saturdayExtraCourseCodes =
+    options.saturdayExtraCourseCodes ?? inferSaturdayExtrasFromSnapshot(snapshot)
   const newCourseCodes = new Set(Object.keys(courses))
   const fixedDays = buildFixedDays(snapshot, newCourseCodes)
   const freeCourses = freeCourseCodes(newCourseCodes, fixedDays)
@@ -267,6 +272,7 @@ export async function runRectifyPipeline(
     ...emptyRectifyResult(validation),
     enrollmentDelta,
     allowSaturdayForMath,
+    saturdayExtraCourseCodes,
     infeasible: true,
     infeasible_reason: reason,
     rectificationReport: buildRectificationReport({
@@ -320,6 +326,7 @@ export async function runRectifyPipeline(
       courseSections,
       facultyConstraints,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
     })
     if (!preflight.ok) {
       emit({
@@ -343,6 +350,7 @@ export async function runRectifyPipeline(
       students,
       fixedDays,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
       options,
       emit,
       signal,
@@ -375,6 +383,7 @@ export async function runRectifyPipeline(
         conflictGraph,
         facultyConstraints,
         allowSaturdayForMath,
+        saturdayExtraCourseCodes,
       )
       if (!greedy) {
         return failure(
@@ -395,7 +404,7 @@ export async function runRectifyPipeline(
     slotAssignments,
     parallelHardCap(sectionCount),
     facultyConstraints,
-    { allowSaturdayForMath },
+    { allowSaturdayForMath, saturdayExtraCourseCodes },
   )
 
   const clashReport = computeClashReport(students, courseSections, slotAssignments)
@@ -523,6 +532,7 @@ export async function runRectifyPipeline(
     students: cloneStudents(students),
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
+    ...(saturdayExtraCourseCodes.length ? { saturdayExtraCourseCodes } : {}),
     ...(options?.seed !== undefined ? { seed: options.seed } : {}),
     ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
     ...(pythonVersion ? { python_version: pythonVersion } : {}),
@@ -603,6 +613,7 @@ export async function runRectifyPipeline(
     runLog,
     clashProvenance,
     allowSaturdayForMath,
+    saturdayExtraCourseCodes,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
     solver_status: solverStatus,
@@ -624,6 +635,7 @@ async function solveWithPinnedDays(args: {
   students: Record<string, import('../types').Student>
   fixedDays: Record<string, number>
   allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes: string[]
   options: RunRectifyOptions
   emit: (event: PipelineProgressEvent) => void
   signal?: AbortSignal
@@ -639,6 +651,7 @@ async function solveWithPinnedDays(args: {
     facultyConstraints: args.facultyConstraints,
     students: args.students,
     allowSaturdayForMath: args.allowSaturdayForMath,
+    saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
     seed: options.seed ?? 42,
   })
   // Pinned days win over the heuristic so the hint never contradicts the model.
@@ -648,7 +661,10 @@ async function solveWithPinnedDays(args: {
     args.courseSections,
     args.conflictGraph,
     args.students,
-    { allowSaturdayForMath: args.allowSaturdayForMath },
+    {
+      allowSaturdayForMath: args.allowSaturdayForMath,
+      saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
+    },
   )
 
   try {
@@ -672,6 +688,7 @@ async function solveWithPinnedDays(args: {
           (options.cpsatFullProve ? undefined : DEFAULT_RECTIFY_PLATEAU_SECONDS),
         fullProve: options.cpsatFullProve,
         allowSaturdayForMath: args.allowSaturdayForMath,
+        saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
         seed: options.seed,
         signal: args.signal,
         onProgress: (evt) => {

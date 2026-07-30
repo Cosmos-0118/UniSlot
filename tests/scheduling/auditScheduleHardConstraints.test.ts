@@ -91,6 +91,32 @@ describe('auditScheduleHardConstraints', () => {
     expect(r.feasible).toBe(false)
     expect(r.violations.some((v: string) => v.includes('temporarily blocked'))).toBe(true)
   })
+
+  it('allows an allowlisted non-math course on Saturday when maths Saturday is off', () => {
+    const courseSections: Record<string, Section[]> = {
+      '21CSE101T': [makeSection({ section_id: 'c1', course_code: '21CSE101T' })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { c1: 5 }, 40, {}, {
+      allowSaturdayForMath: false,
+      saturdayExtraCourseCodes: ['21CSE101T'],
+    })
+    expect(r.feasible).toBe(true)
+    expect(r.violations).toHaveLength(0)
+  })
+
+  it('rejects a non-allowlisted course on Saturday even when extras exist', () => {
+    const courseSections: Record<string, Section[]> = {
+      '21CSC202J': [makeSection({ section_id: 'os1', course_code: '21CSC202J' })],
+    }
+    const r = auditScheduleHardConstraints(courseSections, { os1: 5 }, 40, {}, {
+      allowSaturdayForMath: false,
+      saturdayExtraCourseCodes: ['21CSE101T'],
+    })
+    expect(r.feasible).toBe(false)
+    expect(r.violations.some((v: string) => v.includes('21CSC202J') && v.includes('Saturday'))).toBe(
+      true,
+    )
+  })
 })
 
 describe('auditScheduleHardConstraints structural split', () => {

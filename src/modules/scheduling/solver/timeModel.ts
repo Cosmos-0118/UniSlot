@@ -19,15 +19,64 @@ export function isMathCourse(code: string): boolean {
   return /^[0-9]*MA/.test(upper) || upper.startsWith('MAT')
 }
 
-/** Active weekday count: Mon–Sat when Saturday maths is enabled, else Mon–Fri. */
-export function activeWeekdayCount(allowSaturdayForMath = true): number {
-  return allowSaturdayForMath ? TOTAL_WEEKLY_SLOTS : NON_MATH_WEEKDAY_COUNT
+/** Parse comma-separated or array course codes into a normalized, deduped list. */
+export function normalizeSaturdayExtraCodes(raw: string | string[] | undefined): string[] {
+  if (raw === undefined) return []
+  const parts = Array.isArray(raw) ? raw : raw.split(',')
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of parts) {
+    const code = part.trim().toUpperCase()
+    if (!code || seen.has(code)) continue
+    seen.add(code)
+    out.push(code)
+  }
+  return out
 }
 
-/** Highest slot index a course may use under the Saturday maths policy. */
-export function maxSlotIndexForCourse(code: string, allowSaturdayForMath = true): number {
-  if (!allowSaturdayForMath) return NON_MATH_WEEKDAY_COUNT - 1
-  return isMathCourse(code) ? SATURDAY_SLOT_INDEX : NON_MATH_WEEKDAY_COUNT - 1
+function extrasSet(extras: ReadonlySet<string> | readonly string[]): ReadonlySet<string> {
+  return new Set(normalizeSaturdayExtraCodes([...extras]))
+}
+
+/** True when Saturday evening is available for any course this run. */
+export function saturdaySlotOpen(
+  allowSaturdayForMath: boolean,
+  extras: readonly string[] = [],
+): boolean {
+  return allowSaturdayForMath || extras.length > 0
+}
+
+/**
+ * Whether a course may be placed on Saturday.
+ * Maths when the maths flag is on, or any code in the independent extra allowlist.
+ */
+export function isSaturdayEligible(
+  code: string,
+  allowSaturdayForMath: boolean,
+  extras: ReadonlySet<string> | readonly string[] = [],
+): boolean {
+  const upper = code.trim().toUpperCase()
+  if (extrasSet(extras).has(upper)) return true
+  return allowSaturdayForMath && isMathCourse(code)
+}
+
+/** Active weekday count: Mon–Sat when Saturday is open, else Mon–Fri. */
+export function activeWeekdayCount(
+  allowSaturdayForMath = true,
+  extras: readonly string[] = [],
+): number {
+  return saturdaySlotOpen(allowSaturdayForMath, extras) ? TOTAL_WEEKLY_SLOTS : NON_MATH_WEEKDAY_COUNT
+}
+
+/** Highest slot index a course may use under the Saturday policy. */
+export function maxSlotIndexForCourse(
+  code: string,
+  allowSaturdayForMath = true,
+  extras: ReadonlySet<string> | readonly string[] = [],
+): number {
+  return isSaturdayEligible(code, allowSaturdayForMath, extras)
+    ? SATURDAY_SLOT_INDEX
+    : NON_MATH_WEEKDAY_COUNT - 1
 }
 
 export const WEEKDAY_ORDER: DayName[] = [

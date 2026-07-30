@@ -151,7 +151,20 @@ describe('preflightRectify', () => {
       allowSaturdayForMath: true,
     })
     expect(r.ok).toBe(false)
-    expect(r.blockers[0]).toContain('maths-only')
+    expect(r.blockers[0]).toMatch(/eligible|maths/i)
+  })
+
+  it('allows an allowlisted non-math course pinned to Saturday with maths off', () => {
+    const r = preflightRectify({
+      fixedDays: { '21CSC202J': 5 },
+      freeCourses: [],
+      courseSections,
+      facultyConstraints,
+      allowSaturdayForMath: false,
+      saturdayExtraCourseCodes: ['21CSC202J'],
+    })
+    expect(r.ok).toBe(true)
+    expect(r.blockers).toHaveLength(0)
   })
 
   it('blocks two pinned courses that share a faculty on one weekday', () => {

@@ -70,7 +70,7 @@ Ideal outcome:
 - Wednesday
 - Thursday
 - Friday
-- Saturday (Strictly Maths courses only)
+- Saturday (Maths courses when enabled, or explicitly allowlisted course codes)
 
 ---
 
@@ -489,7 +489,7 @@ One course -> one weekly occurrence
 ```text
 Only Monday–Saturday
 Only 5 PM – 7 PM
-Saturday exclusively reserved for Maths courses
+Saturday reserved for Maths courses (when enabled) or explicitly allowlisted course codes
 ```
 
 ---

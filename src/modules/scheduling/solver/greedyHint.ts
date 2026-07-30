@@ -7,7 +7,7 @@ import {
   aggregateCourseConflictEdges,
   type CpsatConflictEdge,
 } from './cpsatInstance'
-import { maxSlotIndexForCourse } from './timeModel'
+import { maxSlotIndexForCourse, normalizeSaturdayExtraCodes } from './timeModel'
 
 export type GreedyHintResult = {
   hint: Record<string, number>
@@ -23,8 +23,10 @@ type HintInput = {
   /** SA polish iterations (default 4000). */
   polishIters?: number
   seed?: number
-  /** Default true. Pass false to exclude Saturday entirely. */
+  /** Default true. Pass false to exclude Saturday for maths. */
   allowSaturdayForMath?: boolean
+  /** Extra course codes independently allowed on Saturday. */
+  saturdayExtraCourseCodes?: string[]
 }
 
 function mulberry32(seed: number): () => number {
@@ -41,8 +43,12 @@ function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`
 }
 
-function maxDayFor(code: string, allowSaturdayForMath: boolean): number {
-  return maxSlotIndexForCourse(code, allowSaturdayForMath)
+function maxDayFor(
+  code: string,
+  allowSaturdayForMath: boolean,
+  extras: readonly string[],
+): number {
+  return maxSlotIndexForCourse(code, allowSaturdayForMath, extras)
 }
 
 function buildFacultyForbidden(
@@ -148,7 +154,9 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
     polishIters = 4000,
     seed = 42,
     allowSaturdayForMath = true,
+    saturdayExtraCourseCodes,
   } = input
+  const saturdayExtras = normalizeSaturdayExtraCodes(saturdayExtraCourseCodes)
 
   const sectionToCourse = new Map<string, string>()
   const enrollment = new Map<string, number>()
@@ -206,7 +214,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
     const code = best!
     remaining.delete(code)
 
-    const maxD = maxDayFor(code, allowSaturdayForMath)
+    const maxD = maxDayFor(code, allowSaturdayForMath, saturdayExtras)
     let pick = 0
     let pickClash = Number.POSITIVE_INFINITY
     let pickRed = Number.POSITIVE_INFINITY
@@ -255,7 +263,11 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
       if (c2 === c1) continue
       old2 = dayOf[c2]!
       // Try swap if domains allow.
-      if (old2 > maxDayFor(c1, allowSaturdayForMath) || old1 > maxDayFor(c2, allowSaturdayForMath)) continue
+      if (
+        old2 > maxDayFor(c1, allowSaturdayForMath, saturdayExtras) ||
+        old1 > maxDayFor(c2, allowSaturdayForMath, saturdayExtras)
+      )
+        continue
       dayOf[c1] = old2
       dayOf[c2] = old1
       if (!isFacultyOk(c1, dayOf[c1]!, dayOf, forbid) || !isFacultyOk(c2, dayOf[c2]!, dayOf, forbid)) {
@@ -264,7 +276,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
         continue
       }
     } else {
-      const maxD = maxDayFor(c1, allowSaturdayForMath)
+      const maxD = maxDayFor(c1, allowSaturdayForMath, saturdayExtras)
       const nd = Math.floor(rand() * (maxD + 1))
       if (nd === old1) continue
       dayOf[c1] = nd

@@ -50,8 +50,10 @@ export type RunCpsatOptions = {
   provePlateauSeconds?: number
   /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
   fullProve?: boolean
-  /** When false, Saturday is excluded for all courses (including maths). Default true. */
+  /** When false, Saturday is excluded for maths courses. Default true. */
   allowSaturdayForMath?: boolean
+  /** Extra course codes independently allowed on Saturday. */
+  saturdayExtraCourseCodes?: string[]
   /** Hard-pinned course→weekday (rectification). */
   fixedDays?: Record<string, number>
   /** Clash-only solve (skip RED/balance prove phases). */
@@ -519,6 +521,7 @@ export async function runCpsatScheduler(
       min_clash_weight_lower_bound: options?.minClashWeightLowerBound,
       min_red_students_lower_bound: options?.minRedStudentsLowerBound,
       allowSaturdayForMath: options?.allowSaturdayForMath,
+      saturdayExtraCourseCodes: options?.saturdayExtraCourseCodes,
     },
   )
 

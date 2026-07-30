@@ -49,6 +49,7 @@ import {
   formatEnrollmentDeltaSummary,
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
+  inferSaturdayExtrasFromSnapshot,
 } from '../src/modules/scheduling/merge/enrollmentDelta.ts'
 import {
   formatProjectedLoads,
@@ -56,7 +57,10 @@ import {
   type ClashPanel,
 } from '../src/modules/scheduling/merge/lateResolution.ts'
 import type { CapacityDecision, OnFullStrategy } from '../src/modules/scheduling/merge/lateEnrollment.ts'
-import { slotIndexToDay } from '../src/modules/scheduling/solver/timeModel.ts'
+import {
+  normalizeSaturdayExtraCodes,
+  slotIndexToDay,
+} from '../src/modules/scheduling/solver/timeModel.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -80,6 +84,31 @@ async function ensurePythonReady(): Promise<string> {
   return python
 }
 
+async function promptSaturdayExtraCodes(
+  initial: string[] = [],
+): Promise<string[] | 'cancelled'> {
+  const answer = await p.text({
+    message: 'Extra course codes allowed on Saturday (comma-separated, optional)',
+    placeholder: 'e.g. 21CSE101T, 21ECE202T',
+    initialValue: initial.length ? initial.join(', ') : '',
+  })
+  if (p.isCancel(answer)) return 'cancelled'
+  return normalizeSaturdayExtraCodes(String(answer ?? ''))
+}
+
+function logSaturdayPolicy(allowSaturdayForMath: boolean, extras: string[]): void {
+  p.log.info(
+    allowSaturdayForMath
+      ? 'Saturday · enabled for maths courses'
+      : 'Saturday · maths blocked',
+  )
+  p.log.info(
+    extras.length
+      ? `Saturday · extras: ${extras.join(', ')}`
+      : 'Saturday · extras: none',
+  )
+}
+
 async function writeExports(
   outDir: string,
   result: Awaited<ReturnType<typeof runPipeline>>,
@@ -88,6 +117,7 @@ async function writeExports(
     workers: number
     portfolio: number
     allowSaturdayForMath: boolean
+    saturdayExtraCourseCodes?: string[]
     ortools_version?: string
     python_version?: string
   },
@@ -109,6 +139,7 @@ async function writeExports(
     await writeFile(fp, Buffer.from(result.courseEmailsXlsx))
     written.push(fp)
   }
+  const saturdayExtras = normalizeSaturdayExtraCodes(meta.saturdayExtraCourseCodes)
   if (result.schedulingSnapshot) {
     const fp = path.join(outDir, 'snapshot.json')
     const snapshot = {
@@ -117,6 +148,7 @@ async function writeExports(
       workers: meta.workers,
       portfolio: meta.portfolio,
       allowSaturdayForMath: meta.allowSaturdayForMath,
+      ...(saturdayExtras.length ? { saturdayExtraCourseCodes: saturdayExtras } : {}),
       ...(meta.ortools_version ? { ortools_version: meta.ortools_version } : {}),
       ...(meta.python_version ? { python_version: meta.python_version } : {}),
     }
@@ -137,6 +169,7 @@ async function writeExports(
     workers: meta.workers,
     portfolio: meta.portfolio,
     allow_saturday_for_math: meta.allowSaturdayForMath,
+    saturday_extra_course_codes: saturdayExtras,
     repro_token: formatReproToken({
       seed: meta.seed,
       workers: meta.workers,
@@ -213,6 +246,7 @@ async function writeRectifyExports(
     pinned_courses: report?.pinned_course_count ?? 0,
     infeasible: result.infeasible ?? false,
     allow_saturday_for_math: result.allowSaturdayForMath,
+    saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
     seed: meta.seed,
     workers: meta.workers,
     ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
@@ -344,6 +378,7 @@ async function runRectify(opts: {
   provePlateau?: number
   prove?: boolean
   saturday?: boolean
+  saturdayCodes?: string
   seed?: number
   skipPrompts?: boolean
   interactive: boolean
@@ -426,6 +461,7 @@ async function runRectify(opts: {
   }
 
   const inferredSaturday = inferAllowSaturdayFromSnapshot(snapshot)
+  const inferredExtras = inferSaturdayExtrasFromSnapshot(snapshot)
   let allowSaturdayForMath = opts.saturday
   if (allowSaturdayForMath === undefined) {
     if (opts.interactive && !opts.skipPrompts) {
@@ -442,6 +478,21 @@ async function runRectify(opts: {
       allowSaturdayForMath = inferredSaturday
     }
   }
+
+  let saturdayExtraCourseCodes: string[]
+  if (opts.saturdayCodes !== undefined) {
+    saturdayExtraCourseCodes = normalizeSaturdayExtraCodes(opts.saturdayCodes)
+  } else if (opts.interactive && !opts.skipPrompts) {
+    const extras = await promptSaturdayExtraCodes(inferredExtras)
+    if (extras === 'cancelled') {
+      p.cancel('Cancelled')
+      return 1
+    }
+    saturdayExtraCourseCodes = extras
+  } else {
+    saturdayExtraCourseCodes = inferredExtras
+  }
+  logSaturdayPolicy(allowSaturdayForMath, saturdayExtraCourseCodes)
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
   if (opts.nomenclature) {
@@ -537,6 +588,7 @@ async function runRectify(opts: {
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
+        saturdayExtraCourseCodes,
         programNomenclatureXlsx,
         seed: opts.seed,
         eagerExports: true,
@@ -699,6 +751,7 @@ async function writeLateExports(
     placement_method: report?.placement_method,
     infeasible: result.infeasible ?? false,
     allow_saturday_for_math: result.allowSaturdayForMath,
+    saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
     seed: meta.seed,
     workers: meta.workers,
     ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
@@ -881,6 +934,7 @@ async function runLate(opts: {
   provePlateau?: number
   prove?: boolean
   saturday?: boolean
+  saturdayCodes?: string
   seed?: number
   onFull?: OnFullStrategy
   overflowBuffer?: number
@@ -947,10 +1001,16 @@ async function runLate(opts: {
   }
 
   const inferredSaturday = inferAllowSaturdayFromSnapshot(snapshot)
+  const inferredExtras = inferSaturdayExtrasFromSnapshot(snapshot)
   let allowSaturdayForMath = opts.saturday
   if (allowSaturdayForMath === undefined) {
     allowSaturdayForMath = inferredSaturday
   }
+  const saturdayExtraCourseCodes =
+    opts.saturdayCodes !== undefined
+      ? normalizeSaturdayExtraCodes(opts.saturdayCodes)
+      : inferredExtras
+  logSaturdayPolicy(allowSaturdayForMath, saturdayExtraCourseCodes)
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
   if (opts.nomenclature) {
@@ -1026,6 +1086,7 @@ async function runLate(opts: {
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
+        saturdayExtraCourseCodes,
         programNomenclatureXlsx,
         seed: opts.seed,
         eagerExports: true,
@@ -1135,6 +1196,8 @@ async function runSolve(opts: {
   prove?: boolean
   /** undefined = ask in interactive mode; default blocked when non-interactive. */
   saturday?: boolean
+  /** Comma-separated extra course codes allowed on Saturday. */
+  saturdayCodes?: string
   /** Explicit --seed; skips the seed prompt when set. */
   seed?: number
   /** -y: skip seed and other interactive prompts */
@@ -1210,11 +1273,21 @@ async function runSolve(opts: {
       allowSaturdayForMath = false
     }
   }
-  p.log.info(
-    allowSaturdayForMath
-      ? 'Saturday · enabled for maths courses'
-      : 'Saturday · blocked (Mon–Fri only)',
-  )
+
+  let saturdayExtraCourseCodes: string[]
+  if (opts.saturdayCodes !== undefined) {
+    saturdayExtraCourseCodes = normalizeSaturdayExtraCodes(opts.saturdayCodes)
+  } else if (opts.interactive && !opts.skipPrompts) {
+    const extras = await promptSaturdayExtraCodes([])
+    if (extras === 'cancelled') {
+      p.cancel('Cancelled')
+      return 1
+    }
+    saturdayExtraCourseCodes = extras
+  } else {
+    saturdayExtraCourseCodes = []
+  }
+  logSaturdayPolicy(allowSaturdayForMath, saturdayExtraCourseCodes)
 
   const reproToken = formatReproToken({
     seed,
@@ -1327,6 +1400,7 @@ async function runSolve(opts: {
         cpsatProvePlateauSeconds: opts.provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
+        saturdayExtraCourseCodes,
         programNomenclatureXlsx,
         seed,
         eagerExports: true,
@@ -1423,6 +1497,7 @@ async function runSolve(opts: {
       workers: workersUsed,
       portfolio: portfolioK,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
       ortools_version: result.ortools_version,
       python_version: result.python_version,
     })
@@ -1542,6 +1617,10 @@ async function main(): Promise<void> {
       '--saturday',
       'Allow Saturday slot for maths courses (use --no-saturday to block; default: ask / blocked)',
     )
+    .option(
+      '--saturday-codes <list>',
+      'Extra course codes allowed on Saturday (comma-separated), independent of maths flag',
+    )
     .option('-y, --yes', 'Non-interactive when paths are provided', false)
     .action(async (flags: {
       input?: string
@@ -1555,6 +1634,7 @@ async function main(): Promise<void> {
       provePlateau?: number
       prove?: boolean
       saturday?: boolean
+      saturdayCodes?: string
       yes?: boolean
     }) => {
       const interactive = !flags.yes && (!flags.input || !flags.output)
@@ -1573,6 +1653,7 @@ async function main(): Promise<void> {
         provePlateau: flags.provePlateau,
         prove: flags.prove,
         saturday: saturdayFlag,
+        saturdayCodes: flags.saturdayCodes,
         skipPrompts: Boolean(flags.yes),
         interactive: interactive || !flags.input,
       })
@@ -1601,6 +1682,10 @@ async function main(): Promise<void> {
     .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')
+    .option(
+      '--saturday-codes <list>',
+      'Extra course codes allowed on Saturday (comma-separated)',
+    )
     .option('-y, --yes', 'Non-interactive when paths are provided', false)
     .action(
       async (flags: {
@@ -1617,6 +1702,7 @@ async function main(): Promise<void> {
         provePlateau?: number
         prove?: boolean
         saturday?: boolean
+        saturdayCodes?: string
         yes?: boolean
       }) => {
         const interactive =
@@ -1637,6 +1723,7 @@ async function main(): Promise<void> {
           provePlateau: flags.provePlateau,
           prove: flags.prove,
           saturday: saturdayFlag,
+          saturdayCodes: flags.saturdayCodes,
           skipPrompts: Boolean(flags.yes),
           interactive,
         })
@@ -1664,6 +1751,10 @@ async function main(): Promise<void> {
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')
     .option(
+      '--saturday-codes <list>',
+      'Extra course codes allowed on Saturday (comma-separated)',
+    )
+    .option(
       '--on-full <strategy>',
       'When a course is full: new-section | equalize | fit | buffer | park (default: ask / new-section)',
     )
@@ -1688,6 +1779,7 @@ async function main(): Promise<void> {
         provePlateau?: number
         prove?: boolean
         saturday?: boolean
+        saturdayCodes?: string
         onFull?: string
         overflowBuffer?: number
         onClash?: string
@@ -1720,6 +1812,7 @@ async function main(): Promise<void> {
           provePlateau: flags.provePlateau,
           prove: flags.prove,
           saturday: saturdayFlag,
+          saturdayCodes: flags.saturdayCodes,
           onFull,
           overflowBuffer: flags.overflowBuffer,
           onClash,

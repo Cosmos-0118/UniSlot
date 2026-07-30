@@ -1,8 +1,10 @@
 import type { ConflictGraph, Section, Student } from '../types'
 import {
   activeWeekdayCount,
-  isMathCourse,
+  isSaturdayEligible,
   maxSlotIndexForCourse,
+  normalizeSaturdayExtraCodes,
+  saturdaySlotOpen,
   PREFERRED_PARALLEL_SECTIONS,
   SATURDAY_SLOT_INDEX,
 } from './timeModel'
@@ -169,11 +171,15 @@ export function buildCpsatInstance(
     fixed_days?: Record<string, number>
     min_clash_weight_lower_bound?: number
     min_red_students_lower_bound?: number
-    /** Default true (Constraints.md). Pass false to exclude Saturday entirely. */
+    /** Default true (Constraints.md). Pass false to exclude Saturday for maths. */
     allowSaturdayForMath?: boolean
+    /** Extra course codes independently allowed on Saturday. */
+    saturdayExtraCourseCodes?: string[]
   },
 ): CpsatInstance {
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
+  const saturdayExtras = normalizeSaturdayExtraCodes(options?.saturdayExtraCourseCodes)
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtras)
   const sectionToCourse = new Map<string, string>()
   const courses: CpsatInstance['courses'] = []
 
@@ -182,7 +188,8 @@ export function buildCpsatInstance(
     for (const s of sections) sectionToCourse.set(s.section_id, code)
     courses.push({
       code,
-      is_math: isMathCourse(code),
+      // Python field name: Saturday-eligible (maths and/or extras allowlist).
+      is_math: isSaturdayEligible(code, allowSaturdayForMath, saturdayExtras),
       section_count: sections.length,
       section_ids,
     })
@@ -210,18 +217,24 @@ export function buildCpsatInstance(
   }
 
   let hint = options?.hint
-  if (hint && !allowSaturdayForMath) {
+  if (hint && !saturdayOpen) {
     const clamped: Record<string, number> = {}
     for (const [code, slot] of Object.entries(hint)) {
-      clamped[code] = Math.min(slot, maxSlotIndexForCourse(code, false))
+      clamped[code] = Math.min(slot, maxSlotIndexForCourse(code, false, saturdayExtras))
+    }
+    hint = clamped
+  } else if (hint) {
+    const clamped: Record<string, number> = {}
+    for (const [code, slot] of Object.entries(hint)) {
+      clamped[code] = Math.min(slot, maxSlotIndexForCourse(code, allowSaturdayForMath, saturdayExtras))
     }
     hint = clamped
   }
 
   return {
-    num_weekdays: activeWeekdayCount(allowSaturdayForMath),
+    num_weekdays: activeWeekdayCount(allowSaturdayForMath, saturdayExtras),
     saturday_index: SATURDAY_SLOT_INDEX,
-    allow_saturday: allowSaturdayForMath,
+    allow_saturday: saturdayOpen,
     preferred_parallel: PREFERRED_PARALLEL_SECTIONS,
     courses,
     conflict_edges: aggregateCourseConflictEdges(conflictGraph, sectionToCourse),

@@ -8,7 +8,7 @@ import {
 } from '../preprocess/preprocessing'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
 import { sumConflictGraphWeights } from '../solver/conflictGraph'
-import { activeWeekdayCount } from '../solver/timeModel'
+import { activeWeekdayCount, normalizeSaturdayExtraCodes, saturdaySlotOpen } from '../solver/timeModel'
 import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
 import {
   cloneStudents,
@@ -100,10 +100,12 @@ export type RunPipelineOptions = {
   /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
   cpsatFullProve?: boolean
   /**
-   * When false, Saturday is blocked for all courses (including maths).
+   * When false, Saturday is blocked for maths courses.
    * Default true (Constraints.md Saturday maths-only).
    */
   allowSaturdayForMath?: boolean
+  /** Extra course codes independently allowed on Saturday. */
+  saturdayExtraCourseCodes?: string[]
   /**
    * When true, build .xlsx buffers during the run.
    * Default false: caller builds exports later if needed.
@@ -293,7 +295,9 @@ export async function runPipeline(
   const workers =
     options?.cpsatWorkers && options.cpsatWorkers > 0 ? options.cpsatWorkers : cpus().length
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
-  const weekdays = activeWeekdayCount(allowSaturdayForMath)
+  const saturdayExtraCourseCodes = normalizeSaturdayExtraCodes(options?.saturdayExtraCourseCodes)
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtraCourseCodes)
+  const weekdays = activeWeekdayCount(allowSaturdayForMath, saturdayExtraCourseCodes)
 
   emit({
     stage: 'schedule',
@@ -308,6 +312,7 @@ export async function runPipeline(
     facultyConstraints,
     students,
     allowSaturdayForMath,
+    saturdayExtraCourseCodes,
     seed: solverSeed ?? 42,
   })
   emit({
@@ -319,12 +324,13 @@ export async function runPipeline(
 
   const structuralLb = computeSchedulingLowerBounds(courseSections, conflictGraph, students, {
     allowSaturdayForMath,
+    saturdayExtraCourseCodes,
   })
   const portfolio =
     options?.cpsatPortfolio === undefined ? undefined : options.cpsatPortfolio
   emit({
     stage: 'schedule',
-    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${weekdays} weekday sessions/week${allowSaturdayForMath ? '' : ' · Saturday blocked'}`,
+    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${weekdays} weekday sessions/week${saturdayOpen ? '' : ' · Saturday blocked'}`,
     fraction: SCHEDULE_LO + 0.02,
     etaSeconds: null,
   })
@@ -346,6 +352,7 @@ export async function runPipeline(
       provePlateauSeconds: options?.cpsatProvePlateauSeconds,
       fullProve: options?.cpsatFullProve,
       allowSaturdayForMath,
+      saturdayExtraCourseCodes,
       seed: solverSeed,
       signal,
       onProgress: (evt) => {
@@ -412,7 +419,7 @@ export async function runPipeline(
     slotAssignments,
     parallelHardCap(sectionCount),
     facultyConstraints,
-    { allowSaturdayForMath },
+    { allowSaturdayForMath, saturdayExtraCourseCodes },
   )
   // Student same-day overlaps are the soft objective, not a fence — gate on structural rules only.
   const feasible = audit.structuralFeasible
@@ -513,6 +520,7 @@ export async function runPipeline(
     students: cloneStudents(students),
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
+    ...(saturdayExtraCourseCodes.length ? { saturdayExtraCourseCodes } : {}),
     ...(solverSeed !== undefined ? { seed: solverSeed } : {}),
     workers,
     ...(portfolio !== undefined ? { portfolio } : {}),

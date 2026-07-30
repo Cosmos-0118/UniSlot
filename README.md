@@ -64,7 +64,7 @@ Enrollment .xlsx
   → schedule.xlsx · clash-report.xlsx · course-emails.xlsx · summary.json
 ```
 
-- **Time model:** one evening session per weekday (Mon–Sat, 5–7 PM). Saturday is mathematics-only.
+- **Time model:** one evening session per weekday (Mon–Sat, 5–7 PM). Saturday is for maths (when enabled) and/or explicitly allowlisted course codes.
 - **Objective:** minimize clash weight, then RED students, then weekday balance.
 - **Proof:** `proven_optimal: true` in `summary.json` means clash weight is minimal under this model.
 

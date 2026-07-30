@@ -3,7 +3,9 @@ import {
   activeWeekdayCount,
   NON_MATH_WEEKDAY_COUNT,
   TOTAL_WEEKLY_SLOTS,
-  isMathCourse,
+  isSaturdayEligible,
+  normalizeSaturdayExtraCodes,
+  saturdaySlotOpen,
 } from './timeModel'
 
 export type SchedulingLowerBounds = {
@@ -242,28 +244,30 @@ function componentWeightedCliqueLb(
 function studentPigeonholeRedLowerBound(
   students: Record<string, Student>,
   allowSaturdayForMath: boolean,
+  saturdayExtras: readonly string[],
 ): { count: number; notes: string[] } {
   let count = 0
   const notes: string[] = []
-  const saturdayNote = allowSaturdayForMath
-    ? 'Saturday maths-only'
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtras)
+  const saturdayNote = saturdayOpen
+    ? 'Saturday for eligible courses only'
     : 'Mon–Fri only (Saturday blocked)'
   for (const st of Object.values(students)) {
     const courses = st.enrolled_courses
     if (!courses.length) continue
     let maxFeasibleDistinctDays: number
-    if (!allowSaturdayForMath) {
+    if (!saturdayOpen) {
       maxFeasibleDistinctDays = Math.min(courses.length, NON_MATH_WEEKDAY_COUNT)
     } else {
-      let nonMath = 0
-      let math = 0
+      let restricted = 0
+      let eligible = 0
       for (const c of courses) {
-        if (isMathCourse(c)) math++
-        else nonMath++
+        if (isSaturdayEligible(c, allowSaturdayForMath, saturdayExtras)) eligible++
+        else restricted++
       }
       maxFeasibleDistinctDays =
-        Math.min(nonMath, NON_MATH_WEEKDAY_COUNT) +
-        Math.min(math, TOTAL_WEEKLY_SLOTS - Math.min(nonMath, NON_MATH_WEEKDAY_COUNT))
+        Math.min(restricted, NON_MATH_WEEKDAY_COUNT) +
+        Math.min(eligible, TOTAL_WEEKLY_SLOTS - Math.min(restricted, NON_MATH_WEEKDAY_COUNT))
     }
     if (courses.length > maxFeasibleDistinctDays) {
       count++
@@ -285,9 +289,11 @@ export function computeSchedulingLowerBounds(
   courseSections: Record<string, Section[]>,
   conflictGraph: ConflictGraph,
   students?: Record<string, Student>,
-  options?: { allowSaturdayForMath?: boolean },
+  options?: { allowSaturdayForMath?: boolean; saturdayExtraCourseCodes?: string[] },
 ): SchedulingLowerBounds {
   const allowSaturdayForMath = options?.allowSaturdayForMath !== false
+  const saturdayExtras = normalizeSaturdayExtraCodes(options?.saturdayExtraCourseCodes)
+  const saturdayOpen = saturdaySlotOpen(allowSaturdayForMath, saturdayExtras)
   const sectionToCourse = new Map<string, string>()
   for (const secs of Object.values(courseSections)) {
     for (const s of secs) sectionToCourse.set(s.section_id, s.course_code)
@@ -298,7 +304,7 @@ export function computeSchedulingLowerBounds(
   const maxCliqueNodes =
     exactClique.length >= greedyClique.length ? exactClique : greedyClique
   const maxClique = maxCliqueNodes.length || (adj.size ? 1 : 0)
-  const colors = activeWeekdayCount(allowSaturdayForMath)
+  const colors = activeWeekdayCount(allowSaturdayForMath, saturdayExtras)
   const notes: string[] = []
 
   if (maxClique > colors) {
@@ -311,24 +317,26 @@ export function computeSchedulingLowerBounds(
 
   let minRed = 0
   if (students && Object.keys(students).length) {
-    const pigeon = studentPigeonholeRedLowerBound(students, allowSaturdayForMath)
+    const pigeon = studentPigeonholeRedLowerBound(students, allowSaturdayForMath, saturdayExtras)
     minRed = pigeon.count
     notes.push(...pigeon.notes)
     if (minRed > 0) {
       notes.push(
-        allowSaturdayForMath
-          ? `At least ${minRed} student(s) must have a timetable clash given enrollment and Saturday maths-only.`
+        saturdayOpen
+          ? `At least ${minRed} student(s) must have a timetable clash given enrollment and Saturday eligibility rules.`
           : `At least ${minRed} student(s) must have a timetable clash given enrollment and Mon–Fri-only (Saturday blocked).`,
       )
     }
   }
 
-  // Non-math subgraph: only 5 colors (or all colors when Saturday is blocked).
+  // Restricted (non-Saturday-eligible) subgraph: only 5 colors (or all colors when Saturday is blocked).
   let nonMathClique = 0
   const nonMathAdj = new Map<string, Set<string>>()
   for (const [v, nbrs] of adj) {
-    if (isMathCourse(v)) continue
-    const filtered = new Set([...nbrs].filter((u) => !isMathCourse(u)))
+    if (isSaturdayEligible(v, allowSaturdayForMath, saturdayExtras)) continue
+    const filtered = new Set(
+      [...nbrs].filter((u) => !isSaturdayEligible(u, allowSaturdayForMath, saturdayExtras)),
+    )
     if (filtered.size) nonMathAdj.set(v, filtered)
   }
   let nonMathCliqueNodes: string[] = []
@@ -339,7 +347,7 @@ export function computeSchedulingLowerBounds(
     nonMathClique = nonMathCliqueNodes.length
     if (nonMathClique > NON_MATH_WEEKDAY_COUNT) {
       notes.push(
-        `Non-math conflict clique of size ${nonMathClique} exceeds ${NON_MATH_WEEKDAY_COUNT} Mon–Fri evenings.`,
+        `Non-Saturday-eligible conflict clique of size ${nonMathClique} exceeds ${NON_MATH_WEEKDAY_COUNT} Mon–Fri evenings.`,
       )
     }
   }

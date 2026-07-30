@@ -39,6 +39,8 @@ export type SchedulingSnapshot = {
   python_version?: string
   /** Whether Saturday evening was available for maths courses in this run. */
   allowSaturdayForMath?: boolean
+  /** Extra course codes independently allowed on Saturday. */
+  saturdayExtraCourseCodes?: string[]
   /** Accumulated late enrollments across batches. */
   late_enrollments?: LateEnrollmentRecord[]
   /** Append-only run trail (solve → rectify/late…). */
@@ -88,6 +90,9 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     ortools_version: s.ortools_version,
     python_version: s.python_version,
     allowSaturdayForMath: s.allowSaturdayForMath,
+    saturdayExtraCourseCodes: s.saturdayExtraCourseCodes
+      ? [...s.saturdayExtraCourseCodes]
+      : undefined,
     late_enrollments: s.late_enrollments?.map((r) => ({ ...r })),
     run_log: cloneRunLog(s.run_log),
     clash_provenance: cloneClashProvenance(s.clash_provenance),
