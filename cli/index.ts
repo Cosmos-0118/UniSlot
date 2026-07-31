@@ -68,6 +68,13 @@ import {
   scheduleFromFilteredEntries,
 } from '../src/modules/scheduling/io/excelScheduleReader.ts'
 import { scheduleToWorkbookBuffer } from '../src/modules/scheduling/io/excelScheduleWorkbook.ts'
+import { readFirstSheetAsAoA } from '../src/modules/scheduling/io/excelIo.ts'
+import {
+  ISSUE_CATEGORY_LABELS,
+  ISSUE_CATEGORY_ORDER,
+  findEnrollmentIssues,
+  type IssueCategory,
+} from '../src/modules/scheduling/parse/issueFinder.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -359,7 +366,9 @@ function formatRectifyResult(
   return lines.join('\n')
 }
 
-async function promptRunMode(): Promise<'solve' | 'rectify' | 'late' | 'filter' | null> {
+async function promptRunMode(): Promise<
+  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | null
+> {
   const mode = await p.select({
     message: 'What would you like to do?',
     options: [
@@ -367,10 +376,108 @@ async function promptRunMode(): Promise<'solve' | 'rectify' | 'late' | 'filter' 
       { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
       { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
       { value: 'filter', label: 'Filter schedule by course codes' },
+      { value: 'issues', label: 'Find issues in enrollment file' },
     ],
   })
   if (p.isCancel(mode)) return null
-  return mode as 'solve' | 'rectify' | 'late' | 'filter'
+  return mode as 'solve' | 'rectify' | 'late' | 'filter' | 'issues'
+}
+
+const ISSUE_PANEL_LINE_CAP = 200
+
+function formatIssueLine(issue: {
+  row_number?: number
+  severity: string
+  message: string
+}): string {
+  const row = issue.row_number != null ? `Row ${issue.row_number} · ` : ''
+  const sev = issue.severity === 'error' ? chalk.red('error') : chalk.yellow('warn')
+  return `${sev}  ${row}${issue.message}`
+}
+
+function formatCategoryPanelBody(
+  issues: { row_number?: number; severity: string; message: string }[],
+): string {
+  const shown = issues.slice(0, ISSUE_PANEL_LINE_CAP)
+  const lines = shown.map(formatIssueLine)
+  if (issues.length > ISSUE_PANEL_LINE_CAP) {
+    lines.push(chalk.dim(`…and ${issues.length - ISSUE_PANEL_LINE_CAP} more`))
+  }
+  return lines.join('\n')
+}
+
+async function runIssues(opts: {
+  input?: string
+  interactive: boolean
+}): Promise<number> {
+  await bannerAnimated()
+
+  let inputPath = opts.input
+  if (!inputPath && opts.interactive) {
+    const pick = p.spinner()
+    pick.start('Pick enrollment workbook…')
+    inputPath = (await pickEnrollmentFile()) ?? undefined
+    pick.stop(inputPath ? spinOk(path.basename(inputPath)) : spinWarn('Cancelled'))
+  }
+  if (!inputPath) {
+    p.log.error('No enrollment file provided. Use -i or pick a file.')
+    return 1
+  }
+  try {
+    await assertReadableFile(inputPath)
+  } catch (err) {
+    p.log.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  const buf = await readFile(inputPath)
+  const aoa = await readFirstSheetAsAoA(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+  )
+  if (!aoa) {
+    p.log.error('No sheets in workbook.')
+    return 1
+  }
+
+  const report = findEnrollmentIssues(aoa)
+
+  const countParts = ISSUE_CATEGORY_ORDER.filter((c) => report.counts[c] > 0).map(
+    (c) => `${ISSUE_CATEGORY_LABELS[c]} ${report.counts[c]}`,
+  )
+  p.log.info(
+    `${path.basename(inputPath)} · ${report.total_rows} data rows · ${report.valid_rows} after dedupe · ${report.total_issues} issue${report.total_issues === 1 ? '' : 's'}` +
+      (countParts.length ? ` (${countParts.join(', ')})` : ''),
+  )
+
+  if (report.total_issues === 0) {
+    p.log.success('No data-quality issues found.')
+    p.outro('Ready for Create schedule.')
+    return 0
+  }
+
+  for (const category of ISSUE_CATEGORY_ORDER) {
+    const list = report.by_category[category as IssueCategory]
+    if (!list.length) continue
+    const title = `${ISSUE_CATEGORY_LABELS[category]} (${list.length})`
+    showPanel(title, formatCategoryPanelBody(list))
+  }
+
+  if (report.blocking) {
+    p.log.error(
+      `${report.error_count} blocking error${report.error_count === 1 ? '' : 's'} — fix before Create schedule` +
+        (report.warning_count
+          ? ` (${report.warning_count} warning${report.warning_count === 1 ? '' : 's'} also listed)`
+          : ''),
+    )
+    p.outro('Issue Finder finished with blocking errors.')
+    return 1
+  }
+
+  p.log.warn(
+    `${report.warning_count} warning${report.warning_count === 1 ? '' : 's'} — file is usable for Create schedule (duplicates are dropped automatically)`,
+  )
+  p.outro('Issue Finder finished.')
+  return 0
 }
 
 async function promptFilterCourseCodes(initial = ''): Promise<string[] | 'cancelled'> {
@@ -1674,7 +1781,8 @@ async function main(): Promise<void> {
     args[0] === 'rectify' ||
     args[0] === 'solve' ||
     args[0] === 'late' ||
-    args[0] === 'filter'
+    args[0] === 'filter' ||
+    args[0] === 'issues'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -1962,6 +2070,19 @@ async function main(): Promise<void> {
         codes: flags.codes,
         output: flags.output,
         skipPrompts: Boolean(flags.yes),
+        interactive: interactive || !flags.input,
+      })
+    })
+
+  program
+    .command('issues')
+    .description('Audit enrollment .xlsx for data-quality issues (no solver)')
+    .option('-i, --input <file>', 'Enrollment .xlsx path')
+    .option('-y, --yes', 'Non-interactive when -i is provided', false)
+    .action(async (flags: { input?: string; yes?: boolean }) => {
+      const interactive = !flags.yes && !flags.input
+      process.exitCode = await runIssues({
+        input: flags.input,
         interactive: interactive || !flags.input,
       })
     })

@@ -315,6 +315,7 @@ export function parseExcelRows(sheetRows: unknown[][]): {
   return { rows: out, validation: result }
 }
 
+/** Drop duplicate student+course rows; duplicates become warnings. */
 export function validateBusinessRules(rows: EnrollmentRow[]): {
   rows: EnrollmentRow[]
   validation: ValidationResult

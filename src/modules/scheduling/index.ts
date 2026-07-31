@@ -107,7 +107,19 @@ export type {
   SectionCountChange,
 } from './merge/rectifyDiff'
 export { describePlacements, diffClashReports, diffSectionCounts } from './merge/rectifyDiff'
-export { parseExcelRows, loadAndValidate } from './parse/parser'
+export { parseExcelRows, loadAndValidate, validateBusinessRules } from './parse/parser'
+export type {
+  EnrollmentIssue,
+  IssueCategory,
+  IssueFinderReport,
+  IssueSeverity,
+} from './parse/issueFinder'
+export {
+  ISSUE_CATEGORY_LABELS,
+  ISSUE_CATEGORY_ORDER,
+  categoryForValidationError,
+  findEnrollmentIssues,
+} from './parse/issueFinder'
 export type { FilterScheduleResult } from './io/excelScheduleReader'
 export {
   normalizeCourseCodeList,

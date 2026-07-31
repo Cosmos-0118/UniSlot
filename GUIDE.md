@@ -69,6 +69,34 @@ What happens:
 
 Cancel anytime with **Ctrl+C**.
 
+## 3b. Issue Finder (enrollment data quality)
+
+Before scheduling, audit the enrollment workbook for data-quality problems — no solver run.
+
+```powershell
+npm run unislot
+# then choose "Find issues in enrollment file"
+```
+
+Or non-interactively:
+
+```powershell
+npm run unislot -- issues -i path\to\enrollment.xlsx -y
+```
+
+Findings are grouped in the terminal:
+
+| Category | Meaning |
+|----------|---------|
+| Schema | Empty file / missing required columns |
+| Missing fields | Empty program, register number, name, course code, or title |
+| Duplicates | Same student + course more than once |
+| Faculty | Multiple faculty names for one course code |
+| Identity | Same register with conflicting names, or same course code with conflicting titles |
+| Enrollment | Student left with no courses after dedupe |
+
+Exit code `0` if there are no blocking errors (warnings alone are OK — Create schedule still drops duplicates). Exit `1` when blocking errors must be fixed first.
+
 ## 4. Non-interactive solve
 
 Useful for scripts and CI:
@@ -225,6 +253,7 @@ npm install
 npm run setup:cpsat
 npm run unislot -- doctor
 npm run unislot
+npm run unislot -- issues -i enroll.xlsx -y
 npm run unislot -- solve -i enroll.xlsx -o .\out -y
 npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
 npm run unislot -- rectify --baseline old.xlsx --rectified new.xlsx --previous .\out -o .\out-r -y
