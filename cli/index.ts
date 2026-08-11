@@ -38,6 +38,7 @@ import {
   type LateEnrollmentReport,
   type LatePipelineResult,
 } from '../src/modules/scheduling/pipeline/lateRun.ts'
+import { runSurgicalEdit } from './surgicalEdit.ts'
 import {
   loadSchedulingSnapshot,
   type SchedulingSnapshot,
@@ -367,7 +368,7 @@ function formatRectifyResult(
 }
 
 async function promptRunMode(): Promise<
-  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | null
+  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | null
 > {
   const mode = await p.select({
     message: 'What would you like to do?',
@@ -375,12 +376,27 @@ async function promptRunMode(): Promise<
       { value: 'solve', label: 'Create schedule' },
       { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
       { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
+      {
+        value: 'fix-course',
+        label: 'Fix wrong student course (surgical — timetable stays frozen)',
+      },
+      {
+        value: 'drop-course',
+        label: 'Remove student from a course (surgical — timetable stays frozen)',
+      },
       { value: 'filter', label: 'Filter schedule by course codes' },
       { value: 'issues', label: 'Find issues in enrollment file' },
     ],
   })
   if (p.isCancel(mode)) return null
-  return mode as 'solve' | 'rectify' | 'late' | 'filter' | 'issues'
+  return mode as
+    | 'solve'
+    | 'rectify'
+    | 'late'
+    | 'filter'
+    | 'issues'
+    | 'fix-course'
+    | 'drop-course'
 }
 
 const ISSUE_PANEL_LINE_CAP = 200
@@ -1782,7 +1798,9 @@ async function main(): Promise<void> {
     args[0] === 'solve' ||
     args[0] === 'late' ||
     args[0] === 'filter' ||
-    args[0] === 'issues'
+    args[0] === 'issues' ||
+    args[0] === 'fix-course' ||
+    args[0] === 'drop-course'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -2073,6 +2091,89 @@ async function main(): Promise<void> {
         interactive: interactive || !flags.input,
       })
     })
+
+  program
+    .command('fix-course')
+    .description(
+      'Surgically move a student from a wrong course to a correct existing course (timetable frozen)',
+    )
+    .option('-i, --input <file>', 'Enrollment .xlsx from the last main run')
+    .option('--previous <dir>', 'Previous output folder containing snapshot.json')
+    .option('-o, --output <dir>', 'Output directory (default: ./unislot-out-fix)')
+    .option('--register <id>', 'Student register number')
+    .option('--from <code>', 'Wrong course code')
+    .option('--to <code>', 'Correct course code (must already be on the schedule)')
+    .option('--to-title <title>', 'Optional correct course title')
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
+    .option('-y, --yes', 'Non-interactive when required flags are provided', false)
+    .action(
+      async (flags: {
+        input?: string
+        previous?: string
+        output?: string
+        register?: string
+        from?: string
+        to?: string
+        toTitle?: string
+        nomenclature?: string
+        yes?: boolean
+      }) => {
+        const interactive =
+          !flags.yes &&
+          (!flags.input || !flags.previous || !flags.register || !flags.from || !flags.to)
+        process.exitCode = await runSurgicalEdit({
+          mode: 'fix-course',
+          input: flags.input,
+          previous: flags.previous,
+          output: flags.output,
+          register: flags.register,
+          from: flags.from,
+          to: flags.to,
+          toTitle: flags.toTitle,
+          nomenclature: flags.nomenclature,
+          skipPrompts: Boolean(flags.yes),
+          interactive: interactive || !flags.input,
+        })
+      },
+    )
+
+  program
+    .command('drop-course')
+    .description(
+      'Surgically remove one student–course registration everywhere (timetable frozen)',
+    )
+    .option('-i, --input <file>', 'Enrollment .xlsx from the last main run')
+    .option('--previous <dir>', 'Previous output folder containing snapshot.json')
+    .option('-o, --output <dir>', 'Output directory (default: ./unislot-out-fix)')
+    .option('--register <id>', 'Student register number')
+    .option('--course <code>', 'Course code to remove for that student')
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
+    .option('-y, --yes', 'Non-interactive when required flags are provided', false)
+    .action(
+      async (flags: {
+        input?: string
+        previous?: string
+        output?: string
+        register?: string
+        course?: string
+        nomenclature?: string
+        yes?: boolean
+      }) => {
+        const interactive =
+          !flags.yes && (!flags.input || !flags.previous || !flags.register || !flags.course)
+        process.exitCode = await runSurgicalEdit({
+          mode: 'drop-course',
+          input: flags.input,
+          previous: flags.previous,
+          output: flags.output,
+          register: flags.register,
+          course: flags.course,
+          nomenclature: flags.nomenclature,
+          skipPrompts: Boolean(flags.yes),
+          interactive: interactive || !flags.input,
+        })
+      },
+    )
 
   program
     .command('issues')

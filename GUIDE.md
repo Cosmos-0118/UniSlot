@@ -234,6 +234,34 @@ Outputs add:
 - `Late Enrollments`, `Run Log`, and `Clash Log` sheets
 - `late-enrollment-report.json` and `run-log.json`
 
+### Fix wrong student course / remove student from a course (surgical)
+
+Use these when a **published** schedule is already good and you only need to correct one student's enrollment — without moving anyone else's day or section.
+
+| Situation | Command |
+|-----------|---------|
+| Student was put on the wrong course code (e.g. typo `21MAB301TP` instead of `21MAB310T`) | `fix-course` |
+| Student should leave one course but stay on their others | `drop-course` |
+
+Both ask for:
+
+1. The enrollment `.xlsx` from the last main run  
+2. The previous output folder (`snapshot.json`)  
+3. Register number → pick the course → (for fix) enter the correct course code  
+
+The correct course for `fix-course` **must already appear on that schedule**. Empty wrong courses (one mistaken student only) are removed from the timetable automatically. Original input Excel is left untouched; a corrected `enrollment.xlsx` is written into the new output folder.
+
+```powershell
+npm run unislot -- fix-course -i enroll.xlsx --previous .\unislot-out -o .\unislot-out-fix --register RA2111003010001 --from 21MAB301TP --to 21MAB310T -y
+npm run unislot -- drop-course -i enroll.xlsx --previous .\unislot-out -o .\unislot-out-fix --register RA2111003010001 --course 21CSE101T -y
+```
+
+Or pick **Fix wrong student course** / **Remove student from a course** from the interactive menu.
+
+Prefer **rectify** when many students change, or when you need a brand-new course on the timetable. Prefer **late** when adding new registrations after publish.
+
+Surgical outputs rewrite `schedule.xlsx`, `clash-report.xlsx`, `course-emails.xlsx`, `snapshot.json`, plus `enrollment.xlsx`, `fix-report.json`, and `run-log.json`.
+
 ### Reading the new columns and sheets
 
 **`Late Adds`** is a change log, not a total. `5 +3` means the first late batch added 5 students and the second added 3, so the section grew by 8. The current run's trailing segment is bold amber. A blank cell means no late run has ever touched that section or course. The column is per-section on `Schedule` and `Details`, per-course on `Course Catalog` and `Course Emails`.
@@ -258,6 +286,8 @@ npm run unislot -- solve -i enroll.xlsx -o .\out -y
 npm run unislot -- solve -i enroll.xlsx -o .\out -y --seed 12345 --workers 8
 npm run unislot -- rectify --baseline old.xlsx --rectified new.xlsx --previous .\out -o .\out-r -y
 npm run unislot -- late --previous .\out --late late.xlsx -o .\out-late -y
+npm run unislot -- fix-course -i enroll.xlsx --previous .\out -o .\out-fix --register RA001 --from 21MAB301TP --to 21MAB310T -y
+npm run unislot -- drop-course -i enroll.xlsx --previous .\out -o .\out-fix --register RA001 --course 21CSE101T -y
 npm test
 ```
 

@@ -92,7 +92,7 @@ function cleanString(value: unknown): string {
     .join('')
 }
 
-function cleanRegisterNumber(value: unknown): string {
+export function cleanRegisterNumber(value: unknown): string {
   let s = cleanString(value)
   if (!s) return ''
   // Keep leading alphabetic prefixes (e.g., "RA", "AB") as part of register numbers.
@@ -100,7 +100,7 @@ function cleanRegisterNumber(value: unknown): string {
   return s.toUpperCase()
 }
 
-function cleanCourseCode(value: unknown): string {
+export function cleanCourseCode(value: unknown): string {
   let s = cleanString(value)
   if (!s) return ''
   s = s.replace(/\s+/g, '')

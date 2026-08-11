@@ -43,6 +43,28 @@ export type {
 } from './pipeline/lateRun'
 export { runLatePipeline } from './pipeline/lateRun'
 export type {
+  FixCourseMode,
+  FixEditReport,
+  FixPipelineResult,
+  RunFixOptions,
+} from './pipeline/fixRun'
+export { runFixPipeline } from './pipeline/fixRun'
+export type {
+  DropStudentCourseArgs,
+  FixStudentCourseArgs,
+  StudentCourseEditErrorCode,
+  StudentCourseEditResult,
+  StudentCourseRef,
+} from './merge/studentCourseEdit'
+export {
+  StudentCourseEditError,
+  listStudentCourses,
+  fixStudentCourse,
+  dropStudentCourse,
+  pruneEmptyCourse,
+} from './merge/studentCourseEdit'
+export { enrollmentRowsToWorkbookBuffer } from './io/excelEnrollment'
+export type {
   LateAddition,
   LateAdditionsResult,
   CapacityConflict,
@@ -107,7 +129,7 @@ export type {
   SectionCountChange,
 } from './merge/rectifyDiff'
 export { describePlacements, diffClashReports, diffSectionCounts } from './merge/rectifyDiff'
-export { parseExcelRows, loadAndValidate, validateBusinessRules } from './parse/parser'
+export { parseExcelRows, loadAndValidate, validateBusinessRules, cleanRegisterNumber, cleanCourseCode } from './parse/parser'
 export type {
   EnrollmentIssue,
   IssueCategory,

@@ -59,7 +59,12 @@ export function buildRunLogSheet(wb: ExcelJS.Workbook, runLog: RunLogEntry[]): v
       ...e.decisions.map((d) => `${d.kind}:${d.subject}=${d.choice}`),
       ...e.notes.slice(0, 4),
     ].join('; ')
-    const fillArgb = e.mode === 'late' ? XL.late : e.mode === 'rectify' ? XL.moved : XL.rowAlt
+    const fillArgb =
+      e.mode === 'late'
+        ? XL.late
+        : e.mode === 'rectify' || e.mode === 'fix-course' || e.mode === 'drop-course'
+          ? XL.moved
+          : XL.rowAlt
     const wrapped = applyDataRow(
       ws.getRow(r),
       [

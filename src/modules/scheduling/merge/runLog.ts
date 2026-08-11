@@ -1,5 +1,5 @@
 /** How a UniSlot run was started. */
-export type RunMode = 'solve' | 'rectify' | 'late'
+export type RunMode = 'solve' | 'rectify' | 'late' | 'fix-course' | 'drop-course'
 
 export type RunLogDecision = {
   kind: 'capacity' | 'clash' | 'parse' | 'other'

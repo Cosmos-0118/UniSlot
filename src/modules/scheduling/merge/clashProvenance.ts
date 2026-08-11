@@ -89,6 +89,27 @@ export function buildClashCause(entry: ClashEntry, ctx: ClashCauseContext): stri
     )
   }
 
+  if (ctx.operation === 'fix-course') {
+    const moved = (ctx.newlyAddedCourses ?? []).filter((c) => entry.courses.includes(c))
+    if (moved.length > 0) {
+      return (
+        `Fix-course (run #${ctx.seq}) moved ${entry.register_number} onto ` +
+        `${describeCourses(moved)} on ${entry.day}; other courses on that weekday stayed frozen.`
+      )
+    }
+    return (
+      `Fix-course (run #${ctx.seq}) introduced a clash for ${entry.register_number} on ${entry.day}: ` +
+      `${courseList}.`
+    )
+  }
+
+  if (ctx.operation === 'drop-course') {
+    return (
+      `Drop-course (run #${ctx.seq}) left a clash for ${entry.register_number} on ${entry.day}: ` +
+      `${courseList}.`
+    )
+  }
+
   // rectify
   const placed = (ctx.newlyAddedCourses ?? []).filter((c) => entry.courses.includes(c))
   if (placed.length > 0) {
