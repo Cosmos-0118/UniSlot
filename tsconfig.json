@@ -22,5 +22,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["cli/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": ["cli/**/*.ts", "src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
 }

@@ -8,6 +8,7 @@ Terminal evening-course scheduler for universities. Upload an enrollment Excel w
 
 - Node.js 20+
 - Python 3.11–3.13 (setup prefers 3.12; pin with `UNISLOT_PYTHON_VERSION=3.12`)
+  - Windows: `python` / `py` on PATH is enough; or set `UNISLOT_PYTHON` to `python.exe` (CMD `set`, PowerShell `$env:`)
 
 ## Install
 

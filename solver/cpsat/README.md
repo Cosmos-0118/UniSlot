@@ -5,9 +5,12 @@ Python package invoked by the Node CLI / `cpsatBridge.ts`.
 ```bash
 # from repo root
 npm run setup:cpsat
-# or:
+# or (Unix):
 python3 -m venv solver/cpsat/.venv
 solver/cpsat/.venv/bin/pip install -r solver/cpsat/requirements.txt
+# or (Windows):
+python -m venv solver/cpsat/.venv
+solver\cpsat\.venv\Scripts\pip install -r solver/cpsat/requirements.txt
 ```
 
 Run directly:

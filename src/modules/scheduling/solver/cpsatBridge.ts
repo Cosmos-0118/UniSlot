@@ -14,6 +14,10 @@ import {
   type CpsatSolution,
 } from './cpsatInstance'
 import { derivePortfolioSeeds } from './seedUtils'
+import {
+  resolveSystemPython,
+  formatPythonSetupHelp,
+} from './resolvePython'
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 /** Repo root: src/modules/scheduling/solver → ../../../../ */
@@ -60,7 +64,7 @@ export type RunCpsatOptions = {
   clashOnly?: boolean
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
-  /** Override python executable (default: solver/cpsat/.venv or python3). */
+  /** Override python executable (default: solver/cpsat/.venv, else system Python). */
   pythonPath?: string
 }
 
@@ -96,7 +100,25 @@ export async function resolveCpsatPython(override?: string): Promise<string> {
   const venvWin = path.join(CPSAT_DIR, '.venv', 'Scripts', 'python.exe')
   if (await pathExists(venvUnix)) return venvUnix
   if (await pathExists(venvWin)) return venvWin
-  return process.env.UNISLOT_PYTHON?.trim() || 'python3'
+  try {
+    const resolved = await resolveSystemPython({
+      allowUnsupported: true,
+    })
+    return resolved.executable
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      [
+        'CP-SAT Python not found (no venv and no system Python 3.11–3.13).',
+        'Run: npm run setup:cpsat',
+        '',
+        detail.includes('No suitable Python') || detail.includes('UNISLOT_PYTHON')
+          ? detail
+          : formatPythonSetupHelp(),
+      ].join('\n'),
+      { cause: err },
+    )
+  }
 }
 
 function parseProgressLine(line: string): CpsatProgressEvent | null {

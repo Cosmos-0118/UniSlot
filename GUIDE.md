@@ -4,7 +4,7 @@ This guide explains how to install UniSlot and produce a clash-optimal evening t
 
 ## 1. Install
 
-You need **Node.js 20+** and **Python 3.10+**.
+You need **Node.js 20+** and **Python 3.11–3.13**.
 
 ```powershell
 cd UniSlot
@@ -12,7 +12,23 @@ npm install
 npm run setup:cpsat
 ```
 
-`setup:cpsat` creates `solver/cpsat/.venv` and installs Google OR-Tools. Re-run it if you change machines or delete the venv.
+`setup:cpsat` finds Python on PATH (including Windows `python` / `py`), creates `solver/cpsat/.venv`, and installs Google OR-Tools. Re-run it if you change machines or delete the venv.
+
+**Windows tip:** `$env:UNISLOT_PYTHON=…` is PowerShell-only. In **CMD** use:
+
+```bat
+set UNISLOT_PYTHON=C:\Users\You\AppData\Local\Programs\Python\Python313\python.exe
+npm run setup:cpsat
+```
+
+In **PowerShell**:
+
+```powershell
+$env:UNISLOT_PYTHON="C:\Users\You\AppData\Local\Programs\Python\Python313\python.exe"
+npm run setup:cpsat
+```
+
+Prefer a local folder (not OneDrive) for the repo — synced folders often break Python venvs.
 
 Verify:
 
@@ -192,7 +208,9 @@ Long stretches on **proving** with an unchanged clash number are normal: CP-SAT 
 | Problem | What to try |
 |---------|-------------|
 | `OR-Tools venv not found` | `npm run setup:cpsat` |
-| Wrong Python | Set `UNISLOT_PYTHON=/path/to/python` then re-run setup, or use the venv under `solver/cpsat/.venv` |
+| Wrong / missing Python | Re-run `npm run setup:cpsat`. On Windows, set `UNISLOT_PYTHON` to `python.exe` (CMD: `set UNISLOT_PYTHON=…`, PowerShell: `$env:UNISLOT_PYTHON="…"`) then re-run setup |
+| `filename… syntax is incorrect` when setting env | You used PowerShell `$env:…` inside **CMD** — use `set UNISLOT_PYTHON=…` instead |
+| Setup fails under OneDrive | Move/clone the repo to a local path (e.g. `C:\Users\You\Developer\UniSlot`) and re-run setup |
 | File picker cancelled / missing | Pass `-i enroll.xlsx -o ./out -y` instead |
 | Validation errors | Fix the sheet per [docs/excel_schema.md](docs/excel_schema.md) |
 | Seems stuck on prove | Watch elapsed time and “since last improve”; leave it running or use `--time-limit` only if you accept a non-proven result |

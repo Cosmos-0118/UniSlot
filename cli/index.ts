@@ -90,10 +90,16 @@ async function ensurePythonReady(): Promise<string> {
       /* fall through */
     }
   }
+  const venvPip =
+    process.platform === 'win32'
+      ? path.join(CPSAT_DIR, '.venv', 'Scripts', 'pip.exe')
+      : path.join(CPSAT_DIR, '.venv', 'bin', 'pip')
   p.log.warn(
     `OR-Tools venv not found. Create it with:\n` +
-      chalk.cyan(`  python3 -m venv ${path.join(CPSAT_DIR, '.venv')}\n`) +
-      chalk.cyan(`  ${path.join(CPSAT_DIR, '.venv', 'bin', 'pip')} install -r ${path.join(CPSAT_DIR, 'requirements.txt')}`),
+      chalk.cyan(`  npm run setup:cpsat\n`) +
+      chalk.dim(
+        `  (manual: python -m venv ${path.join(CPSAT_DIR, '.venv')} && "${venvPip}" install -r ${path.join(CPSAT_DIR, 'requirements.txt')})`,
+      ),
   )
   const python = await resolveCpsatPython()
   return python

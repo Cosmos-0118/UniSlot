@@ -8,7 +8,7 @@
   },
   "scripts": {
     "unislot": "tsx --tsconfig tsconfig.json cli/index.ts",
-    "setup:cpsat": "node scripts/setup-cpsat.mjs",
+    "setup:cpsat": "tsx --tsconfig tsconfig.json scripts/setup-cpsat.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint ."
@@ -28,7 +28,8 @@
     },
     "archiver-utils": {
       "glob": "^13.0.0"
-    }
+    },
+    "brace-expansion@5": "5.0.9"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
