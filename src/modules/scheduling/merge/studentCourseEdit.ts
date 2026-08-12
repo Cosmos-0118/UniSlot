@@ -1,5 +1,6 @@
 import type { EnrollmentRow, Section, Student } from '../types'
 import { cleanCourseCode, cleanRegisterNumber } from '../parse/parser'
+import { SINGLE_SECTION_MAX } from '../solver/capacity'
 import {
   cloneSchedulingSnapshot,
   type SchedulingSnapshot,
@@ -33,6 +34,8 @@ export type FixStudentCourseArgs = {
   fromCode: string
   toCode: string
   toTitle?: string
+  /** Faculty label when creating a brand-new target course. */
+  toFaculty?: string | null
 }
 
 export type DropStudentCourseArgs = {
@@ -48,6 +51,8 @@ export type StudentCourseEditResult = {
   target_section_id?: string
   pruned_courses: string[]
   student_removed: boolean
+  /** True when `--to` was not on the schedule and a provisional section was created. */
+  created_new_course: boolean
 }
 
 function normalizeRegister(value: string): string {
@@ -164,6 +169,26 @@ function placeIntoLeastLoadedSection(
   return sec
 }
 
+/** Provisional single section for a course that was not on the previous schedule. */
+export function createProvisionalCourseSection(args: {
+  courseCode: string
+  courseTitle: string
+  faculty?: string | null
+}): Section {
+  const sectionId = args.courseCode
+  const faculty = args.faculty?.trim() || null
+  return {
+    section_id: sectionId,
+    course_code: args.courseCode,
+    course_title: args.courseTitle,
+    section_number: 1,
+    faculty: faculty || `Planning:${sectionId}`,
+    capacity: SINGLE_SECTION_MAX,
+    enrolled_students: [],
+    programs: [],
+  }
+}
+
 function scrubLateEnrollments(
   snapshot: SchedulingSnapshot,
   register: string,
@@ -195,8 +220,11 @@ export function listStudentCourses(
 }
 
 /**
- * Move one student from a wrong course onto an existing scheduled course.
- * Never creates new courses/sections or changes other students' placements.
+ * Move one student from a wrong course onto a correct course.
+ * If the target already has sections, places into the least-loaded one (no new weekday).
+ * If the target is absent, creates a provisional single section — the fix pipeline must
+ * then assign a weekday via CP-SAT (existing courses pinned) or greedy fallback.
+ * Never changes other students' sections or weekdays.
  */
 export function fixStudentCourse(
   input: SchedulingSnapshot,
@@ -234,13 +262,8 @@ export function fixStudentCourse(
     )
   }
 
-  const targetSections = snapshot.courseSections[toCode]
-  if (!targetSections?.length) {
-    throw new StudentCourseEditError(
-      'target_missing',
-      `Course ${toCode} is not on this schedule. Use late or rectify to add a new course.`,
-    )
-  }
+  let targetSections = snapshot.courseSections[toCode]
+  let created_new_course = false
 
   const removedRow = removeEnrollmentRow(snapshot.enrollmentRows, register, fromCode)
   removeFromCourseRosters(snapshot.courseSections, snapshot.students, register, fromCode)
@@ -253,10 +276,25 @@ export function fixStudentCourse(
   const toTitle =
     (args.toTitle && String(args.toTitle).trim()) ||
     courseTitleFromSnapshot(snapshot, toCode) ||
-    removedRow?.course_title ||
     ''
 
-  const targetSection = placeIntoLeastLoadedSection(targetSections, register, snapshot.students)
+  if (!targetSections?.length) {
+    created_new_course = true
+    const faculty =
+      (args.toFaculty != null && String(args.toFaculty).trim()) ||
+      removedRow?.faculty ||
+      null
+    snapshot.courseSections[toCode] = [
+      createProvisionalCourseSection({
+        courseCode: toCode,
+        courseTitle: toTitle,
+        faculty,
+      }),
+    ]
+    targetSections = snapshot.courseSections[toCode]
+  }
+
+  const targetSection = placeIntoLeastLoadedSection(targetSections!, register, snapshot.students)
   if (!student.enrolled_courses.includes(toCode)) {
     student.enrolled_courses.push(toCode)
     student.enrolled_courses.sort()
@@ -269,8 +307,11 @@ export function fixStudentCourse(
     mobile_number: removedRow?.mobile_number ?? student.mobile,
     email_id: removedRow?.email_id ?? student.email,
     course_code: toCode,
-    course_title: toTitle,
-    faculty: removedRow?.faculty ?? targetSection.faculty,
+    course_title: toTitle || targetSection.course_title || '',
+    faculty:
+      (args.toFaculty != null && String(args.toFaculty).trim()) ||
+      removedRow?.faculty ||
+      targetSection.faculty,
     registration_type: removedRow?.registration_type ?? null,
     remarks: removedRow?.remarks ?? null,
   })
@@ -283,6 +324,7 @@ export function fixStudentCourse(
     target_section_id: targetSection.section_id,
     pruned_courses,
     student_removed: false,
+    created_new_course,
   }
 }
 
@@ -332,5 +374,6 @@ export function dropStudentCourse(
     removed_course: courseCode,
     pruned_courses,
     student_removed,
+    created_new_course: false,
   }
 }

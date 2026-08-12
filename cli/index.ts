@@ -384,7 +384,7 @@ async function promptRunMode(): Promise<
       { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
       {
         value: 'fix-course',
-        label: 'Fix wrong student course (surgical — timetable stays frozen)',
+        label: 'Fix wrong student course (surgical — existing frozen; new course via CP-SAT)',
       },
       {
         value: 'drop-course',
@@ -2101,15 +2101,18 @@ async function main(): Promise<void> {
   program
     .command('fix-course')
     .description(
-      'Surgically move a student from a wrong course to a correct existing course (timetable frozen)',
+      'Surgically move a student from a wrong course to the correct one (existing target frozen; new target placed via CP-SAT)',
     )
     .option('-i, --input <file>', 'Enrollment .xlsx from the last main run')
     .option('--previous <dir>', 'Previous output folder containing snapshot.json')
     .option('-o, --output <dir>', 'Output directory (default: ./unislot-out-fix)')
     .option('--register <id>', 'Student register number')
     .option('--from <code>', 'Wrong course code')
-    .option('--to <code>', 'Correct course code (must already be on the schedule)')
-    .option('--to-title <title>', 'Optional correct course title')
+    .option(
+      '--to <code>',
+      'Correct course code (existing on schedule, or brand-new — CP-SAT places weekday)',
+    )
+    .option('--to-title <title>', 'Optional correct course title (recommended when creating new)')
     .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
     .option('-y, --yes', 'Non-interactive when required flags are provided', false)
     .action(

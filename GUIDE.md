@@ -259,6 +259,8 @@ Use these when a **published** schedule is already good and you only need to cor
 | Situation | Command |
 |-----------|---------|
 | Student was put on the wrong course code (e.g. typo `21MAB301TP` instead of `21MAB310T`) | `fix-course` |
+| Correct course is **already on** the schedule | `fix-course` places the student into the least-loaded section (no CP-SAT) |
+| Correct course is **brand-new** (not on the schedule yet) | `fix-course` creates it and places its weekday via CP-SAT with all existing weekdays pinned |
 | Student should leave one course but stay on their others | `drop-course` |
 
 Both ask for:
@@ -267,16 +269,17 @@ Both ask for:
 2. The previous output folder (`snapshot.json`)  
 3. Register number → pick the course → (for fix) enter the correct course code  
 
-The correct course for `fix-course` **must already appear on that schedule**. Empty wrong courses (one mistaken student only) are removed from the timetable automatically. Original input Excel is left untouched; a corrected `enrollment.xlsx` is written into the new output folder.
+Empty wrong courses (one mistaken student only) are removed from the timetable automatically. Original input Excel is left untouched; a corrected `enrollment.xlsx` is written into the new output folder. Use `--to-title` (or the interactive title prompt) when creating a brand-new course so the schedule shows a proper name.
 
 ```powershell
 npm run unislot -- fix-course -i enroll.xlsx --previous .\unislot-out -o .\unislot-out-fix --register RA2111003010001 --from 21MAB301TP --to 21MAB310T -y
+npm run unislot -- fix-course -i enroll.xlsx --previous .\unislot-out -o .\unislot-out-fix --register RA2111003010001 --from 21MAB301TP --to 21NEW101T --to-title "New Elective" -y
 npm run unislot -- drop-course -i enroll.xlsx --previous .\unislot-out -o .\unislot-out-fix --register RA2111003010001 --course 21CSE101T -y
 ```
 
 Or pick **Fix wrong student course** / **Remove student from a course** from the interactive menu.
 
-Prefer **rectify** when many students change, or when you need a brand-new course on the timetable. Prefer **late** when adding new registrations after publish.
+Prefer **rectify** when many students change enrollments at once. Prefer **late** when adding new registrations after publish. A one-student correction onto a missing course code can stay on `fix-course`.
 
 Surgical outputs rewrite `schedule.xlsx`, `clash-report.xlsx`, `course-emails.xlsx`, `snapshot.json`, plus `enrollment.xlsx`, `fix-report.json`, and `run-log.json`.
 

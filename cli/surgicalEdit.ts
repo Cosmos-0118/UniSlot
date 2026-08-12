@@ -77,6 +77,9 @@ async function writeFixExports(outDir: string, result: FixPipelineResult): Promi
     register_number: report?.register_number,
     removed_course: report?.removed_course,
     added_course: report?.added_course,
+    created_new_course: report?.created_new_course ?? false,
+    placement_method: report?.placement_method ?? 'existing',
+    new_course_slot: report?.new_course_slot,
     pruned_courses: report?.pruned_courses ?? [],
     student_removed: report?.student_removed ?? false,
     infeasible: result.infeasible ?? false,
@@ -214,7 +217,7 @@ export async function runSurgicalEdit(opts: {
     }
     if (!toCode && opts.interactive && !opts.skipPrompts) {
       const answer = await p.text({
-        message: 'Correct course code (must already be on this schedule)',
+        message: 'Correct course code (existing on schedule, or new — CP-SAT will place it)',
         placeholder: 'e.g. 21MAB310T',
       })
       if (p.isCancel(answer)) {
@@ -227,6 +230,12 @@ export async function runSurgicalEdit(opts: {
       p.log.error('fix-course requires --from and --to (or interactive prompts).')
       return 1
     }
+    const targetExists = Boolean(snapshot.courseSections[toCode]?.length)
+    if (!targetExists && opts.interactive && !opts.skipPrompts) {
+      p.log.warn(
+        `${toCode} is not on this schedule — a new course will be created and placed with CP-SAT (existing weekdays stay frozen).`,
+      )
+    }
     if (!toTitle && opts.interactive && !opts.skipPrompts) {
       const existingTitle =
         snapshot.courseSections[toCode]?.[0]?.course_title ||
@@ -234,7 +243,9 @@ export async function runSurgicalEdit(opts: {
         ''
       if (!existingTitle) {
         const answer = await p.text({
-          message: 'Correct course title (optional)',
+          message: targetExists
+            ? 'Correct course title (optional)'
+            : 'New course title (recommended)',
           placeholder: 'Leave blank if unknown',
         })
         if (p.isCancel(answer)) {
@@ -266,9 +277,13 @@ export async function runSurgicalEdit(opts: {
   }
 
   if (opts.interactive && !opts.skipPrompts) {
+    const creatingNew =
+      opts.mode === 'fix-course' && toCode && !snapshot.courseSections[toCode]?.length
     const summary =
       opts.mode === 'fix-course'
-        ? `Move ${register}: ${fromCode} → ${toCode} (others stay frozen)`
+        ? creatingNew
+          ? `Move ${register}: ${fromCode} → ${toCode} (new course · CP-SAT places weekday · others stay frozen)`
+          : `Move ${register}: ${fromCode} → ${toCode} (others stay frozen)`
         : `Drop ${register} from ${dropCode} (others stay frozen)`
     const ok = await p.confirm({ message: summary, initialValue: true })
     if (p.isCancel(ok) || !ok) {
@@ -337,6 +352,12 @@ export async function runSurgicalEdit(opts: {
             (report.target_section_id ? ` · ${report.target_section_id}` : '')
           : `  removed ${report.removed_course}`,
       ]
+      if (report.created_new_course) {
+        lines.push(
+          `  new course placed via ${report.placement_method}` +
+            (report.new_course_slot !== undefined ? ` · weekday slot ${report.new_course_slot}` : ''),
+        )
+      }
       if (report.pruned_courses.length) {
         lines.push(`  pruned empty: ${report.pruned_courses.join(', ')}`)
       }

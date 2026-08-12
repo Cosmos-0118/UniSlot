@@ -45,6 +45,7 @@ export { runLatePipeline } from './pipeline/lateRun'
 export type {
   FixCourseMode,
   FixEditReport,
+  FixPlacementMethod,
   FixPipelineResult,
   RunFixOptions,
 } from './pipeline/fixRun'
@@ -58,6 +59,7 @@ export type {
 } from './merge/studentCourseEdit'
 export {
   StudentCourseEditError,
+  createProvisionalCourseSection,
   listStudentCourses,
   fixStudentCourse,
   dropStudentCourse,

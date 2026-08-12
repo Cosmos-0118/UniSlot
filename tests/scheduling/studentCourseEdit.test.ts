@@ -173,14 +173,30 @@ describe('fixStudentCourse', () => {
     ])
   })
 
-  it('rejects missing target course', () => {
-    expect(() =>
-      fixStudentCourse(makeSnapshot(), {
-        register: 'RA999',
-        fromCode: '21MAB301TP',
-        toCode: '21MISSING',
-      }),
-    ).toThrow(/not on this schedule/)
+  it('creates a provisional section when the target course is missing', () => {
+    const before = makeSnapshot()
+    const otherSlots = { ...before.slot_assignments }
+    const result = fixStudentCourse(before, {
+      register: 'RA999',
+      fromCode: '21MAB301TP',
+      toCode: '21NEW101T',
+      toTitle: 'Brand New Course',
+    })
+
+    expect(result.created_new_course).toBe(true)
+    expect(result.added_course).toBe('21NEW101T')
+    expect(result.pruned_courses).toEqual(['21MAB301TP'])
+    expect(result.snapshot.courseSections['21NEW101T']).toHaveLength(1)
+    expect(result.snapshot.courseSections['21NEW101T']![0]!.enrolled_students).toEqual(['RA999'])
+    expect(result.snapshot.courseSections['21NEW101T']![0]!.course_title).toBe('Brand New Course')
+    // No weekday yet — fix pipeline must place via CP-SAT
+    expect(result.snapshot.slot_assignments['21NEW101T']).toBeUndefined()
+    expect(result.snapshot.students.RA999!.enrolled_courses.sort()).toEqual([
+      '21CSE101T',
+      '21NEW101T',
+    ])
+    expect(result.snapshot.slot_assignments['21CSE101T']).toBe(otherSlots['21CSE101T'])
+    expect(result.snapshot.slot_assignments['21MAB310T']).toBe(otherSlots['21MAB310T'])
   })
 
   it('rejects duplicate target enrollment', () => {
@@ -191,6 +207,15 @@ describe('fixStudentCourse', () => {
         toCode: '21CSE101T',
       }),
     ).toThrow(/already enrolled/)
+  })
+
+  it('marks created_new_course false when moving onto an existing course', () => {
+    const result = fixStudentCourse(makeSnapshot(), {
+      register: 'RA999',
+      fromCode: '21MAB301TP',
+      toCode: '21MAB310T',
+    })
+    expect(result.created_new_course).toBe(false)
   })
 })
 

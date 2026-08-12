@@ -1,7 +1,9 @@
 import type {
   ClashReport,
+  ConflictGraph,
   CourseEmailGroup,
   Schedule,
+  Student,
   ValidationResult,
 } from '../types'
 import type { SchedulingStats } from '../solver/metrics'
@@ -35,6 +37,13 @@ import {
   type StudentCourseEditResult,
 } from '../merge/studentCourseEdit'
 import {
+  buildFixedDays,
+  freeCourseCodes,
+  inferAllowSaturdayFromSnapshot,
+} from '../merge/enrollmentDelta'
+import { placeFreeCourseWeekdays, preflightRectify } from '../merge/rectifyPlacement'
+import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
+import {
   buildClashXlsxBuffer,
   buildCourseEmailsXlsxBuffer,
   buildScheduleXlsxBuffer,
@@ -43,9 +52,10 @@ import { computeCourseEmailGroups, type PipelineProgressEvent } from './run'
 import { throwIfAborted } from './cancellation'
 import { enrollmentRowsToWorkbookBuffer } from '../io/excelEnrollment'
 import DEFAULT_PROGRAM_NOMENCLATURE_MAP from '../io/programNomenclatureMap.json'
-import { inferAllowSaturdayFromSnapshot } from '../merge/enrollmentDelta'
 
 export type FixCourseMode = 'fix-course' | 'drop-course'
+
+export type FixPlacementMethod = 'existing' | 'cpsat' | 'greedy-fallback'
 
 export type RunFixOptions = {
   previousSnapshot: SchedulingSnapshot
@@ -61,6 +71,11 @@ export type RunFixOptions = {
   programNomenclatureXlsx?: ArrayBuffer
   allowSaturdayForMath?: boolean
   saturdayExtraCourseCodes?: string[]
+  cpsatTimeLimitSeconds?: number
+  cpsatWorkers?: number
+  cpsatAbsoluteGap?: number
+  cpsatProvePlateauSeconds?: number
+  cpsatFullProve?: boolean
 }
 
 export type FixEditReport = {
@@ -71,6 +86,9 @@ export type FixEditReport = {
   target_section_id?: string
   pruned_courses: string[]
   student_removed: boolean
+  created_new_course: boolean
+  placement_method: FixPlacementMethod
+  new_course_slot?: number
   red_before: number
   red_after: number
 }
@@ -102,6 +120,9 @@ export type FixPipelineResult = {
   infeasible_reason?: string
 }
 
+const DEFAULT_FIX_TIME_LIMIT_SECONDS = 300
+const DEFAULT_FIX_PLATEAU_SECONDS = 20
+
 function emptyFixResult(validation: ValidationResult): FixPipelineResult {
   return {
     validation,
@@ -121,8 +142,9 @@ function emptyFixResult(validation: ValidationResult): FixPipelineResult {
 }
 
 /**
- * Surgical fix/drop: mutate one student–course assignment on a frozen snapshot,
- * rebuild exports without re-solving weekdays.
+ * Surgical fix/drop: mutate one student–course assignment.
+ * Existing target → rebuild exports with weekdays frozen.
+ * Brand-new target → pin existing weekdays and place the new course via CP-SAT (greedy fallback).
  */
 export async function runFixPipeline(
   onProgress: (event: PipelineProgressEvent) => void,
@@ -172,6 +194,56 @@ export async function runFixPipeline(
   const working = edit.snapshot
   throwIfAborted(signal)
 
+  const allowSaturdayForMath =
+    options.allowSaturdayForMath ?? inferAllowSaturdayFromSnapshot(previous)
+  const saturdayExtraCourseCodes =
+    options.saturdayExtraCourseCodes ?? previous.saturdayExtraCourseCodes ?? []
+
+  let placementMethod: FixPlacementMethod = 'existing'
+  let solverStatus = 'SNAPSHOT'
+  let solverMessage = 'Surgical edit — timetable weekdays frozen'
+  let solverUsed = 'snapshot-rebuild'
+  let solverTimeSeconds = 0
+  let newCourseSlot: number | undefined
+  let ortoolsVersion: string | undefined
+  let pythonVersion: string | undefined
+
+  if (edit.created_new_course && edit.added_course) {
+    emit({
+      stage: 'schedule',
+      message: `Placing new course ${edit.added_course} with existing weekdays frozen…`,
+      fraction: 0.2,
+    })
+
+    const placed = await placeNewFixCourse({
+      working,
+      newCourseCode: edit.added_course,
+      allowSaturdayForMath,
+      saturdayExtraCourseCodes,
+      options,
+      emit,
+      signal,
+    })
+    if (!placed.ok) {
+      return {
+        ...emptyFixResult(validation),
+        infeasible: true,
+        infeasible_reason: placed.reason,
+        runLog: previous.run_log ?? [],
+        clashProvenance: previous.clash_provenance ?? {},
+      }
+    }
+    working.slot_assignments = placed.slot_assignments
+    placementMethod = placed.placement_method
+    solverStatus = placed.solver_status
+    solverMessage = placed.solver_message
+    solverUsed = placed.solver_used
+    solverTimeSeconds = placed.solver_time_seconds
+    newCourseSlot = placed.new_course_slot
+    ortoolsVersion = placed.ortools_version
+    pythonVersion = placed.python_version
+  }
+
   emit({ stage: 'build', message: 'Rebuilding schedule and clash report…', fraction: 0.4 })
 
   const { buildSchedule, computeClashReport, auditScheduleHardConstraints, parallelHardCap } =
@@ -180,10 +252,6 @@ export async function runFixPipeline(
 
   const facultyConstraints = extractFacultyConstraints(working.courseSections)
   const sectionCount = Object.values(working.courseSections).reduce((n, s) => n + s.length, 0)
-  const allowSaturdayForMath =
-    options.allowSaturdayForMath ?? inferAllowSaturdayFromSnapshot(previous)
-  const saturdayExtraCourseCodes =
-    options.saturdayExtraCourseCodes ?? previous.saturdayExtraCourseCodes ?? []
 
   const audit = auditScheduleHardConstraints(
     working.courseSections,
@@ -233,8 +301,8 @@ export async function runFixPipeline(
     working.courseSections,
     working.slot_assignments,
     {
-      solver_used: 'snapshot-rebuild',
-      solver_time_seconds: 0,
+      solver_used: solverUsed,
+      solver_time_seconds: solverTimeSeconds,
       hard_constraints_feasible: audit.structuralFeasible,
       hard_constraint_violations: audit.structuralViolations,
       solver_primary_metrics_zero:
@@ -260,7 +328,7 @@ export async function runFixPipeline(
     seq,
     at,
     operation: mode,
-    newlyAddedCourses: edit.added_course ? [edit.added_course] : [],
+    newlyAddedCourses: edit.created_new_course && edit.added_course ? [edit.added_course] : [],
   })
 
   const notes: string[] = [
@@ -269,10 +337,20 @@ export async function runFixPipeline(
       : `Dropped ${edit.register_number} from ${edit.removed_course}`,
   ]
   if (edit.target_section_id) notes.push(`Placed into ${edit.target_section_id}`)
+  if (edit.created_new_course && edit.added_course) {
+    notes.push(
+      `Created new course ${edit.added_course}` +
+        (newCourseSlot !== undefined ? ` on weekday slot ${newCourseSlot}` : '') +
+        ` via ${placementMethod}`,
+    )
+  }
   if (edit.pruned_courses.length) {
     notes.push(`Pruned empty course(s): ${edit.pruned_courses.join(', ')}`)
   }
   if (edit.student_removed) notes.push(`Removed student ${edit.register_number} (no courses left)`)
+
+  const coursesAdded =
+    (edit.created_new_course ? 1 : 0) - (edit.pruned_courses.length ? edit.pruned_courses.length : 0)
 
   const runEntry = createRunLogEntry(
     {
@@ -285,13 +363,13 @@ export async function runFixPipeline(
       },
       output_dir: options.outputDir,
       seed: options.seed ?? previous.seed,
-      solver_status: 'SNAPSHOT',
+      solver_status: solverStatus,
       students_before: Object.keys(previous.students).length,
       students_after: Object.keys(working.students).length,
       students_added: 0,
       registrations_added: options.mode === 'fix-course' ? 0 : -1,
-      courses_added: edit.pruned_courses.length ? -edit.pruned_courses.length : 0,
-      sections_created: [],
+      courses_added: coursesAdded,
+      sections_created: edit.created_new_course && edit.target_section_id ? [edit.target_section_id] : [],
       students_moved_between_sections: 0,
       capacity_waivers: [],
       parked: [],
@@ -306,7 +384,8 @@ export async function runFixPipeline(
           choice: options.mode,
           detail:
             options.mode === 'fix-course'
-              ? `${edit.removed_course}→${edit.added_course}`
+              ? `${edit.removed_course}→${edit.added_course}` +
+                (edit.created_new_course ? ` (new/${placementMethod})` : '')
               : edit.removed_course,
         },
       ],
@@ -332,8 +411,16 @@ export async function runFixPipeline(
         : {}),
     ...(previous.workers !== undefined ? { workers: previous.workers } : {}),
     ...(previous.portfolio !== undefined ? { portfolio: previous.portfolio } : {}),
-    ...(previous.ortools_version ? { ortools_version: previous.ortools_version } : {}),
-    ...(previous.python_version ? { python_version: previous.python_version } : {}),
+    ...(ortoolsVersion
+      ? { ortools_version: ortoolsVersion }
+      : previous.ortools_version
+        ? { ortools_version: previous.ortools_version }
+        : {}),
+    ...(pythonVersion
+      ? { python_version: pythonVersion }
+      : previous.python_version
+        ? { python_version: previous.python_version }
+        : {}),
     late_enrollments: working.late_enrollments?.map((r) => ({ ...r })),
     run_log: runLog,
     clash_provenance: clashProvenance,
@@ -360,7 +447,13 @@ export async function runFixPipeline(
     seed: schedulingSnapshot.seed,
   })
 
-  emit({ stage: 'done', message: 'Surgical edit complete', fraction: 1 })
+  emit({
+    stage: 'done',
+    message: edit.created_new_course
+      ? `Surgical edit complete · new course placed via ${placementMethod}`
+      : 'Surgical edit complete',
+    fraction: 1,
+  })
 
   return {
     validation,
@@ -386,6 +479,9 @@ export async function runFixPipeline(
       target_section_id: edit.target_section_id,
       pruned_courses: edit.pruned_courses,
       student_removed: edit.student_removed,
+      created_new_course: edit.created_new_course,
+      placement_method: placementMethod,
+      new_course_slot: newCourseSlot,
       red_before: previousClashReport.students_with_clashes,
       red_after: clashReport.students_with_clashes,
     },
@@ -393,7 +489,241 @@ export async function runFixPipeline(
     clashProvenance,
     allowSaturdayForMath,
     saturdayExtraCourseCodes,
-    solver_status: 'SNAPSHOT',
-    solver_message: 'Surgical edit — timetable weekdays frozen',
+    solver_status: solverStatus,
+    solver_message: solverMessage,
+  }
+}
+
+type PlaceNewFixResult =
+  | {
+      ok: true
+      slot_assignments: Record<string, number>
+      placement_method: 'cpsat' | 'greedy-fallback'
+      solver_status: string
+      solver_message: string
+      solver_used: string
+      solver_time_seconds: number
+      new_course_slot: number
+      ortools_version?: string
+      python_version?: string
+    }
+  | { ok: false; reason: string }
+
+async function placeNewFixCourse(args: {
+  working: SchedulingSnapshot
+  newCourseCode: string
+  allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes: string[]
+  options: RunFixOptions
+  emit: (event: PipelineProgressEvent) => void
+  signal?: AbortSignal
+}): Promise<PlaceNewFixResult> {
+  const {
+    working,
+    newCourseCode,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+    options,
+    emit,
+    signal,
+  } = args
+
+  const allCourseCodes = new Set(Object.keys(working.courseSections))
+  // Pin from the post-edit working snapshot so pruned typo courses are not required,
+  // and the brand-new code remains free for placement.
+  const fixedDays = buildFixedDays(working, allCourseCodes)
+  const free = freeCourseCodes(allCourseCodes, fixedDays)
+
+  if (!free.includes(newCourseCode)) {
+    return {
+      ok: false,
+      reason: `Expected ${newCourseCode} to need a weekday, but it was already pinned.`,
+    }
+  }
+  if (free.length !== 1 || free[0] !== newCourseCode) {
+    return {
+      ok: false,
+      reason: `Unexpected free courses during surgical fix: ${free.join(', ') || '(none)'}.`,
+    }
+  }
+
+  const conflictGraph = buildConflictGraph(working.students, working.courseSections)
+  const facultyConstraints = extractFacultyConstraints(working.courseSections)
+
+  const preflight = preflightRectify({
+    fixedDays,
+    freeCourses: free,
+    courseSections: working.courseSections,
+    facultyConstraints,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+  })
+  if (!preflight.ok) {
+    return { ok: false, reason: preflight.blockers.join(' ') }
+  }
+
+  const solved = await solveNewFixCourse({
+    courseSections: working.courseSections,
+    conflictGraph,
+    facultyConstraints,
+    students: working.students,
+    fixedDays,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+    options,
+    emit,
+    signal,
+  })
+
+  let slotByCourse: Record<string, number>
+  let placement_method: 'cpsat' | 'greedy-fallback'
+  let solver_status: string
+  let solver_message: string
+  let solver_used: string
+  let solver_time_seconds = 0
+  let ortools_version: string | undefined
+  let python_version: string | undefined
+
+  if (solved) {
+    slotByCourse = solved.slot_by_course
+    placement_method = 'cpsat'
+    solver_status = solved.status
+    solver_message = solved.message ?? `Placed new course ${newCourseCode} via CP-SAT`
+    solver_used = solved.solver_used
+    solver_time_seconds = solved.solver_time_seconds
+    ortools_version = solved.ortools_version
+    python_version = solved.python_version
+  } else {
+    emit({
+      stage: 'schedule',
+      message: 'CP-SAT unavailable — falling back to greedy placement',
+      fraction: 0.35,
+    })
+    const greedy = placeFreeCourseWeekdays(
+      free,
+      fixedDays,
+      working.courseSections,
+      conflictGraph,
+      facultyConstraints,
+      allowSaturdayForMath,
+      saturdayExtraCourseCodes,
+    )
+    if (!greedy) {
+      return {
+        ok: false,
+        reason: `Could not place ${newCourseCode} on any weekday without moving an existing course.`,
+      }
+    }
+    slotByCourse = greedy.slot_by_course
+    placement_method = 'greedy-fallback'
+    solver_status = 'GREEDY'
+    solver_message = `Placed new course ${newCourseCode} via greedy fallback`
+    solver_used = 'fix-greedy'
+  }
+
+  const new_course_slot = slotByCourse[newCourseCode]
+  if (new_course_slot === undefined) {
+    return { ok: false, reason: `Solver did not return a weekday for ${newCourseCode}.` }
+  }
+
+  return {
+    ok: true,
+    slot_assignments: sectionSlotsFromCourseSlots(working.courseSections, slotByCourse),
+    placement_method,
+    solver_status,
+    solver_message,
+    solver_used,
+    solver_time_seconds,
+    new_course_slot,
+    ortools_version,
+    python_version,
+  }
+}
+
+async function solveNewFixCourse(args: {
+  courseSections: Record<string, import('../types').Section[]>
+  conflictGraph: ConflictGraph
+  facultyConstraints: Record<string, string[]>
+  students: Record<string, Student>
+  fixedDays: Record<string, number>
+  allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes: string[]
+  options: RunFixOptions
+  emit: (event: PipelineProgressEvent) => void
+  signal?: AbortSignal
+}) {
+  const { runCpsatScheduler } = await import('../solver/cpsatBridge')
+  const { buildGreedyHint } = await import('../solver/greedyHint')
+  const { computeSchedulingLowerBounds } = await import('../solver/lowerBounds')
+  const { options, emit } = args
+
+  const warm = buildGreedyHint({
+    courseSections: args.courseSections,
+    conflictGraph: args.conflictGraph,
+    facultyConstraints: args.facultyConstraints,
+    students: args.students,
+    allowSaturdayForMath: args.allowSaturdayForMath,
+    saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
+    seed: options.seed ?? 42,
+  })
+  const hint = { ...warm.hint, ...args.fixedDays }
+
+  const structuralLb = computeSchedulingLowerBounds(
+    args.courseSections,
+    args.conflictGraph,
+    args.students,
+    {
+      allowSaturdayForMath: args.allowSaturdayForMath,
+      saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
+    },
+  )
+
+  try {
+    const cpsat = await runCpsatScheduler(
+      args.courseSections,
+      args.conflictGraph,
+      args.facultyConstraints,
+      args.students,
+      {
+        timeLimitSeconds: options.cpsatTimeLimitSeconds ?? DEFAULT_FIX_TIME_LIMIT_SECONDS,
+        workers: options.cpsatWorkers,
+        hint,
+        fixedDays: args.fixedDays,
+        minClashWeightLowerBound: structuralLb.min_clash_weight_lower_bound,
+        minRedStudentsLowerBound: structuralLb.min_red_students_lower_bound,
+        portfolio: 0,
+        absoluteGap: options.cpsatAbsoluteGap,
+        provePlateauSeconds:
+          options.cpsatProvePlateauSeconds ??
+          (options.cpsatFullProve ? undefined : DEFAULT_FIX_PLATEAU_SECONDS),
+        fullProve: options.cpsatFullProve,
+        allowSaturdayForMath: args.allowSaturdayForMath,
+        saturdayExtraCourseCodes: args.saturdayExtraCourseCodes,
+        seed: options.seed,
+        signal: args.signal,
+        onProgress: (evt) => {
+          if (evt.type === 'progress' || evt.type === 'heartbeat') {
+            emit({
+              stage: 'schedule',
+              message: evt.phase_label ?? evt.phase,
+              fraction: 0.2 + Math.min(0.15, (evt.elapsed ?? 0) / 120),
+              cpsat: evt,
+            })
+          }
+        },
+      },
+    )
+    if (!cpsat.slot_by_course || Object.keys(cpsat.slot_by_course).length === 0) return null
+    return cpsat
+  } catch (err) {
+    if (err instanceof Error && err.name === 'PipelineCancelledError') throw err
+    const { PipelineCancelledError } = await import('./cancellation')
+    if (err instanceof PipelineCancelledError) throw err
+    emit({
+      stage: 'schedule',
+      message: `CP-SAT failed: ${err instanceof Error ? err.message : String(err)}`,
+      fraction: 0.35,
+    })
+    return null
   }
 }
