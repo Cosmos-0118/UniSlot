@@ -1128,6 +1128,32 @@ export function createSolveSpinner(workers = cpus().length) {
   }
 }
 
+/**
+ * Undo cursor-hide / raw-mode leftovers so the next Clack prompt can read keys.
+ * Windows cmd/PowerShell often keep a CR from Enter or hide the cursor after
+ * ANSI animations and native file dialogs — the following select then
+ * auto-submits or never appears.
+ */
+export function restoreCliTerminal(): void {
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1b[?25h\x1b[0m')
+  }
+  if (!process.stdin.isTTY) return
+  try {
+    process.stdin.setRawMode?.(false)
+  } catch {
+    /* ignore */
+  }
+  try {
+    process.stdin.pause()
+    while (process.stdin.read() !== null) {
+      /* drop leftover CR/LF from the previous prompt or dialog */
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 let bannerShown = false
 
 async function sleep(ms: number): Promise<void> {

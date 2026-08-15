@@ -3,6 +3,32 @@ import { platform } from 'node:os'
 import path from 'node:path'
 import { access } from 'node:fs/promises'
 
+/**
+ * Decode a path written by a spawned Windows helper (PowerShell stdout is often
+ * UTF-16LE when redirected; Node would otherwise see NULs and the path "fails").
+ */
+export function decodeSpawnedPath(buf: Buffer): string {
+  if (!buf.length) return ''
+  let text: string
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    text = buf.subarray(2).toString('utf16le')
+  } else if (buf.includes(0) && buf.length % 2 === 0) {
+    text = buf.toString('utf16le')
+  } else {
+    text = buf.toString('utf8')
+  }
+  return (
+    text
+      .replace(/^\uFEFF/, '')
+      .replace(new RegExp(String.fromCharCode(0), 'g'), '')
+      .trim()
+      .replace(/^["']+|["']+$/g, '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? ''
+  )
+}
+
 async function which(cmd: string): Promise<string | null> {
   return new Promise((resolve) => {
     const child = spawn(platform() === 'win32' ? 'where' : 'which', [cmd], {
@@ -95,45 +121,93 @@ async function zenityFolder(prompt: string): Promise<string | null> {
   })
 }
 
-async function windowsOpenFile(prompt: string): Promise<string | null> {
-  const ps = `
+function psSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+/**
+ * WinForms dialogs must run on an STA thread, write UTF-8, and own a TopMost
+ * parent so the picker is not hidden behind the terminal (common on Windows).
+ */
+function runWindowsFormsDialog(body: string): Promise<string | null> {
+  const script = `
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
-$f = New-Object System.Windows.Forms.OpenFileDialog
-$f.Filter = 'Excel (*.xlsx)|*.xlsx|All files (*.*)|*.*'
-$f.Title = '${prompt.replace(/'/g, "''")}'
-if ($f.ShowDialog() -eq 'OK') { Write-Output $f.FileName }
+${body}
 `
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
   return new Promise((resolve) => {
-    const child = spawn('powershell', ['-NoProfile', '-Command', ps], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    let out = ''
+    const chunks: Buffer[] = []
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    )
     child.stdout?.on('data', (d: Buffer) => {
-      out += d.toString()
+      chunks.push(d)
     })
-    child.on('close', (code) => resolve(code === 0 ? out.trim() || null : null))
+    child.on('close', () => {
+      const picked = decodeSpawnedPath(Buffer.concat(chunks))
+      resolve(picked || null)
+    })
     child.on('error', () => resolve(null))
   })
 }
 
-async function windowsChooseFolder(prompt: string): Promise<string | null> {
-  const ps = `
-Add-Type -AssemblyName System.Windows.Forms
-$f = New-Object System.Windows.Forms.FolderBrowserDialog
-$f.Description = '${prompt.replace(/'/g, "''")}'
-if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }
+function windowsOwnerFormPrelude(): string {
+  return `
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.WindowState = 'Minimized'
+$owner.FormBorderStyle = 'FixedToolWindow'
+$owner.Width = 1
+$owner.Height = 1
+$null = $owner.Show()
+$owner.Activate()
 `
-  return new Promise((resolve) => {
-    const child = spawn('powershell', ['-NoProfile', '-Command', ps], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    let out = ''
-    child.stdout?.on('data', (d: Buffer) => {
-      out += d.toString()
-    })
-    child.on('close', (code) => resolve(code === 0 ? out.trim() || null : null))
-    child.on('error', () => resolve(null))
-  })
+}
+
+function windowsOwnerFormCleanup(): string {
+  return `
+$owner.Close()
+$owner.Dispose()
+`
+}
+
+async function windowsOpenFile(prompt: string): Promise<string | null> {
+  return runWindowsFormsDialog(`
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Filter = 'Excel (*.xlsx)|*.xlsx|All files (*.*)|*.*'
+$dialog.Title = ${psSingleQuote(prompt)}
+$dialog.Multiselect = $false
+$dialog.CheckFileExists = $true
+${windowsOwnerFormPrelude()}
+$result = $dialog.ShowDialog($owner)
+${windowsOwnerFormCleanup()}
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write($dialog.FileName)
+}
+`)
+}
+
+async function windowsChooseFolder(prompt: string): Promise<string | null> {
+  return runWindowsFormsDialog(`
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = ${psSingleQuote(prompt)}
+$dialog.ShowNewFolderButton = $true
+${windowsOwnerFormPrelude()}
+$result = $dialog.ShowDialog($owner)
+${windowsOwnerFormCleanup()}
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write($dialog.SelectedPath)
+}
+`)
 }
 
 /** Native OS file open dialog for an enrollment .xlsx (falls back to null if cancelled / unavailable). */

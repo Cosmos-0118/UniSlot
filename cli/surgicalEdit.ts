@@ -9,7 +9,7 @@ import {
   pickOutputFolder,
   pickPreviousOutputFolder,
 } from './fileDialog.ts'
-import { bannerAnimated, outroSuccess, playWriteSweep, showPanel } from './ui.ts'
+import { bannerAnimated, outroSuccess, playWriteSweep, restoreCliTerminal, showPanel } from './ui.ts'
 import { spinOk, spinWarn } from './theme.ts'
 import {
   runFixPipeline,
@@ -102,7 +102,7 @@ function courseSelectOptions(
 ): { value: string; label: string }[] {
   const options = courses.map((c) => ({
     value: c.course_code,
-    label: c.course_title ? `${c.course_code} — ${c.course_title}` : c.course_code,
+    label: c.course_title ? `${c.course_code} - ${c.course_title}` : c.course_code,
   }))
   if (includeSwitch) {
     options.push({ value: SWITCH_STUDENT, label: 'Choose a different student' })
@@ -128,12 +128,12 @@ async function promptSessionNext(args: {
     { value: 'other-student', label: `${verb} a course for a different student` },
     { value: 'done', label: 'Done' },
   )
+  restoreCliTerminal()
   const selected = await p.select({
     message: args.studentRemoved
       ? `${args.register} has no remaining courses. What next?`
       : `${args.register} · ${args.remaining} course(s) left. What next?`,
     options,
-    initialValue: options[0]!.value,
   })
   if (p.isCancel(selected)) return 'done'
   return selected as SessionNext
@@ -160,25 +160,26 @@ export async function runSurgicalEdit(opts: {
   let outDir = opts.output
 
   if (!inputPath && opts.interactive) {
-    const pick = p.spinner()
-    pick.start('Pick last-run enrollment workbook…')
+    p.log.info('Pick last-run enrollment workbook…')
     inputPath =
       (await pickEnrollmentFile('Select enrollment Excel from the last main run')) ?? undefined
-    pick.stop(inputPath ? spinOk(path.basename(inputPath)) : spinWarn('Cancelled'))
+    restoreCliTerminal()
+    if (inputPath) p.log.success(path.basename(inputPath))
+    else p.log.warn('Cancelled')
   }
   if (!previousDir && opts.interactive) {
-    const pick = p.spinner()
-    pick.start('Pick previous output folder…')
+    p.log.info('Pick previous output folder…')
     previousDir = (await pickPreviousOutputFolder()) ?? undefined
-    pick.stop(previousDir ? spinOk(path.basename(previousDir)) : spinWarn('Cancelled'))
+    restoreCliTerminal()
+    if (previousDir) p.log.success(path.basename(previousDir))
+    else p.log.warn('Cancelled')
   }
   if (!outDir && opts.interactive) {
-    const pick = p.spinner()
-    pick.start('Pick new output folder…')
+    p.log.info('Pick new output folder…')
     outDir = (await pickOutputFolder('Choose folder for surgical-fix exports')) ?? undefined
-    pick.stop(
-      outDir ? spinOk(path.basename(outDir)) : spinWarn('Cancelled — using ./unislot-out-fix'),
-    )
+    restoreCliTerminal()
+    if (outDir) p.log.success(path.basename(outDir))
+    else p.log.warn('Cancelled — using ./unislot-out-fix')
     outDir = outDir || path.join(process.cwd(), 'unislot-out-fix')
   }
 
@@ -263,6 +264,7 @@ export async function runSurgicalEdit(opts: {
         p.log.error('Register number is required (--register).')
         return 1
       }
+      restoreCliTerminal()
       const answer = await p.text({
         message: 'Student register number',
         placeholder: 'e.g. RA2111003010001',
@@ -302,6 +304,7 @@ export async function runSurgicalEdit(opts: {
 
     if (opts.mode === 'fix-course') {
       if (!fromCode && session) {
+        restoreCliTerminal()
         const selected = await p.select({
           message: 'Which course code is wrong?',
           options: courseSelectOptions(courses, true),
@@ -315,6 +318,7 @@ export async function runSurgicalEdit(opts: {
         fromCode = String(selected)
       }
       if (!toCode && session) {
+        restoreCliTerminal()
         const answer = await p.text({
           message: 'Correct course code (existing on schedule, or new — CP-SAT will place it)',
           placeholder: 'e.g. 21MAB310T',
@@ -338,6 +342,7 @@ export async function runSurgicalEdit(opts: {
           snapshot.enrollmentRows.find((r) => r.course_code === toCode)?.course_title ||
           ''
         if (!existingTitle) {
+          restoreCliTerminal()
           const answer = await p.text({
             message: targetExists
               ? 'Correct course title (optional)'
@@ -350,6 +355,7 @@ export async function runSurgicalEdit(opts: {
       }
     } else {
       if (!dropCode && session) {
+        restoreCliTerminal()
         const selected = await p.select({
           message: `Remove ${register} from which of ${courses.length} course(s)?`,
           options: courseSelectOptions(courses, true),
@@ -377,6 +383,7 @@ export async function runSurgicalEdit(opts: {
             ? `Move ${register}: ${fromCode} → ${toCode} (new course · CP-SAT places weekday · others stay frozen)`
             : `Move ${register}: ${fromCode} → ${toCode} (others stay frozen)`
           : `Drop ${register} from ${dropCode} (others stay frozen)`
+      restoreCliTerminal()
       const ok = await p.confirm({ message: summary, initialValue: true })
       if (p.isCancel(ok)) return abortOrFinish()
       if (!ok) {
@@ -387,8 +394,9 @@ export async function runSurgicalEdit(opts: {
 
     const spin = p.spinner()
     spin.start(opts.mode === 'fix-course' ? 'Fixing course assignment…' : 'Dropping course…')
+    let result
     try {
-      const result = await runFixPipeline(
+      result = await runFixPipeline(
         (ev) => {
           if (ev.message) spin.message(ev.message)
         },
@@ -409,78 +417,6 @@ export async function runSurgicalEdit(opts: {
           seed: snapshot.seed,
         },
       )
-
-      if (result.infeasible) {
-        spin.stop(spinWarn('Aborted'))
-        p.log.error(result.infeasible_reason || 'Surgical edit aborted.')
-        if (!session) return 1
-        clearEditFields()
-        continue
-      }
-
-      spin.stop(spinOk('Done'))
-      const report = result.editReport
-      if (report) {
-        const lines = [
-          chalk.bold(opts.mode === 'fix-course' ? 'Course fixed' : 'Course dropped'),
-          `  ${chalk.cyan(report.register_number)}`,
-          opts.mode === 'fix-course'
-            ? `  ${report.removed_course} → ${report.added_course}` +
-              (report.target_section_id ? ` · ${report.target_section_id}` : '')
-            : `  removed ${report.removed_course}`,
-        ]
-        if (report.created_new_course) {
-          lines.push(
-            `  new course placed via ${report.placement_method}` +
-              (report.new_course_slot !== undefined
-                ? ` · weekday slot ${report.new_course_slot}`
-                : ''),
-          )
-        }
-        if (report.pruned_courses.length) {
-          lines.push(`  pruned empty: ${report.pruned_courses.join(', ')}`)
-        }
-        lines.push(
-          `  RED ${report.red_before} → ${report.red_after}`,
-          '',
-          chalk.dim("Other students' days and sections were not changed."),
-        )
-        showPanel('Surgical edit', lines.join('\n'))
-      }
-
-      if (result.schedulingSnapshot) snapshot = result.schedulingSnapshot
-
-      await playWriteSweep()
-      const writeSpin = p.spinner()
-      writeSpin.start(`Writing exports to ${outDir}…`)
-      lastFiles = await writeFixExports(outDir, result)
-      writeSpin.stop(spinOk(`${lastFiles.length} file(s)`))
-      for (const f of lastFiles) p.log.info(chalk.dim(f))
-      edits += 1
-      clearEditFields()
-
-      if (!session) return finish(0)
-
-      const studentRemoved = Boolean(report?.student_removed)
-      let remaining = 0
-      if (!studentRemoved) {
-        try {
-          remaining = listStudentCourses(snapshot, register).length
-        } catch {
-          remaining = 0
-        }
-      }
-
-      const next = await promptSessionNext({
-        mode: opts.mode,
-        register,
-        remaining,
-        studentRemoved,
-      })
-      if (next === 'done') return finish(0)
-      if (next === 'other-student' || remaining === 0 || studentRemoved) {
-        register = ''
-      }
     } catch (err) {
       spin.stop(spinWarn('Failed'))
       const message =
@@ -492,6 +428,91 @@ export async function runSurgicalEdit(opts: {
       p.log.error(message)
       if (!session) return 1
       clearEditFields()
+      continue
+    }
+
+    if (result.infeasible) {
+      spin.stop(spinWarn('Aborted'))
+      p.log.error(result.infeasible_reason || 'Surgical edit aborted.')
+      if (!session) return 1
+      clearEditFields()
+      continue
+    }
+
+    spin.stop(spinOk('Done'))
+    const report = result.editReport
+    if (report) {
+      const lines = [
+        chalk.bold(opts.mode === 'fix-course' ? 'Course fixed' : 'Course dropped'),
+        `  ${chalk.cyan(report.register_number)}`,
+        opts.mode === 'fix-course'
+          ? `  ${report.removed_course} → ${report.added_course}` +
+            (report.target_section_id ? ` · ${report.target_section_id}` : '')
+          : `  removed ${report.removed_course}`,
+      ]
+      if (report.created_new_course) {
+        lines.push(
+          `  new course placed via ${report.placement_method}` +
+            (report.new_course_slot !== undefined
+              ? ` · weekday slot ${report.new_course_slot}`
+              : ''),
+        )
+      }
+      if (report.pruned_courses.length) {
+        lines.push(`  pruned empty: ${report.pruned_courses.join(', ')}`)
+      }
+      lines.push(
+        `  RED ${report.red_before} → ${report.red_after}`,
+        '',
+        chalk.dim("Other students' days and sections were not changed."),
+      )
+      showPanel('Surgical edit', lines.join('\n'))
+    }
+
+    if (result.schedulingSnapshot) snapshot = result.schedulingSnapshot
+
+    // ANSI write-sweep + 88-col padding wraps on default 80-col Windows consoles
+    // and leaves the cursor in a bad state for the next Clack prompt.
+    if (!session && process.platform !== 'win32') {
+      await playWriteSweep()
+    }
+    const writeSpin = p.spinner()
+    writeSpin.start(`Writing exports to ${outDir}…`)
+    try {
+      lastFiles = await writeFixExports(outDir, result)
+      writeSpin.stop(spinOk(`${lastFiles.length} file(s)`))
+    } catch (err) {
+      writeSpin.stop(spinWarn('Failed'))
+      p.log.error(err instanceof Error ? err.message : String(err))
+      if (!session) return 1
+      clearEditFields()
+      continue
+    }
+    for (const f of lastFiles) p.log.info(chalk.dim(f))
+    edits += 1
+    clearEditFields()
+
+    if (!session) return finish(0)
+
+    const studentRemoved = Boolean(report?.student_removed)
+    let remaining = 0
+    if (!studentRemoved) {
+      try {
+        remaining = listStudentCourses(snapshot, register).length
+      } catch {
+        remaining = 0
+      }
+    }
+
+    const next = await promptSessionNext({
+      mode: opts.mode,
+      register,
+      remaining,
+      studentRemoved,
+    })
+    if (next === 'done') return finish(0)
+    if (next === 'other-student' || remaining === 0 || studentRemoved) {
+      register = ''
     }
   }
 }
