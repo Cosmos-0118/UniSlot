@@ -16,7 +16,7 @@ import {
   playWriteSweep,
   showPanel,
 } from './ui.ts'
-import { palette, spinOk, spinWarn } from './theme.ts'
+import { capLines, pad, palette, spinOk, spinWarn } from './theme.ts'
 import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
@@ -46,7 +46,6 @@ import {
 import {
   buildFixedDays,
   computeEnrollmentDelta,
-  extractCourseSlotsFromSnapshot,
   formatEnrollmentDeltaSummary,
   freeCourseCodes,
   inferAllowSaturdayFromSnapshot,
@@ -58,10 +57,7 @@ import {
   type ClashPanel,
 } from '../src/modules/scheduling/merge/lateResolution.ts'
 import type { CapacityDecision, OnFullStrategy } from '../src/modules/scheduling/merge/lateEnrollment.ts'
-import {
-  normalizeSaturdayExtraCodes,
-  slotIndexToDay,
-} from '../src/modules/scheduling/solver/timeModel.ts'
+import { normalizeSaturdayExtraCodes } from '../src/modules/scheduling/solver/timeModel.ts'
 import {
   filterScheduleEntries,
   normalizeCourseCodeList,
@@ -118,16 +114,9 @@ async function promptSaturdayExtraCodes(
 }
 
 function logSaturdayPolicy(allowSaturdayForMath: boolean, extras: string[]): void {
-  p.log.info(
-    allowSaturdayForMath
-      ? 'Saturday · enabled for maths courses'
-      : 'Saturday · maths blocked',
-  )
-  p.log.info(
-    extras.length
-      ? `Saturday · extras: ${extras.join(', ')}`
-      : 'Saturday · extras: none',
-  )
+  const policy = allowSaturdayForMath ? 'enabled for maths courses' : 'maths blocked'
+  const extraBit = extras.length ? ` · extras ${extras.join(', ')}` : ''
+  p.log.info(`Saturday · ${policy}${extraBit}`)
 }
 
 async function writeExports(
@@ -185,7 +174,7 @@ async function writeExports(
     red_students: result.clashReport?.students_with_clashes,
     lower_bounds: result.stats?.scheduling?.lower_bounds,
     solver_used: result.schedule?.solver_used,
-    solver_time_seconds: 0,
+    solver_time_seconds: result.schedule?.solver_time_seconds,
     seed: meta.seed,
     workers: meta.workers,
     portfolio: meta.portfolio,
@@ -280,21 +269,11 @@ async function writeRectifyExports(
 }
 
 /**
- * Result panel for a rectify run. Deliberately reports only what this rectification changed —
- * clashes that already existed in the previous run are summarised as a single count, never listed.
+ * Result panel for a rectify run. A fixed-height summary — counts and deltas only.
+ * Full per-student and per-clash detail already lands in rectification-report.json
+ * and clash-report.xlsx, so the terminal never re-lists what the files already hold.
  */
-function formatRectifyResult(
-  report: RectificationReport,
-  snapshot: SchedulingSnapshot,
-): string {
-  const previousDays = extractCourseSlotsFromSnapshot(snapshot)
-  const dayOf = (code: string): string => {
-    const placed = report.new_course_slots[code]
-    if (placed !== undefined) return slotIndexToDay(placed)
-    const prev = previousDays[code]
-    return prev === undefined ? '?' : slotIndexToDay(prev)
-  }
-
+function formatRectifyResult(report: RectificationReport): string {
   const lines: string[] = []
 
   if (report.new_course_placements.length > 0) {
@@ -316,30 +295,6 @@ function formatRectifyResult(
     )
   }
 
-  if (report.changed_students.length > 0) {
-    lines.push(chalk.bold('Student changes'))
-    const shown = report.changed_students.slice(0, 12)
-    for (const s of shown) {
-      lines.push(`  ${chalk.cyan(s.register_number)} · ${s.student_name}`)
-      if (s.dropped.length > 0) {
-        lines.push(`    dropped  ${s.dropped.map((c) => `${c} (${dayOf(c)})`).join(', ')}`)
-      }
-      if (s.added.length > 0) {
-        lines.push(`    added    ${s.added.map((c) => `${c} (${dayOf(c)})`).join(', ')}`)
-      }
-      const clash = report.new_clashes.find((c) => c.register_number === s.register_number)
-      lines.push(
-        clash
-          ? `    status   ${chalk.red(`Red — clash on ${clash.day}: ${clash.courses.join(', ')}`)}`
-          : `    status   ${chalk.green('Green — no clash')}`,
-      )
-    }
-    if (report.changed_students.length > shown.length) {
-      lines.push(chalk.dim(`  … ${report.changed_students.length - shown.length} more`))
-    }
-    lines.push('')
-  }
-
   lines.push(chalk.bold('Impact'))
   lines.push(`  ${report.pinned_course_count} course weekday(s) frozen from the previous run`)
   lines.push(
@@ -351,14 +306,18 @@ function formatRectifyResult(
             .join(', ')
     }`,
   )
+  if (report.changed_students.length > 0) {
+    const dropped = report.changed_students.reduce((n, s) => n + s.dropped.length, 0)
+    const added = report.changed_students.reduce((n, s) => n + s.added.length, 0)
+    lines.push(
+      `  Students affected: ${report.changed_students.length} (dropped ${dropped}, added ${added})`,
+    )
+  }
+  if (report.previous_red_students != null) {
+    lines.push(`  RED: ${report.previous_red_students} → ${report.new_red_students}`)
+  }
   const newClashLine = `  New clashes introduced: ${report.new_clashes.length}`
   lines.push(report.new_clashes.length > 0 ? chalk.red(newClashLine) : chalk.green(newClashLine))
-  for (const c of report.new_clashes.slice(0, 8)) {
-    lines.push(`    ${c.register_number} · ${c.student_name} · ${c.day} · ${c.courses.join(', ')}`)
-  }
-  if (report.new_clashes.length > 8) {
-    lines.push(chalk.dim(`    … ${report.new_clashes.length - 8} more`))
-  }
   if (report.resolved_clashes.length > 0) {
     lines.push(chalk.green(`  Clashes resolved: ${report.resolved_clashes.length}`))
   }
@@ -369,6 +328,7 @@ function formatRectifyResult(
       ),
     )
   }
+  lines.push(chalk.dim('  Full detail → rectification-report.json · clash-report.xlsx'))
 
   return lines.join('\n')
 }
@@ -380,17 +340,19 @@ async function promptRunMode(): Promise<
     message: 'What would you like to do?',
     options: [
       { value: 'solve', label: 'Create schedule' },
-      { value: 'rectify', label: 'Rectify schedule (after registration changes)' },
-      { value: 'late', label: 'Add late enrollments (existing schedule stays frozen)' },
+      { value: 'rectify', label: 'Rectify schedule', hint: 'after registration changes' },
+      { value: 'late', label: 'Add late enrollments', hint: 'existing schedule stays frozen' },
       {
         value: 'fix-course',
-        label: 'Fix wrong student course (surgical — existing frozen; new course via CP-SAT)',
+        label: 'Fix wrong student course',
+        hint: 'surgical — new course placed via CP-SAT',
       },
       {
         value: 'drop-course',
-        label: 'Remove student from a course (surgical — timetable stays frozen)',
+        label: 'Remove student from a course',
+        hint: 'surgical — timetable stays frozen',
       },
-      { value: 'filter', label: 'Filter schedule by course codes' },
+      { value: 'filter', label: 'Filter schedule', hint: 'by course codes' },
       { value: 'issues', label: 'Find issues in enrollment file' },
     ],
   })
@@ -420,12 +382,7 @@ function formatIssueLine(issue: {
 function formatCategoryPanelBody(
   issues: { row_number?: number; severity: string; message: string }[],
 ): string {
-  const shown = issues.slice(0, ISSUE_PANEL_LINE_CAP)
-  const lines = shown.map(formatIssueLine)
-  if (issues.length > ISSUE_PANEL_LINE_CAP) {
-    lines.push(chalk.dim(`…and ${issues.length - ISSUE_PANEL_LINE_CAP} more`))
-  }
-  return lines.join('\n')
+  return capLines(issues.map(formatIssueLine), ISSUE_PANEL_LINE_CAP).join('\n')
 }
 
 async function runIssues(opts: {
@@ -878,7 +835,7 @@ async function runRectify(opts: {
 
     const report = result.rectificationReport
     if (report) {
-      showPanel('Rectified', formatRectifyResult(report, snapshot))
+      showPanel('Rectified', formatRectifyResult(report))
       if (report.placement_method === 'greedy-fallback') {
         p.log.warn(
           'CP-SAT was unavailable, so new courses were placed by the greedy fallback. Weekday balance is not guaranteed — re-run once the solver is available.',
@@ -1039,11 +996,8 @@ function formatLateResult(report: LateEnrollmentReport): string {
   lines.push(
     report.clash_diff.introduced.length > 0 ? chalk.red(newClashLine) : chalk.green(newClashLine),
   )
-  for (const c of report.clash_diff.introduced.slice(0, 8)) {
-    lines.push(`    ${c.register_number} · ${c.student_name} · ${c.day} · ${c.courses.join(', ')}`)
-  }
-  if (report.clash_diff.introduced.length > 8) {
-    lines.push(chalk.dim(`    … ${report.clash_diff.introduced.length - 8} more`))
+  if (report.clash_diff.introduced.length > 0) {
+    lines.push(chalk.dim('  Full detail → late-enrollment-report.json · clash-report.xlsx'))
   }
   return lines.join('\n')
 }
@@ -1455,7 +1409,6 @@ async function runSolve(opts: {
 }): Promise<number> {
   await bannerAnimated()
   const python = await ensurePythonReady()
-  p.log.info(`Python · ${python}`)
   const cpuN = cpus().length
 
   const seedResult = await resolveRunSeed({
@@ -1483,16 +1436,15 @@ async function runSolve(opts: {
         ? Math.max(0, Math.floor(seedResult.portfolio))
         : 0
 
+  const memberW = portfolioK > 0 ? Math.max(2, Math.floor(requestedWorkers / portfolioK)) : 0
+  const cpuLine =
+    portfolioK > 0
+      ? `${cpuN} logical · race ${portfolioK} seeds × ${memberW}w (${portfolioK * memberW}w total) → prove ${workersLabel}w`
+      : `${cpuN} logical · prove ${workersLabel}w (portfolio off)`
   if (portfolioK > 0) {
-    const memberW = Math.max(2, Math.floor(requestedWorkers / portfolioK))
-    p.log.info(
-      `CPUs   · ${cpuN} logical · race ${portfolioK} seeds × ${memberW} workers (${portfolioK * memberW}w) → prove ${workersLabel}w`,
-    )
     p.log.warn(
       'Portfolio race uses a wall-clock budget — schedule will not reproduce from seed alone. Use --portfolio 0 (default) for reproducible runs.',
     )
-  } else {
-    p.log.info(`CPUs   · ${cpuN} logical · prove ${workersLabel}w (portfolio off)`)
   }
 
   if (plainSeedOnly && reused && !(opts.workers && opts.workers > 0)) {
@@ -1536,18 +1488,23 @@ async function runSolve(opts: {
   } else {
     saturdayExtraCourseCodes = []
   }
-  logSaturdayPolicy(allowSaturdayForMath, saturdayExtraCourseCodes)
-
   const reproToken = formatReproToken({
     seed,
     workers: requestedWorkers,
     portfolio: portfolioK,
     allowSaturdayForMath,
   })
+  const saturdayLine = allowSaturdayForMath ? 'enabled for maths courses' : 'maths blocked'
+  const saturdayExtraBit = saturdayExtraCourseCodes.length
+    ? ` · extras ${saturdayExtraCourseCodes.join(', ')}`
+    : ''
   p.log.info(
-    reused
-      ? `Seed   · ${reproToken} (reused from previous run)`
-      : `Seed   · ${reproToken} (new run — save this token to reproduce)`,
+    [
+      `${pad('Python', 8)} ${python}`,
+      `${pad('CPUs', 8)} ${cpuLine}`,
+      `${pad('Seed', 8)} ${reproToken}${reused ? ' (reused from previous run)' : ' (new run — save this token to reproduce)'}`,
+      `${pad('Saturday', 8)} ${saturdayLine}${saturdayExtraBit}`,
+    ].join('\n'),
   )
 
   let programNomenclatureXlsx: ArrayBuffer | undefined

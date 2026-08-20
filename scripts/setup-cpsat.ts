@@ -78,6 +78,26 @@ async function pipWorks(python: string): Promise<boolean> {
   }
 }
 
+/**
+ * `pip --version` can succeed while `pip install` still fails with
+ * `ModuleNotFoundError: No module named 'pip._internal.operations.build'` —
+ * seen on macOS Homebrew Python and some Windows installs when the venv's
+ * bundled pip is a partial/stale copy. Re-bootstrapping pip via `ensurepip`
+ * and upgrading it fixes that without needing to touch the whole venv.
+ */
+async function healPip(python: string): Promise<void> {
+  await run(python, ['-m', 'ensurepip', '--upgrade'])
+  await run(python, ['-m', 'pip', 'install', '--upgrade', 'pip'])
+}
+
+async function createVenv(py: string): Promise<void> {
+  console.log(`Creating venv at ${venvDir}`)
+  // --upgrade-deps (Python 3.9+) refreshes the bundled pip/setuptools at
+  // creation time instead of leaving whatever ensurepip shipped in that
+  // Python install — the main source of the broken-pip failure above.
+  await run(py, ['-m', 'venv', venvDir, '--upgrade-deps'])
+}
+
 warnIfOneDrivePath(root)
 
 const resolved = await resolveSystemPython({
@@ -95,8 +115,7 @@ if ((await exists(venvPython)) && !(await pipWorks(venvPython))) {
 }
 
 if (!(await exists(venvPython))) {
-  console.log(`Creating venv at ${venvDir}`)
-  await run(py, ['-m', 'venv', venvDir])
+  await createVenv(py)
 }
 
 if (!(await exists(venvPython))) {
@@ -110,5 +129,18 @@ if (!(await exists(venvPython))) {
 }
 
 console.log('Installing ortools…')
-await run(venvPython, ['-m', 'pip', 'install', '-r', requirements])
+try {
+  await run(venvPython, ['-m', 'pip', 'install', '-r', requirements])
+} catch {
+  console.log('pip install failed; re-bootstrapping pip and retrying…')
+  try {
+    await healPip(venvPython)
+    await run(venvPython, ['-m', 'pip', 'install', '-r', requirements])
+  } catch {
+    console.log('Still broken after healing pip; recreating the venv from scratch…')
+    await rm(venvDir, { recursive: true, force: true })
+    await createVenv(py)
+    await run(venvPython, ['-m', 'pip', 'install', '-r', requirements])
+  }
+}
 console.log('CP-SAT environment ready. Run: npm run unislot')

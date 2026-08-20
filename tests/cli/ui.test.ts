@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { box, col, divider, glyphs, visibleLen } from '../../cli/theme'
 import {
+  createSolveSpinner,
   formatMetrics,
   formatMetricsLines,
   playTransition,
@@ -107,5 +108,76 @@ describe('transitionFrame / playTransition', () => {
     })
     expect(frames).toBe(TRANSITION_TICKS.stamp)
     expect(painted).toHaveLength(TRANSITION_TICKS.stamp)
+  })
+})
+
+describe('createSolveSpinner live panel', () => {
+  it('every cursor-up jump matches the row count actually painted just before it (no drift)', async () => {
+    vi.useFakeTimers()
+    const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean; isTTY?: boolean }
+    const originalWrite = stdout.write
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+    const writes: string[] = []
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
+    stdout.write = (chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    }
+
+    try {
+      const spin = createSolveSpinner(4)
+      spin.start('Reading enrollment workbook…')
+      spin.applyCpsat({ type: 'start', workers: 4, courses: 373, edges: 584, students: 1102 } as never)
+      // Let the initial 'scan' transition (8 ticks) finish and the real, tall
+      // clash-stage frame (5 lines) paint a few times, as happens for real while
+      // the Python subprocess is still starting up.
+      await vi.advanceTimersByTimeAsync(80 * 12)
+      // Triggers the shorter 'assemble' transition overlay — tall(5) -> short(3),
+      // the exact shrink that used to strand old rows as scrollback.
+      spin.applyCpsat({ type: 'model_ready', elapsed: 0.4 } as never)
+      // Run past assemble (9 ticks) + the checkpoint + clash_enter (7 ticks) with margin,
+      // landing back on the real (tall) clash frame.
+      await vi.advanceTimersByTimeAsync(80 * 20)
+      spin.applyCpsat({
+        type: 'progress',
+        phase: 'minimize_clash',
+        phase_label: '1/3 Minimizing clashes',
+        elapsed: 1.2,
+        workers: 4,
+        solutions: 1,
+        best_clash: 9,
+        best_red: 9,
+        bound: 4,
+        activity: 'proving',
+        seconds_since_improve: 1,
+      } as never)
+      await vi.advanceTimersByTimeAsync(80 * 3)
+      await spin.stop('done')
+
+      // Replay the captured ANSI stream: each cursor-up jump must equal the
+      // number of rows the previous paint/clear burst actually wrote, or the
+      // block drifts and leaves stale content behind (the screenshot bug).
+      const ups: number[] = []
+      const segments: number[] = []
+      let rows = 0
+      for (const w of writes) {
+        const up = /^\x1b\[(\d+)A$/.exec(w)
+        if (up) {
+          segments.push(rows)
+          ups.push(Number(up[1]))
+          rows = 0
+        } else if (w === '\x1b[1B' || w.startsWith('\x1b[2K')) {
+          rows++
+        }
+      }
+      expect(ups.length).toBeGreaterThan(0)
+      for (let i = 0; i < ups.length; i++) {
+        expect(ups[i]).toBe(segments[i])
+      }
+    } finally {
+      stdout.write = originalWrite
+      if (originalDescriptor) Object.defineProperty(process.stdout, 'isTTY', originalDescriptor)
+      vi.useRealTimers()
+    }
   })
 })

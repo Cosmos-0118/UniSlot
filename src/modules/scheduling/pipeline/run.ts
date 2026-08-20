@@ -452,11 +452,9 @@ export async function runPipeline(
     programNomenclatureMap = await nomenclatureToProgramAbbrevMap(options.programNomenclatureXlsx)
   }
 
-  const pinnedSolverSeconds =
-    solverSeed !== undefined ? 0 : solverTimeSeconds
   let schedule = buildSchedule(courseSections, slotAssignments, {
     solver_used: solverUsed,
-    solver_time_seconds: pinnedSolverSeconds,
+    solver_time_seconds: solverTimeSeconds,
     hard_constraints_feasible: feasible,
     hard_constraint_violations: hardViolations,
     solver_primary_metrics_zero: primaryZero,

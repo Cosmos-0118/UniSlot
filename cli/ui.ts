@@ -8,6 +8,7 @@ import {
   box,
   divider,
   glyphs,
+  pad,
   palette,
   visibleLen,
   type Tone,
@@ -237,16 +238,57 @@ function pushHistory(buf: number[], value: number | null | undefined): void {
   if (buf.length > HISTORY_CAP) buf.shift()
 }
 
-function stepTrack(active: 1 | 2 | 3): string[] {
-  const mark = (n: 1 | 2 | 3, label: string) => {
-    if (n < active) return palette.dim(`${glyphs.step.done} ${n}/3 ${label}`)
-    if (n === active) return palette.brand(`${glyphs.step.active} ${n}/3 ${label}`)
-    return palette.dim(`${glyphs.step.pending} ${n}/3 ${label}`)
-  }
-  return [
-    `  ${mark(1, 'clash')}  ${mark(2, 'RED')}  ${mark(3, 'balance')}`,
-    `  ${divider(40)}`,
+/** Inner width of the 3-step lex panel — a fixed divider row this long forces
+ *  `box()` to hold a stable width every frame, regardless of how much the
+ *  metrics/labels around it fluctuate tick to tick. */
+const PANEL_WIDTH = 64
+
+/** Two-sided justify within a fixed width — left text, right text, gap between. */
+function justify(left: string, right: string, width: number): string {
+  const gap = Math.max(1, width - visibleLen(left) - visibleLen(right))
+  return `${left}${' '.repeat(gap)}${right}`
+}
+
+function stepChip(n: 1 | 2 | 3, label: string, active: 1 | 2 | 3): string {
+  const mark =
+    n < active
+      ? palette.ok(glyphs.step.done)
+      : n === active
+        ? palette.brand(glyphs.step.active)
+        : palette.dim(glyphs.step.pending)
+  const text = pad(label, 9)
+  return `${mark} ${n === active ? palette.bold(text) : palette.dim(text)}`
+}
+
+function stepBreadcrumb(active: 1 | 2 | 3): string {
+  return `${stepChip(1, 'Clash', active)}   ${stepChip(2, 'RED', active)}   ${stepChip(3, 'Balance', active)}`
+}
+
+/**
+ * Shared bordered shell for the 3-step lex panel (Clash / RED / Balance) — one
+ * box drawn per stage, wide enough for proper column alignment, with a fixed
+ * step breadcrumb footer so the panel never flickers between boxed/unboxed
+ * layouts while the solver runs.
+ */
+function lexPanel(opts: {
+  step: 1 | 2 | 3
+  spin: string
+  title: string
+  subtitle: string
+  corner?: string
+  body: string[]
+}): string[] {
+  const left = `${opts.spin} ${palette.bold(opts.title)}  ${palette.dim(opts.subtitle)}`
+  const headerRow = opts.corner ? justify(left, palette.dim(opts.corner), PANEL_WIDTH) : left
+  const lines = [
+    headerRow,
+    '',
+    ...opts.body,
+    '',
+    divider(PANEL_WIDTH),
+    `  ${stepBreadcrumb(opts.step)}`,
   ]
+  return box(`Solving · step ${opts.step} of 3`, lines).split('\n')
 }
 
 /**
@@ -279,20 +321,24 @@ export function transitionFrame(name: TransitionName, t: number, totalTicks: num
       ]
     }
     case 'clash_enter': {
-      const glow = frac < 0.5 ? palette.accent : palette.brand
-      return [
-        `${glow(`${glyphs.step.active} 1/3 Clash`)}  ${palette.dim('minimize clash weight')}`,
-        `  ${brailleRibbon(t, 16, 'cyan')}  ${palette.dim('starting lex level 1…')}`,
-        ...stepTrack(1),
-      ]
+      const spin = frac < 0.5 ? palette.accent(glyphs.step.active) : palette.brand(glyphs.step.active)
+      return lexPanel({
+        step: 1,
+        spin,
+        title: 'Clash',
+        subtitle: 'minimize clash weight',
+        body: [`  ${brailleRibbon(t, 40, 'cyan')}`, '', `  ${palette.dim('starting lex level 1…')}`],
+      })
     }
     case 'red_enter': {
-      const glow = frac < 0.5 ? palette.accent : palette.brand
-      return [
-        `${glow(`${glyphs.step.active} 2/3 RED`)}  ${palette.dim('minimize students with clashes')}`,
-        `  ${brailleRibbon(t, 16, 'cyan')}  ${palette.dim('starting lex level 2…')}`,
-        ...stepTrack(2),
-      ]
+      const spin = frac < 0.5 ? palette.accent(glyphs.step.active) : palette.brand(glyphs.step.active)
+      return lexPanel({
+        step: 2,
+        spin,
+        title: 'RED',
+        subtitle: 'minimize students with clashes',
+        body: [`  ${brailleRibbon(t, 40, 'cyan')}`, '', `  ${palette.dim('starting lex level 2…')}`],
+      })
     }
     case 'balance_enter': {
       // Scale settling: left/right bars converge toward center.
@@ -301,11 +347,13 @@ export function transitionFrame(name: TransitionName, t: number, totalTicks: num
       const left = '⠀'.repeat(span) + '⣼'.repeat(Math.min(2, 6 - span))
       const right = '⣿'.repeat(Math.min(2, 6 - span)) + '⠀'.repeat(span)
       const scale = left.slice(-6).padStart(6, '⠀') + mid + right.slice(0, 6).padEnd(6, '⠀')
-      return [
-        `${palette.brand(`${glyphs.step.active} 3/3 Balance`)}  ${palette.dim('spread load across weekdays')}`,
-        `  ${palette.brand(scale)}  ${palette.dim('settling weekday load…')}`,
-        ...stepTrack(3),
-      ]
+      return lexPanel({
+        step: 3,
+        spin: palette.brand(glyphs.step.active),
+        title: 'Balance',
+        subtitle: 'spread load across weekdays',
+        body: [`  ${palette.brand(scale)}`, '', `  ${palette.dim('settling weekday load…')}`],
+      })
     }
     case 'write': {
       const width = 24
@@ -448,7 +496,11 @@ function createLivePanel() {
         out.write(`\x1b[2K\r${next}\n`)
       }
     }
-    prev = nextFrame.slice(0, Math.max(lines.length, 1))
+    // Keep the full padded height (not just `lines.length`) — the cursor
+    // ends up `height` rows below the block top every paint, so `prev`
+    // must track that same height or the next paint's cursor-up jump
+    // drifts and strands old content as scrollback.
+    prev = nextFrame
   }
 
   return {
@@ -534,6 +586,9 @@ export function createSolveSpinner(workers = cpus().length) {
   let prevBestRed: number | null = null
   let scanPlayed = false
   let assemblePlayed = false
+  let modelStats: { courses: number; edges: number; students: number } | null = null
+  /** Runs once the 'assemble' transition finishes — set on the tick loop, never a separate timer. */
+  let pendingModelCheckpoint: (() => void) | null = null
 
   const startTransition = (name: TransitionName) => {
     if (!panel.isTty) return
@@ -678,21 +733,23 @@ export function createSolveSpinner(workers = cpus().length) {
     const clash = state.bestClash
     const red = state.bestRed
     const act = activityLabel(state.activity, state.secondsSinceImprove)
-    const warm =
-      warmClash != null
-        ? palette.dim(`warm ${warmClash}/${warmRed ?? '—'}`)
-        : palette.dim('warm —')
     const tone = activityTone(state.activity)
-    const motion =
-      clashHistory.length > 1
-        ? `${brailleRibbon(tick, 10, tone)}  ${sparkline(clashHistory, 14)}`
-        : brailleRibbon(tick, 16, tone)
-    return [
-      header('1/3 Clash', 'minimize clash weight'),
-      `  ${motion}  ${warm}  ${glyphs.arrow}  clash ${metricClash(clash, popClashTicks > 0)}  ` +
-        `RED ${metricRed(red, false)}  ${gapLabel(clash, state.bound)}  ${act}`,
-      ...stepTrack(1),
-    ]
+    const motion = clashHistory.length > 1 ? sparkline(clashHistory, 40) : brailleRibbon(tick, 40, tone)
+    const warm = warmClash != null ? palette.dim(`  warm ${warmClash}/${warmRed ?? '—'}`) : ''
+    return lexPanel({
+      step: 1,
+      spin: spinGlyph(),
+      title: 'Clash',
+      subtitle: 'minimize clash weight',
+      corner: `${state.workers}w · ${formatDuration(liveElapsed())}`,
+      body: [
+        `  ${motion}  ${act}`,
+        '',
+        `  ${palette.dim(pad('clash', 8))}${metricClash(clash, popClashTicks > 0)}    ` +
+          `${palette.dim(pad('RED', 8))}${metricRed(red, false)}`,
+        `  ${gapLabel(clash, state.bound)}${warm}`,
+      ],
+    })
   }
 
   const buildRedFrame = (): string[] => {
@@ -703,16 +760,20 @@ export function createSolveSpinner(workers = cpus().length) {
         ? palette.dim(`locked clash ${state.bestClash}${clashProven ? ` ${glyphs.check}` : ''}`)
         : palette.dim('locked clash —')
     const tone = activityTone(state.activity)
-    const motion =
-      redHistory.length > 1
-        ? `${brailleRibbon(tick, 10, tone)}  ${sparkline(redHistory, 14)}`
-        : brailleRibbon(tick, 16, tone)
-    return [
-      header('2/3 RED', 'minimize students with clashes'),
-      `  ${motion}  ${locked}  ${glyphs.arrow}  RED ${metricRed(red, popRedTicks > 0)}  ` +
-        `${gapLabel(red, state.bound)}  ${act}`,
-      ...stepTrack(2),
-    ]
+    const motion = redHistory.length > 1 ? sparkline(redHistory, 40) : brailleRibbon(tick, 40, tone)
+    return lexPanel({
+      step: 2,
+      spin: spinGlyph(),
+      title: 'RED',
+      subtitle: 'minimize students with clashes',
+      corner: `${state.workers}w · ${formatDuration(liveElapsed())}`,
+      body: [
+        `  ${motion}  ${act}`,
+        '',
+        `  ${palette.dim(pad('RED', 8))}${metricRed(red, popRedTicks > 0)}`,
+        `  ${gapLabel(red, state.bound)}  ${locked}`,
+      ],
+    })
   }
 
   const buildBalanceFrame = (): string[] => {
@@ -721,13 +782,21 @@ export function createSolveSpinner(workers = cpus().length) {
       `locked clash ${state.bestClash ?? '—'}${clashProven ? ` ${glyphs.check}` : ''}` +
         ` · RED ${state.bestRed ?? '—'}${redProven ? ` ${glyphs.check}` : ''}`,
     )
-    const ribbon = brailleRibbon(tick, 14, activityTone(state.activity))
-    return [
-      header('3/3 Balance', 'spread load across weekdays'),
-      `  ${ribbon}  ${locked}  ${glyphs.arrow}  ` +
-        `balance ${padNum(state.bestBalance)}  parallel ${padNum(state.bestParallelExcess)}  ${act}`,
-      ...stepTrack(3),
-    ]
+    const motion = brailleRibbon(tick, 40, activityTone(state.activity))
+    return lexPanel({
+      step: 3,
+      spin: spinGlyph(),
+      title: 'Balance',
+      subtitle: 'spread load across weekdays',
+      corner: `${state.workers}w · ${formatDuration(liveElapsed())}`,
+      body: [
+        `  ${motion}  ${act}`,
+        '',
+        `  ${palette.dim(pad('balance', 8))}${padNum(state.bestBalance)}    ` +
+          `${palette.dim(pad('parallel', 8))}${padNum(state.bestParallelExcess)}`,
+        `  ${locked}`,
+      ],
+    })
   }
 
   const buildFrame = (): string[] => {
@@ -852,7 +921,13 @@ export function createSolveSpinner(workers = cpus().length) {
     if (transition) {
       transition.tick++
       if (transition.tick >= transition.total) {
+        const finishedName = transition.name
         transition = null
+        if (finishedName === 'assemble' && pendingModelCheckpoint) {
+          const run = pendingModelCheckpoint
+          pendingModelCheckpoint = null
+          run()
+        }
       }
     }
     if (popClashTicks > 0) popClashTicks--
@@ -993,9 +1068,27 @@ export function createSolveSpinner(workers = cpus().length) {
           state.phaseLabel = 'Building model'
           state.activity = 'searching'
           state.workers = evt.workers
+          if (evt.courses != null) {
+            modelStats = { courses: evt.courses, edges: evt.edges ?? 0, students: evt.students ?? 0 }
+          }
         } else {
           if (!assemblePlayed) {
             assemblePlayed = true
+            // Let the "Building model" flourish play out, then land a real
+            // checkpoint (closing the loop with actual counts instead of
+            // trailing into blank space) and fade straight into Clash.
+            pendingModelCheckpoint = () => {
+              if (modelStats) {
+                panel.checkpoint(
+                  palette.bold('Model built') +
+                    palette.dim(
+                      `  ${glyphs.dot}  ${modelStats.courses} courses · ` +
+                        `${modelStats.edges} edges · ${modelStats.students} students`,
+                    ),
+                )
+              }
+              startTransition('clash_enter')
+            }
             startTransition('assemble')
           }
           state.phaseLabel = '1/3 Minimizing clashes'
@@ -1090,6 +1183,7 @@ export function createSolveSpinner(workers = cpus().length) {
         clearInterval(tickTimer)
         tickTimer = null
       }
+      pendingModelCheckpoint = null
       let summary = finalMessage
       if (!summary) {
         if (stage === 'race' && race) {

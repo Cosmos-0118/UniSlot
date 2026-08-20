@@ -142,6 +142,12 @@ export function col(
   return `${palette.dim(pad(label, labelWidth))} ${toneFn(pad(value, valueWidth, 'right'))}`
 }
 
+/** First `cap` lines, plus a dim "… N more" line when truncated. One shape for every panel's overflow. */
+export function capLines(lines: string[], cap: number): string[] {
+  if (lines.length <= cap) return lines
+  return [...lines.slice(0, cap), palette.dim(`… ${lines.length - cap} more`)]
+}
+
 /** Color a spinner stop message for success vs cancel. */
 export function spinOk(message: string): string {
   return palette.ok(message)
