@@ -1254,55 +1254,11 @@ async function sleep(ms: number): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, ms))
 }
 
-function drawBannerFrame(step: number): string[] {
-  const width = 40
-  const { tl, tr, bl, br, h, v } = glyphs.box
-  const title = ' UniSlot '
-  const subtitle = '  terminal CP-SAT scheduler'
-  // step 0: left corner + growing top rule
-  // step 1: top complete + title
-  // step 2: body line
-  // step 3: bottom rule
-  const topFill = Math.max(0, width - 2 - visibleLen(title) - 1)
-  const top = `${tl}${h}${title}${h.repeat(topFill)}${tr}`
-  const mid = `${v}${subtitle.padEnd(width - 2)}${v}`
-  const bot = `${bl}${h.repeat(width - 2)}${br}`
-
-  if (step <= 0) {
-    const grow = Math.min(width - 2, 8)
-    return [palette.brand(`${tl}${h.repeat(grow)}`)]
-  }
-  if (step === 1) {
-    return [palette.brand(top)]
-  }
-  if (step === 2) {
-    return [palette.brand(top), palette.dim(mid)]
-  }
-  return [palette.brand(top), palette.dim(mid), palette.dim(bot)]
-}
-
-/** Animated banner draw-in (TTY). Falls back to a static intro on non-TTY. */
+/** Instant one-line banner — no draw-in animation, just the clack intro chrome. */
 export async function bannerAnimated(): Promise<void> {
   if (bannerShown) return
   bannerShown = true
-  const isTty = Boolean(process.stdout.isTTY)
-  if (isTty) {
-    process.stdout.write('\x1b[?25l')
-    let prevLines = 0
-    for (let step = 0; step <= 3; step++) {
-      const lines = drawBannerFrame(step)
-      if (prevLines > 0) {
-        process.stdout.write(`\x1b[${prevLines}A`)
-        for (let i = 0; i < prevLines; i++) process.stdout.write('\x1b[2K\n')
-        process.stdout.write(`\x1b[${prevLines}A`)
-      }
-      process.stdout.write(lines.join('\n') + '\n')
-      prevLines = lines.length
-      await sleep(150)
-    }
-    process.stdout.write('\x1b[?25h')
-  }
-  p.intro(palette.accent('UniSlot') + palette.dim(' · terminal CP-SAT scheduler'))
+  p.intro(palette.accent('▲ UniSlot') + palette.dim(' · terminal CP-SAT scheduler'))
 }
 
 export async function outroSuccess(lines: string[]): Promise<void> {
