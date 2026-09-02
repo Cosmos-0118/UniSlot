@@ -1223,11 +1223,11 @@ export function createSolveSpinner(workers = cpus().length) {
 }
 
 /**
- * Undo cursor-hide / raw-mode leftovers so the next Clack prompt can read keys.
- * Windows cmd/PowerShell can keep a CR from Enter or hide the cursor after
- * ANSI animations and native file dialogs.
+ * Undo cursor-hide / raw-mode leftovers after ANSI UI or native file dialogs.
+ * Pass `prepareForPrompt` only when a Clack prompt is created immediately
+ * afterwards; otherwise stdin stays paused so it cannot keep the CLI alive.
  */
-export function restoreCliTerminal(): void {
+export function restoreCliTerminal(options: { prepareForPrompt?: boolean } = {}): void {
   if (process.stdout.isTTY) {
     process.stdout.write('\x1b[?25h\x1b[0m')
   }
@@ -1238,13 +1238,13 @@ export function restoreCliTerminal(): void {
     /* ignore */
   }
   try {
+    process.stdin.pause()
     while (process.stdin.read() !== null) {
       /* drop leftover CR/LF from the previous prompt or dialog */
     }
-    // Do not leave stdin paused here. Clack's following text prompt attaches
-    // its key handler but does not necessarily resume a stream we paused,
-    // leaving a visible prompt that cannot receive the next register number.
-    process.stdin.resume()
+    // Explicitly resume on Windows instead of relying on readline/pipe to
+    // revive a stream paused by the previous Clack prompt.
+    if (options.prepareForPrompt) process.stdin.resume()
   } catch {
     /* ignore */
   }

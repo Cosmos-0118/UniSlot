@@ -128,7 +128,7 @@ async function promptSessionNext(args: {
     { value: 'other-student', label: `${verb} a course for a different student` },
     { value: 'done', label: 'Done' },
   )
-  restoreCliTerminal()
+  restoreCliTerminal({ prepareForPrompt: true })
   const selected = await p.select({
     message: args.studentRemoved
       ? `${args.register} has no remaining courses. What next?`
@@ -264,7 +264,7 @@ export async function runSurgicalEdit(opts: {
         p.log.error('Register number is required (--register).')
         return 1
       }
-      restoreCliTerminal()
+      restoreCliTerminal({ prepareForPrompt: true })
       const answer = await p.text({
         message: 'Student register number',
         placeholder: 'e.g. RA2111003010001',
@@ -304,7 +304,7 @@ export async function runSurgicalEdit(opts: {
 
     if (opts.mode === 'fix-course') {
       if (!fromCode && session) {
-        restoreCliTerminal()
+        restoreCliTerminal({ prepareForPrompt: true })
         const selected = await p.select({
           message: 'Which course code is wrong?',
           options: courseSelectOptions(courses, true),
@@ -318,7 +318,7 @@ export async function runSurgicalEdit(opts: {
         fromCode = String(selected)
       }
       if (!toCode && session) {
-        restoreCliTerminal()
+        restoreCliTerminal({ prepareForPrompt: true })
         const answer = await p.text({
           message: 'Correct course code (existing on schedule, or new — CP-SAT will place it)',
           placeholder: 'e.g. 21MAB310T',
@@ -342,7 +342,7 @@ export async function runSurgicalEdit(opts: {
           snapshot.enrollmentRows.find((r) => r.course_code === toCode)?.course_title ||
           ''
         if (!existingTitle) {
-          restoreCliTerminal()
+          restoreCliTerminal({ prepareForPrompt: true })
           const answer = await p.text({
             message: targetExists
               ? 'Correct course title (optional)'
@@ -355,7 +355,7 @@ export async function runSurgicalEdit(opts: {
       }
     } else {
       if (!dropCode && session) {
-        restoreCliTerminal()
+        restoreCliTerminal({ prepareForPrompt: true })
         const selected = await p.select({
           message: `Remove ${register} from which of ${courses.length} course(s)?`,
           options: courseSelectOptions(courses, true),
@@ -383,7 +383,7 @@ export async function runSurgicalEdit(opts: {
             ? `Move ${register}: ${fromCode} → ${toCode} (new course · CP-SAT places weekday · others stay frozen)`
             : `Move ${register}: ${fromCode} → ${toCode} (others stay frozen)`
           : `Drop ${register} from ${dropCode} (others stay frozen)`
-      restoreCliTerminal()
+      restoreCliTerminal({ prepareForPrompt: true })
       const ok = await p.confirm({ message: summary, initialValue: true })
       if (p.isCancel(ok)) return abortOrFinish()
       if (!ok) {

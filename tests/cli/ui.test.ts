@@ -113,7 +113,7 @@ describe('transitionFrame / playTransition', () => {
 })
 
 describe('restoreCliTerminal', () => {
-  it('drains stale input without leaving stdin paused before the next prompt', () => {
+  function mockStdin() {
     const stdin = process.stdin as unknown as {
       isTTY?: boolean
       read: () => Buffer | null
@@ -126,18 +126,45 @@ describe('restoreCliTerminal', () => {
     const pause = vi.spyOn(stdin, 'pause')
     const resume = vi.spyOn(stdin, 'resume').mockReturnValue(process.stdin)
 
+    return {
+      read,
+      pause,
+      resume,
+      restore: () => {
+        read.mockRestore()
+        pause.mockRestore()
+        resume.mockRestore()
+        if (originalDescriptor) Object.defineProperty(process.stdin, 'isTTY', originalDescriptor)
+        else delete (process.stdin as { isTTY?: boolean }).isTTY
+      },
+    }
+  }
+
+  it('drains stale input and resumes stdin when preparing a prompt', () => {
+    const stdin = mockStdin()
+
+    try {
+      restoreCliTerminal({ prepareForPrompt: true })
+
+      expect(stdin.read).toHaveBeenCalledTimes(2)
+      expect(stdin.pause).toHaveBeenCalledOnce()
+      expect(stdin.resume).toHaveBeenCalledOnce()
+    } finally {
+      stdin.restore()
+    }
+  })
+
+  it('leaves stdin paused when no prompt follows', () => {
+    const stdin = mockStdin()
+
     try {
       restoreCliTerminal()
 
-      expect(read).toHaveBeenCalledTimes(2)
-      expect(pause).not.toHaveBeenCalled()
-      expect(resume).toHaveBeenCalledOnce()
+      expect(stdin.read).toHaveBeenCalledTimes(2)
+      expect(stdin.pause).toHaveBeenCalledOnce()
+      expect(stdin.resume).not.toHaveBeenCalled()
     } finally {
-      read.mockRestore()
-      pause.mockRestore()
-      resume.mockRestore()
-      if (originalDescriptor) Object.defineProperty(process.stdin, 'isTTY', originalDescriptor)
-      else delete (process.stdin as { isTTY?: boolean }).isTTY
+      stdin.restore()
     }
   })
 })
@@ -190,9 +217,10 @@ describe('createSolveSpinner live panel', () => {
       // block drifts and leaves stale content behind (the screenshot bug).
       const ups: number[] = []
       const segments: number[] = []
+      const cursorUp = new RegExp(`^${String.fromCharCode(27)}\\[(\\d+)A$`)
       let rows = 0
       for (const w of writes) {
-        const up = /^\x1b\[(\d+)A$/.exec(w)
+        const up = cursorUp.exec(w)
         if (up) {
           segments.push(rows)
           ups.push(Number(up[1]))
