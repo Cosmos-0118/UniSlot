@@ -5,6 +5,7 @@ import {
   formatMetrics,
   formatMetricsLines,
   playTransition,
+  restoreCliTerminal,
   TRANSITION_TICKS,
   transitionFrame,
   type TransitionName,
@@ -108,6 +109,36 @@ describe('transitionFrame / playTransition', () => {
     })
     expect(frames).toBe(TRANSITION_TICKS.stamp)
     expect(painted).toHaveLength(TRANSITION_TICKS.stamp)
+  })
+})
+
+describe('restoreCliTerminal', () => {
+  it('drains stale input without leaving stdin paused before the next prompt', () => {
+    const stdin = process.stdin as unknown as {
+      isTTY?: boolean
+      read: () => Buffer | null
+      pause: () => unknown
+      resume: () => unknown
+    }
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true })
+    const read = vi.spyOn(stdin, 'read').mockReturnValueOnce(Buffer.from('\n')).mockReturnValue(null)
+    const pause = vi.spyOn(stdin, 'pause')
+    const resume = vi.spyOn(stdin, 'resume').mockReturnValue(process.stdin)
+
+    try {
+      restoreCliTerminal()
+
+      expect(read).toHaveBeenCalledTimes(2)
+      expect(pause).not.toHaveBeenCalled()
+      expect(resume).toHaveBeenCalledOnce()
+    } finally {
+      read.mockRestore()
+      pause.mockRestore()
+      resume.mockRestore()
+      if (originalDescriptor) Object.defineProperty(process.stdin, 'isTTY', originalDescriptor)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+    }
   })
 })
 
