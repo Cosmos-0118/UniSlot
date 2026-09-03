@@ -1226,21 +1226,51 @@ export function createSolveSpinner(workers = cpus().length) {
  * Undo cursor-hide / raw-mode leftovers after ANSI UI or native file dialogs.
  * Pass `prepareForPrompt` only when a Clack prompt is created immediately
  * afterwards; otherwise stdin stays paused so it cannot keep the CLI alive.
+ *
+ * Clack's own spinner (`block()` in @clack/core) intentionally leaves raw
+ * mode ON after it stops *on Windows only* — toggling it back off right
+ * after a spinner is a known way to wedge the Windows console's pending
+ * async read, so upstream skips it there and lets the next prompt re-arm
+ * raw mode cleanly. Forcing it false here on win32 fights that workaround
+ * and reproduces the same wedge (stdin — including Ctrl+C — stops
+ * delivering input entirely), so this must not touch raw mode on Windows.
+ *
+ * Callers in this CLI call `restoreCliTerminal({ prepareForPrompt: true })`
+ * defensively before *every* Clack prompt, including ones that immediately
+ * follow another Clack prompt or spinner — Clack already leaves stdin
+ * resumed and drained between its own calls, so there is nothing to fix
+ * there. Rather than rely on every call site telling those two cases apart,
+ * this function tells them apart itself: it only runs the pause/drain/resume
+ * dance when stdin is *actually* left paused (which only this function's own
+ * non-prompt-preparing call, made after a native OS file dialog, does).
+ * That keeps the one call site that genuinely needs it working exactly as
+ * before, while making every redundant call a cheap no-op instead of extra
+ * stdin churn around transitions Clack already owns correctly.
  */
 export function restoreCliTerminal(options: { prepareForPrompt?: boolean } = {}): void {
   if (process.stdout.isTTY) {
     process.stdout.write('\x1b[?25h\x1b[0m')
   }
   if (!process.stdin.isTTY) return
-  try {
-    process.stdin.setRawMode?.(false)
-  } catch {
-    /* ignore */
+  if (process.platform !== 'win32') {
+    try {
+      process.stdin.setRawMode?.(false)
+    } catch {
+      /* ignore */
+    }
+  }
+  if (options.prepareForPrompt && !process.stdin.isPaused()) {
+    // Stdin is already in the state Clack left it in — flowing, drained by
+    // Clack itself as it tore down its own prompt/spinner. Nothing to do.
+    return
   }
   try {
     process.stdin.pause()
+    // Drain leftover bytes (stray CR/LF from the previous prompt or a native
+    // dialog). Bounded so a misbehaving stream can never spin this forever.
+    let drained = 0
     while (process.stdin.read() !== null) {
-      /* drop leftover CR/LF from the previous prompt or dialog */
+      if (++drained > 10_000) break
     }
     // Explicitly resume on Windows instead of relying on readline/pipe to
     // revive a stream paused by the previous Clack prompt.
@@ -1248,6 +1278,37 @@ export function restoreCliTerminal(options: { prepareForPrompt?: boolean } = {})
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Last-resort safety net: guarantee the terminal is never left with a
+ * hidden cursor or stuck in raw mode if the process goes down unexpectedly —
+ * an uncaught exception, an unhandled rejection, a signal, or any exit path
+ * that skips a Clack prompt's own cleanup. Call once, as early as possible
+ * in the CLI entry point.
+ *
+ * This intentionally does not install its own SIGINT/SIGTERM handlers —
+ * several commands (e.g. the CP-SAT solve loop) already register their own
+ * to stop child processes and offer a "press again to force quit" flow, and
+ * adding another listener here would just complicate that. `'exit'` is the
+ * one hook every one of those paths — including their own `process.exit()`
+ * calls — still funnels through, so it is sufficient on its own and stays
+ * out of the way of feature-specific cancellation handling.
+ */
+export function installTerminalSafetyNet(): void {
+  let restored = false
+  process.once('exit', () => {
+    if (restored) return
+    restored = true
+    try {
+      if (process.stdout.isTTY) process.stdout.write('\x1b[?25h\x1b[0m')
+      if (process.stdin.isTTY && process.platform !== 'win32') {
+        process.stdin.setRawMode?.(false)
+      }
+    } catch {
+      /* best effort — the process is going down regardless */
+    }
+  })
 }
 
 let bannerShown = false

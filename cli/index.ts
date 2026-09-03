@@ -12,6 +12,7 @@ import {
   bannerAnimated,
   createSolveSpinner,
   formatMetrics,
+  installTerminalSafetyNet,
   outroSuccess,
   playWriteSweep,
   showPanel,
@@ -2169,4 +2170,5 @@ async function main(): Promise<void> {
   await program.parseAsync(argv)
 }
 
+installTerminalSafetyNet()
 void main()
