@@ -7,10 +7,14 @@ export function generateRunSeed(): number {
 }
 
 export function parseSeedInput(raw: string): number | undefined {
-  const trimmed = raw.trim()
+  // Tolerate pasting a quoted token from docs/chat: `"77/8/0/0"`, `'77'`.
+  const trimmed = raw
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .trim()
   if (!trimmed || !/^\d+$/.test(trimmed)) return undefined
   const n = Number(trimmed)
-  if (!Number.isInteger(n) || n < 0) return undefined
+  if (!Number.isSafeInteger(n) || n < 0) return undefined
   return n
 }
 
@@ -33,7 +37,10 @@ export function formatReproToken(t: ReproToken): string {
  * - Invalid → undefined
  */
 export function parseReproToken(raw: string): ReproToken | { plainSeed: number } | undefined {
-  const trimmed = raw.trim()
+  const trimmed = raw
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .trim()
   if (!trimmed) return undefined
   const parts = trimmed.split('/').map((s) => s.trim())
   if (parts.length === 1) {

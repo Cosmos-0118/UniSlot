@@ -20,6 +20,19 @@ describe('normalizeSaturdayExtraCodes', () => {
     expect(normalizeSaturdayExtraCodes(['ab', ' AB ', ''])).toEqual(['AB'])
     expect(normalizeSaturdayExtraCodes(undefined)).toEqual([])
   })
+
+  it('tolerates semicolon and whitespace separators from pasted flag values', () => {
+    expect(normalizeSaturdayExtraCodes('21CSE101T; 21ECE202T  21MAB101T')).toEqual([
+      '21CSE101T',
+      '21ECE202T',
+      '21MAB101T',
+    ])
+    expect(normalizeSaturdayExtraCodes(['21CSE101T;21ECE202T', ' 21MAB101T'])).toEqual([
+      '21CSE101T',
+      '21ECE202T',
+      '21MAB101T',
+    ])
+  })
 })
 
 describe('Saturday eligibility with extras', () => {

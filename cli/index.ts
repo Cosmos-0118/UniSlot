@@ -10,14 +10,28 @@ import { assertReadableFile, pickEnrollmentFile, pickOutputFolder, pickPreviousO
 import { formatReproToken, parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
 import {
   bannerAnimated,
+  canPrompt,
+  cleanFlagNumber,
   createSolveSpinner,
   formatMetrics,
   installTerminalSafetyNet,
+  noteSkippedPrompts,
   outroSuccess,
   playWriteSweep,
+  promptSaturdayPolicy,
+  restoreCliTerminal,
   showPanel,
 } from './ui.ts'
-import { capLines, pad, palette, spinOk, spinWarn } from './theme.ts'
+import {
+  capLines,
+  joinCapped,
+  pad,
+  palette,
+  spinOk,
+  spinWarn,
+  truncateMiddle,
+  truncateVisible,
+} from './theme.ts'
 import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
@@ -116,8 +130,36 @@ async function promptSaturdayExtraCodes(
 
 function logSaturdayPolicy(allowSaturdayForMath: boolean, extras: string[]): void {
   const policy = allowSaturdayForMath ? 'enabled for maths courses' : 'maths blocked'
-  const extraBit = extras.length ? ` · extras ${extras.join(', ')}` : ''
+  const extraBit = extras.length ? ` · extras ${joinCapped(extras, 12)}` : ''
   p.log.info(`Saturday · ${policy}${extraBit}`)
+}
+
+/**
+ * Sanitize a numeric flag: NaN / infinite / below-min values fall back to the
+ * default with one friendly warning instead of poisoning solver input.
+ * (`--portfolio abc` used to flow NaN into worker math and status labels.)
+ */
+function numFlag(
+  label: string,
+  raw: number | undefined,
+  opts: { min: number; integer: boolean },
+): number | undefined {
+  if (raw === undefined) return undefined
+  const v = cleanFlagNumber(raw, opts)
+  if (v === undefined) {
+    p.log.warn(`Ignoring invalid ${label} (${String(raw)}) — using default.`)
+  }
+  return v
+}
+
+/**
+ * Clack prompts need a TTY stdin. `ask` is the single gate for every
+ * confirm/text/select in the runners; native OS pickers stay on
+ * `opts.interactive` (they work headless and fail soft to null).
+ */
+function computeAsk(opts: { interactive: boolean; skipPrompts?: boolean }): boolean {
+  if (opts.interactive && !opts.skipPrompts && !canPrompt()) noteSkippedPrompts()
+  return opts.interactive && !opts.skipPrompts && canPrompt()
 }
 
 async function writeExports(
@@ -276,13 +318,21 @@ async function writeRectifyExports(
  */
 function formatRectifyResult(report: RectificationReport): string {
   const lines: string[] = []
+  const PLACEMENT_CAP = 12
 
   if (report.new_course_placements.length > 0) {
     lines.push(chalk.bold('New course' + (report.new_course_placements.length > 1 ? 's' : '')))
-    for (const pl of report.new_course_placements) {
+    for (const pl of report.new_course_placements.slice(0, PLACEMENT_CAP)) {
       lines.push(
         `  ${chalk.cyan(pl.course_code)} · ${pl.course_title}`,
         `    ${chalk.green(pl.day)} · ${pl.section_count} section(s) · ${pl.enrollment} student(s)`,
+      )
+    }
+    if (report.new_course_placements.length > PLACEMENT_CAP) {
+      lines.push(
+        chalk.dim(
+          `  … +${report.new_course_placements.length - PLACEMENT_CAP} more (see rectification-report.json)`,
+        ),
       )
     }
     lines.push('')
@@ -291,7 +341,7 @@ function formatRectifyResult(report: RectificationReport): string {
   if (report.removed_course_codes.length > 0) {
     lines.push(
       chalk.bold('Removed courses'),
-      `  ${report.removed_course_codes.join(', ')}`,
+      `  ${joinCapped(report.removed_course_codes, PLACEMENT_CAP)}`,
       '',
     )
   }
@@ -302,9 +352,10 @@ function formatRectifyResult(report: RectificationReport): string {
     `  Section splits changed: ${
       report.section_count_changes.length === 0
         ? 'none'
-        : report.section_count_changes
-            .map((c) => `${c.course_code} ${c.before}→${c.after}`)
-            .join(', ')
+        : joinCapped(
+            report.section_count_changes.map((c) => `${c.course_code} ${c.before}→${c.after}`),
+            PLACEMENT_CAP,
+          )
     }`,
   )
   if (report.changed_students.length > 0) {
@@ -439,7 +490,7 @@ async function runIssues(opts: {
     const list = report.by_category[category as IssueCategory]
     if (!list.length) continue
     const title = `${ISSUE_CATEGORY_LABELS[category]} (${list.length})`
-    showPanel(title, formatCategoryPanelBody(list))
+    showPanel(title, formatCategoryPanelBody(list), { maxLines: 200 })
   }
 
   if (report.blocking) {
@@ -461,8 +512,9 @@ async function runIssues(opts: {
 }
 
 async function promptFilterCourseCodes(initial = ''): Promise<string[] | 'cancelled'> {
+  // Single-line prompt: newline-separated pastes submit early, so ask for commas.
   const answer = await p.text({
-    message: 'Course codes to keep (comma- or newline-separated)',
+    message: 'Course codes to keep (comma-separated)',
     placeholder: 'e.g. 21CSC203P, 21CSE251T, 21CSE254T',
     initialValue: initial,
     validate: (v) => {
@@ -505,7 +557,8 @@ async function runFilter(opts: {
     return 1
   }
 
-  if (!codes.length && opts.interactive && !opts.skipPrompts) {
+  const askFilter = computeAsk(opts)
+  if (!codes.length && askFilter) {
     const prompted = await promptFilterCourseCodes()
     if (prompted === 'cancelled') {
       p.cancel('Cancelled')
@@ -538,7 +591,7 @@ async function runFilter(opts: {
         `None of the ${codes.length} requested code(s) appear in the schedule. Check codes and try again.`,
       )
       if (filtered.missingCodes.length) {
-        p.log.info(`Missing: ${filtered.missingCodes.join(', ')}`)
+        p.log.info(`Missing: ${joinCapped(filtered.missingCodes, 20)}`)
       }
       return 1
     }
@@ -548,12 +601,12 @@ async function runFilter(opts: {
         `${new Set(filtered.entries.map((e) => e.course_code)).size} course(s)`,
     )
     if (filtered.missingCodes.length) {
-      p.log.warn(`Not in schedule: ${filtered.missingCodes.join(', ')}`)
+      p.log.warn(`Not in schedule: ${joinCapped(filtered.missingCodes, 20)}`)
     }
 
     await playWriteSweep()
     const writeSpin = p.spinner()
-    writeSpin.start(`Writing filtered schedule to ${outDir}…`)
+    writeSpin.start(`Writing filtered schedule to ${truncateMiddle(outDir, 60)}…`)
     await mkdir(outDir, { recursive: true })
     const schedule = scheduleFromFilteredEntries(filtered.entries)
     const buf = await scheduleToWorkbookBuffer(schedule)
@@ -593,8 +646,13 @@ async function runRectify(opts: {
   await bannerAnimated()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
+  const ask = computeAsk(opts)
+  const timeLimit = numFlag('--time-limit', opts.timeLimit, { min: 1, integer: false })
+  const workersFlag = numFlag('--workers', opts.workers, { min: 1, integer: true })
+  const absoluteGap = numFlag('--absolute-gap', opts.absoluteGap, { min: 0, integer: true })
+  const provePlateau = numFlag('--prove-plateau', opts.provePlateau, { min: 1, integer: false })
   const cpuN = cpus().length
-  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+  const requestedWorkers = workersFlag ?? cpuN
   if (opts.portfolio !== undefined && opts.portfolio > 0) {
     // With every continuing course pinned the model presolves to almost nothing.
     p.log.warn('--portfolio is ignored during rectify; the pinned model solves in a single pass.')
@@ -671,7 +729,7 @@ async function runRectify(opts: {
   const inferredExtras = inferSaturdayExtrasFromSnapshot(snapshot)
   let allowSaturdayForMath = opts.saturday
   if (allowSaturdayForMath === undefined) {
-    if (opts.interactive && !opts.skipPrompts) {
+    if (ask) {
       const answer = await p.confirm({
         message: `Use Saturday slot for maths courses? (previous run: ${inferredSaturday ? 'enabled' : 'blocked'})`,
         initialValue: inferredSaturday,
@@ -689,7 +747,7 @@ async function runRectify(opts: {
   let saturdayExtraCourseCodes: string[]
   if (opts.saturdayCodes !== undefined) {
     saturdayExtraCourseCodes = normalizeSaturdayExtraCodes(opts.saturdayCodes)
-  } else if (opts.interactive && !opts.skipPrompts) {
+  } else if (ask) {
     const extras = await promptSaturdayExtraCodes(inferredExtras)
     if (extras === 'cancelled') {
       p.cancel('Cancelled')
@@ -753,7 +811,7 @@ async function runRectify(opts: {
 
   if (enrollmentDelta.changed_students.length === 0 && free.length === 0) {
     p.log.warn('Nothing changed between the two workbooks — the previous schedule already applies.')
-    if (opts.interactive && !opts.skipPrompts) {
+    if (ask) {
       const proceed = await p.confirm({
         message: 'Re-export the schedule anyway?',
         initialValue: false,
@@ -789,10 +847,10 @@ async function runRectify(opts: {
         rectifiedRows: rectifiedParsed.rows,
         previousSnapshot: snapshot,
         previousSummary,
-        cpsatTimeLimitSeconds: opts.timeLimit,
-        cpsatWorkers: opts.workers,
-        cpsatAbsoluteGap: opts.absoluteGap,
-        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatTimeLimitSeconds: timeLimit,
+        cpsatWorkers: workersFlag,
+        cpsatAbsoluteGap: absoluteGap,
+        cpsatProvePlateauSeconds: provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
         saturdayExtraCourseCodes,
@@ -816,7 +874,7 @@ async function runRectify(opts: {
       spin.stop(spinWarn('Rectify blocked'))
       p.log.error(result.infeasible_reason ?? 'Structural constraints violated')
       const violations = result.rectificationReport?.hard_constraint_violations ?? []
-      if (violations.length > 1) {
+      if (violations.length > 0) {
         showPanel('Structural violations', violations.slice(0, 12).join('\n'))
       }
       const files = await writeRectifyExports(outDir, result, {
@@ -843,9 +901,13 @@ async function runRectify(opts: {
         )
       }
       if (report.baseline_warnings.length) {
-        p.log.warn(report.baseline_warnings.map((w) => w.message).join('\n'))
+        const shown = report.baseline_warnings.slice(0, 10).map((w) => w.message)
+        if (report.baseline_warnings.length > 10) {
+          shown.push(`… +${report.baseline_warnings.length - 10} more (see rectification-report.json)`)
+        }
+        p.log.warn(shown.join('\n'))
       }
-      if (report.new_clashes.length > 0 && opts.interactive && !opts.skipPrompts) {
+      if (report.new_clashes.length > 0 && ask) {
         const proceed = await p.confirm({
           message: `Write exports despite ${report.new_clashes.length} newly introduced clash(es)?`,
           initialValue: true,
@@ -859,7 +921,7 @@ async function runRectify(opts: {
 
     await playWriteSweep()
     const writeSpin = p.spinner()
-    writeSpin.start(`Writing rectified exports to ${outDir}…`)
+    writeSpin.start(`Writing rectified exports to ${truncateMiddle(outDir, 60)}…`)
     const files = await writeRectifyExports(outDir, result, {
       workers: requestedWorkers,
       seed: opts.seed,
@@ -981,7 +1043,7 @@ function formatLateResult(report: LateEnrollmentReport): string {
   lines.push(chalk.bold(`Late batch ${report.batch} (run #${report.run_seq})`))
   lines.push(`  Placed: ${report.assignments.length} registration(s)`)
   if (report.new_section_ids.length) {
-    lines.push(`  New sections: ${report.new_section_ids.join(', ')}`)
+    lines.push(`  New sections: ${joinCapped(report.new_section_ids, 12)}`)
   }
   if (report.moved_students.length) {
     lines.push(`  Students moved between sections (equalize): ${report.moved_students.length}`)
@@ -1005,6 +1067,7 @@ function formatLateResult(report: LateEnrollmentReport): string {
 
 async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDecision[]> {
   const decisions: CapacityDecision[] = []
+  if (panels.length === 0) return decisions
   let applyAll: CapacityDecision | null = null
 
   for (const panel of panels) {
@@ -1013,10 +1076,11 @@ async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDe
       continue
     }
     const c = panel.conflict
+    const sectionLoads = c.sections.map((s) => `${s.enrollment}/${s.capacity}`)
     const lines = [
       chalk.bold(`${c.course_code} · ${c.course_title}`),
       `  Frozen weekday   ${panel.frozen_day} — cannot change (${c.sections.reduce((n, s) => n + s.enrollment, 0)} students already scheduled)`,
-      `  Sections now     ${c.sections.length} section(s) — ${c.sections.map((s) => `${s.enrollment}/${s.capacity}`).join(' · ')} (${c.seats_free} free)`,
+      `  Sections now     ${c.sections.length} section(s) — ${joinCapped(sectionLoads, 12, ' · ')} (${c.seats_free} free)`,
       `  Late demand      ${c.late_demand} student(s)`,
       `  The problem      ${c.shortfall} of them have no seat`,
       '',
@@ -1030,12 +1094,13 @@ async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDe
     }
     showPanel('Capacity conflict', lines.join('\n'))
 
+    restoreCliTerminal({ prepareForPrompt: true })
     const choice = await p.select({
       message: `Strategy for ${c.course_code}`,
       options: panel.options.map((o) => ({
         value: o.strategy,
         label: o.label,
-        hint: o.summary.slice(0, 80),
+        hint: truncateVisible(o.summary, 80),
       })),
     })
     if (p.isCancel(choice)) throw new Error('Cancelled')
@@ -1061,6 +1126,7 @@ async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDe
 
 async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]> {
   const decisions: ClashDecision[] = []
+  if (panels.length === 0) return decisions
   let applyAll: ClashDecision | null = null
 
   for (const panel of panels) {
@@ -1076,14 +1142,17 @@ async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]>
       continue
     }
     const cl = panel.clash
-    const whyLines = cl.clashing_courses.map((code) => {
+    const whyLines = cl.clashing_courses.slice(0, 12).map((code) => {
       const n = cl.course_enrollments[code] ?? 0
       return `    ${code} is frozen to ${cl.day} — ${n} student(s) already scheduled`
     })
+    if (cl.clashing_courses.length > 12) {
+      whyLines.push(`    … +${cl.clashing_courses.length - 12} more (see late-enrollment-report.json)`)
+    }
     const lines = [
       chalk.bold(`${cl.register_number} · ${cl.student_name} · ${cl.program}`),
-      `  Late registrations   ${cl.late_courses.join(', ')}`,
-      `  The problem          ${cl.clashing_courses.join(' + ')} sit on ${cl.day}`,
+      `  Late registrations   ${joinCapped(cl.late_courses, 12)}`,
+      `  The problem          ${joinCapped(cl.clashing_courses, 12, ' + ')} sit on ${cl.day}`,
       '',
       '  Why it cannot be avoided',
       ...whyLines,
@@ -1098,12 +1167,13 @@ async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]>
     }
     showPanel('Unavoidable clash', lines.join('\n'))
 
+    restoreCliTerminal({ prepareForPrompt: true })
     const choice = await p.select({
       message: `Clash decision for ${cl.register_number}`,
       options: panel.options.map((o, i) => ({
         value: String(i),
         label: o.label,
-        hint: o.summary.slice(0, 80),
+        hint: truncateVisible(o.summary, 80),
       })),
     })
     if (p.isCancel(choice)) throw new Error('Cancelled')
@@ -1149,8 +1219,15 @@ async function runLate(opts: {
   await bannerAnimated()
   const python = await ensurePythonReady()
   p.log.info(`Python · ${python}`)
+  const ask = computeAsk(opts)
+  const timeLimit = numFlag('--time-limit', opts.timeLimit, { min: 1, integer: false })
+  const workersFlag = numFlag('--workers', opts.workers, { min: 1, integer: true })
+  const absoluteGap = numFlag('--absolute-gap', opts.absoluteGap, { min: 0, integer: true })
+  const provePlateau = numFlag('--prove-plateau', opts.provePlateau, { min: 1, integer: false })
+  const overflowBuffer =
+    numFlag('--overflow-buffer', opts.overflowBuffer, { min: 0, integer: true }) ?? 2
   const cpuN = cpus().length
-  const requestedWorkers = opts.workers && opts.workers > 0 ? opts.workers : cpuN
+  const requestedWorkers = workersFlag ?? cpuN
 
   let previousDir = opts.previous
   let latePath = opts.late
@@ -1245,7 +1322,7 @@ async function runLate(opts: {
     return 1
   }
 
-  if (lateParsed.validation.errors.length > 0 && opts.interactive && !opts.skipPrompts) {
+  if (lateParsed.validation.errors.length > 0 && ask) {
     showPanel(
       'Skipped / warning rows',
       lateParsed.validation.errors
@@ -1284,10 +1361,10 @@ async function runLate(opts: {
         previousSnapshot: snapshot,
         lateRows: lateParsed.rows,
         previousSummary,
-        cpsatTimeLimitSeconds: opts.timeLimit,
-        cpsatWorkers: opts.workers,
-        cpsatAbsoluteGap: opts.absoluteGap,
-        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatTimeLimitSeconds: timeLimit,
+        cpsatWorkers: workersFlag,
+        cpsatAbsoluteGap: absoluteGap,
+        cpsatProvePlateauSeconds: provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
         saturdayExtraCourseCodes,
@@ -1300,24 +1377,30 @@ async function runLate(opts: {
         previousDir,
         outputDir: outDir,
         defaultOnFull: opts.onFull ?? 'new-section',
-        defaultBuffer: opts.overflowBuffer ?? 2,
+        defaultBuffer: overflowBuffer,
         defaultOnClash: opts.onClash ?? 'accept',
         onCapacityConflicts:
-          opts.interactive && !opts.skipPrompts && !opts.onFull
+          ask && !opts.onFull
             ? async (panels) => {
-                spin.stop('Capacity decision needed')
-                const d = await promptCapacityPanels(panels)
-                spin.start('Continuing late merge…')
-                return d
+                spin.pause('Capacity decision needed')
+                try {
+                  return await promptCapacityPanels(panels)
+                } finally {
+                  // Restore the spinner even when Esc/Ctrl+C throws out of a
+                  // prompt; the outer cancellation handler then owns its stop.
+                  spin.resume('Continuing late merge…')
+                }
               }
             : undefined,
         onPredictedClashes:
-          opts.interactive && !opts.skipPrompts && !opts.onClash
+          ask && !opts.onClash
             ? async (panels) => {
-                spin.stop('Clash decision needed')
-                const d = await promptClashPanels(panels)
-                spin.start('Continuing late merge…')
-                return d
+                spin.pause('Clash decision needed')
+                try {
+                  return await promptClashPanels(panels)
+                } finally {
+                  spin.resume('Continuing late merge…')
+                }
               }
             : undefined,
       },
@@ -1348,7 +1431,7 @@ async function runLate(opts: {
     const report = result.lateReport
     if (report) {
       showPanel('Late enrollment', formatLateResult(report))
-      if (report.clash_diff.introduced.length > 0 && opts.interactive && !opts.skipPrompts) {
+      if (report.clash_diff.introduced.length > 0 && ask) {
         const proceed = await p.confirm({
           message: `Write exports despite ${report.clash_diff.introduced.length} newly introduced clash(es)?`,
           initialValue: true,
@@ -1362,7 +1445,7 @@ async function runLate(opts: {
 
     await playWriteSweep()
     const writeSpin = p.spinner()
-    writeSpin.start(`Writing late exports to ${outDir}…`)
+    writeSpin.start(`Writing late exports to ${truncateMiddle(outDir, 60)}…`)
     const files = await writeLateExports(outDir, result, {
       workers: requestedWorkers,
       seed: opts.seed,
@@ -1380,6 +1463,12 @@ async function runLate(opts: {
     if (ac.signal.aborted || err instanceof PipelineCancelledError) {
       spin.cancel()
       p.cancel('Late merge cancelled.')
+      return 130
+    }
+    if (err instanceof Error && err.message === 'Cancelled') {
+      // User pressed Ctrl+C / Esc in a mid-run capacity/clash prompt.
+      spin.cancel()
+      p.cancel('Late merge cancelled — nothing written.')
       return 130
     }
     spin.stop(spinWarn('Failed'))
@@ -1411,9 +1500,16 @@ async function runSolve(opts: {
   await bannerAnimated()
   const python = await ensurePythonReady()
   const cpuN = cpus().length
+  const ask = computeAsk(opts)
+
+  const timeLimit = numFlag('--time-limit', opts.timeLimit, { min: 1, integer: false })
+  const workersFlag = numFlag('--workers', opts.workers, { min: 1, integer: true })
+  const portfolioFlag = numFlag('--portfolio', opts.portfolio, { min: 0, integer: true })
+  const absoluteGap = numFlag('--absolute-gap', opts.absoluteGap, { min: 0, integer: true })
+  const provePlateau = numFlag('--prove-plateau', opts.provePlateau, { min: 1, integer: false })
 
   const seedResult = await resolveRunSeed({
-    interactive: !opts.skipPrompts && opts.seed === undefined,
+    interactive: !opts.skipPrompts && opts.seed === undefined && canPrompt(),
     seed: opts.seed,
   })
   if ('cancelled' in seedResult) {
@@ -1424,18 +1520,15 @@ async function runSolve(opts: {
 
   // Flag > token > machine CPU count. Token workers override cpus().length on reuse.
   const requestedWorkers =
-    opts.workers && opts.workers > 0
-      ? opts.workers
+    workersFlag !== undefined
+      ? workersFlag
       : seedResult.workers && seedResult.workers > 0
         ? seedResult.workers
         : cpuN
   const workersLabel = String(requestedWorkers)
-  const portfolioK =
-    opts.portfolio !== undefined
-      ? Math.max(0, Math.floor(opts.portfolio))
-      : seedResult.portfolio !== undefined
-        ? Math.max(0, Math.floor(seedResult.portfolio))
-        : 0
+  const tokenPortfolio =
+    seedResult.portfolio !== undefined ? Math.max(0, Math.floor(seedResult.portfolio)) : 0
+  const portfolioK = portfolioFlag !== undefined ? portfolioFlag : tokenPortfolio
 
   const memberW = portfolioK > 0 ? Math.max(2, Math.floor(requestedWorkers / portfolioK)) : 0
   const cpuLine =
@@ -1446,9 +1539,14 @@ async function runSolve(opts: {
     p.log.warn(
       'Portfolio race uses a wall-clock budget — schedule will not reproduce from seed alone. Use --portfolio 0 (default) for reproducible runs.',
     )
+    if (portfolioK * memberW > requestedWorkers * 2) {
+      p.log.warn(
+        `--portfolio ${portfolioK} on ${requestedWorkers} workers oversubscribes CPUs — expect contention. Prefer --portfolio ≤ workers.`,
+      )
+    }
   }
 
-  if (plainSeedOnly && reused && !(opts.workers && opts.workers > 0)) {
+  if (plainSeedOnly && reused && workersFlag === undefined) {
     p.log.warn(
       `Reusing seed ${seed} alone — workers will default to this machine's CPU count (${requestedWorkers}). ` +
         `If the original run used a different worker count, the schedule will NOT reproduce. ` +
@@ -1460,34 +1558,39 @@ async function runSolve(opts: {
   if (allowSaturdayForMath === undefined && seedResult.allowSaturdayForMath !== undefined) {
     allowSaturdayForMath = seedResult.allowSaturdayForMath
   }
-  if (allowSaturdayForMath === undefined) {
-    if (opts.interactive) {
-      const answer = await p.confirm({
-        message: 'Use Saturday slot for maths courses? (temporarily blocked by default)',
-        initialValue: false,
-      })
-      if (p.isCancel(answer)) {
-        p.cancel('Cancelled')
-        return 1
-      }
-      allowSaturdayForMath = Boolean(answer)
-    } else {
-      allowSaturdayForMath = false
-    }
-  }
+  const saturdayCodesFromFlag =
+    opts.saturdayCodes !== undefined
+      ? normalizeSaturdayExtraCodes(opts.saturdayCodes)
+      : undefined
 
   let saturdayExtraCourseCodes: string[]
-  if (opts.saturdayCodes !== undefined) {
-    saturdayExtraCourseCodes = normalizeSaturdayExtraCodes(opts.saturdayCodes)
-  } else if (opts.interactive && !opts.skipPrompts) {
-    const extras = await promptSaturdayExtraCodes([])
-    if (extras === 'cancelled') {
+  const needsSaturdayGroup =
+    allowSaturdayForMath === undefined && saturdayCodesFromFlag === undefined && ask
+  if (needsSaturdayGroup) {
+    // Grouped wizard: one confirm + one text, single cancel path.
+    const policy = await promptSaturdayPolicy({ initialAllow: false, initialExtras: [] })
+    if (policy === 'cancelled') {
       p.cancel('Cancelled')
       return 1
     }
-    saturdayExtraCourseCodes = extras
+    allowSaturdayForMath = policy.allowSaturdayForMath
+    saturdayExtraCourseCodes = policy.extras
   } else {
-    saturdayExtraCourseCodes = []
+    if (allowSaturdayForMath === undefined) {
+      allowSaturdayForMath = false
+    }
+    if (saturdayCodesFromFlag !== undefined) {
+      saturdayExtraCourseCodes = saturdayCodesFromFlag
+    } else if (ask) {
+      const extras = await promptSaturdayExtraCodes([])
+      if (extras === 'cancelled') {
+        p.cancel('Cancelled')
+        return 1
+      }
+      saturdayExtraCourseCodes = extras
+    } else {
+      saturdayExtraCourseCodes = []
+    }
   }
   const reproToken = formatReproToken({
     seed,
@@ -1497,7 +1600,7 @@ async function runSolve(opts: {
   })
   const saturdayLine = allowSaturdayForMath ? 'enabled for maths courses' : 'maths blocked'
   const saturdayExtraBit = saturdayExtraCourseCodes.length
-    ? ` · extras ${saturdayExtraCourseCodes.join(', ')}`
+    ? ` · extras ${joinCapped(saturdayExtraCourseCodes, 12)}`
     : ''
   p.log.info(
     [
@@ -1600,11 +1703,11 @@ async function runSolve(opts: {
         }
       },
       {
-        cpsatTimeLimitSeconds: opts.timeLimit,
+        cpsatTimeLimitSeconds: timeLimit,
         cpsatWorkers: requestedWorkers,
         cpsatPortfolio: portfolioK,
-        cpsatAbsoluteGap: opts.absoluteGap,
-        cpsatProvePlateauSeconds: opts.provePlateau,
+        cpsatAbsoluteGap: absoluteGap,
+        cpsatProvePlateauSeconds: provePlateau,
         cpsatFullProve: opts.prove,
         allowSaturdayForMath,
         saturdayExtraCourseCodes,
@@ -1663,12 +1766,12 @@ async function runSolve(opts: {
     )
 
     if (result.schedule.lower_bound_notes?.length) {
-      showPanel('Lower bounds', result.schedule.lower_bound_notes.join('\n'))
+      showPanel('Lower bounds', result.schedule.lower_bound_notes.join('\n'), { maxLines: 40 })
     }
 
     let outDir = opts.output
     if (!outDir) {
-      if (opts.interactive) {
+      if (ask) {
         const usePicker = await p.confirm({
           message: 'Pick an output folder with a system dialog?',
           initialValue: true,
@@ -1698,7 +1801,7 @@ async function runSolve(opts: {
 
     await playWriteSweep()
     const writeSpin = p.spinner()
-    writeSpin.start(`Writing exports to ${outDir}…`)
+    writeSpin.start(`Writing exports to ${truncateMiddle(outDir, 60)}…`)
     const files = await writeExports(outDir, result, {
       seed,
       workers: workersUsed,
@@ -1711,7 +1814,7 @@ async function runSolve(opts: {
     writeSpin.stop(spinOk(`Wrote ${files.length} file(s)`))
 
     const reproduceHint =
-      portfolioK > 0 || opts.timeLimit != null || opts.provePlateau != null || opts.absoluteGap != null
+      portfolioK > 0 || timeLimit != null || provePlateau != null || absoluteGap != null
         ? palette.dim(
             `Repro token · ${finalToken} — reproducible only with --portfolio 0 and no time/plateau/gap escapes (same ortools/python versions).`,
           )

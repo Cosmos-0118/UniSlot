@@ -2,6 +2,12 @@ import type { EnrollmentRow } from '../types'
 import { isMathCourse, normalizeSaturdayExtraCodes, SATURDAY_SLOT_INDEX } from '../solver/timeModel'
 import type { SchedulingSnapshot } from './snapshot'
 
+/** Join a code list, capping at `cap` items with an explicit "+N more" tail. */
+function joinCapped(items: string[], cap: number): string {
+  if (items.length <= cap) return items.join(', ')
+  return `${items.slice(0, cap).join(', ')}, … +${items.length - cap} more`
+}
+
 export type StudentEnrollmentChange = {
   register_number: string
   student_name: string
@@ -187,15 +193,17 @@ export function formatEnrollmentDeltaSummary(
     `${delta.changed_students.length} student(s) changed · ${pinnedCount} course weekday(s) pinned`,
   )
   if (delta.new_course_codes.length > 0) {
-    lines.push(`New courses (${delta.new_course_codes.length}): ${delta.new_course_codes.join(', ')}`)
+    lines.push(
+      `New courses (${delta.new_course_codes.length}): ${joinCapped(delta.new_course_codes, 12)}`,
+    )
   }
   if (delta.removed_course_codes.length > 0) {
     lines.push(
-      `Removed courses (${delta.removed_course_codes.length}): ${delta.removed_course_codes.join(', ')}`,
+      `Removed courses (${delta.removed_course_codes.length}): ${joinCapped(delta.removed_course_codes, 12)}`,
     )
   }
   if (freeCourses.length > 0) {
-    lines.push(`Need weekday assignment: ${freeCourses.join(', ')}`)
+    lines.push(`Need weekday assignment: ${joinCapped(freeCourses, 12)}`)
   } else {
     lines.push('No new course codes — re-sectioning only (no CP-SAT)')
   }
@@ -205,8 +213,8 @@ export function formatEnrollmentDeltaSummary(
     lines.push('')
     for (const s of show) {
       lines.push(`${s.register_number} · ${s.student_name}`)
-      if (s.dropped.length) lines.push(`  dropped: ${s.dropped.join(', ')}`)
-      if (s.added.length) lines.push(`  added:   ${s.added.join(', ')}`)
+      if (s.dropped.length) lines.push(`  dropped: ${joinCapped(s.dropped, 10)}`)
+      if (s.added.length) lines.push(`  added:   ${joinCapped(s.added, 10)}`)
     }
     if (delta.changed_students.length > show.length) {
       lines.push(`… and ${delta.changed_students.length - show.length} more student(s)`)

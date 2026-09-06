@@ -22,7 +22,8 @@ export function isMathCourse(code: string): boolean {
 /** Parse comma-separated or array course codes into a normalized, deduped list. */
 export function normalizeSaturdayExtraCodes(raw: string | string[] | undefined): string[] {
   if (raw === undefined) return []
-  const parts = Array.isArray(raw) ? raw : raw.split(',')
+  // Tolerate `;` and whitespace separators from pasted flag values.
+  const parts = Array.isArray(raw) ? raw.flatMap((p) => p.split(/[,;\s]+/)) : raw.split(/[,;\s]+/)
   const seen = new Set<string>()
   const out: string[] = []
   for (const part of parts) {

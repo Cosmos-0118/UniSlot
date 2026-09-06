@@ -62,13 +62,13 @@ What happens:
 1. **File picker** — choose the enrollment `.xlsx` (macOS / Windows / Linux dialogs).
 2. **Saturday policy** — confirm whether maths may use Saturday, then optionally enter extra course codes (comma-separated) that may also use Saturday even if maths Saturday is off.
 3. **Parse** — row counts, students, courses.
-4. **CP-SAT search** — a live multi-line panel with short stage-transition animations. Example:
+4. **CP-SAT search** — a single Clack spinner line plus step checkpoints. Example:
 
    ```text
-   ⠋ 1/3 Clash  minimize clash weight  ·  10w  ·  2m 05s
-     ⣿⣼⢠⠀…  warm 22/30  →  clash   18  RED   18  bound 12 · gap 6  proving 12.4s
-     ● 1/3 clash  ○ 2/3 RED  ○ 3/3 balance
-     ────────────────────────────────────────
+   ◇  ▲ UniSlot · terminal CP-SAT scheduler
+   ◆  1/3 Clash · clash 18 · RED 18 · bound 12 · gap 6 · proving · 2m 05s
+   ◆  1/3 Clash · clash 18 · proven minimal
+   ◆  2/3 RED · RED 12 · proving · 2m 40s
    ```
 
    - **1/3 Clash** — primary objective (clash weight).
@@ -78,7 +78,7 @@ What happens:
    - **proving** — no better clash weight found recently; solver is closing the optimality proof. This can take a while on large enrollments; the clock still advances.
    - **gap / bound** — when shown, distance between best solution and proven lower bound.
 
-   Short intro / stage / result / outro animations play on a TTY; they are skipped in non-interactive logs.
+   One spinner, no fullscreen animation — piped/CI logs (`-y`, non-TTY) show the same lines without color. Result summaries use one `note` panel shape.
 
 5. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED count, whether clashes are proven minimal.
 6. **Output folder** — optional folder picker, or default `./unislot-out/`.

@@ -9,8 +9,8 @@ import {
   pickOutputFolder,
   pickPreviousOutputFolder,
 } from './fileDialog.ts'
-import { bannerAnimated, outroSuccess, playWriteSweep, restoreCliTerminal, showPanel } from './ui.ts'
-import { spinOk, spinWarn } from './theme.ts'
+import { bannerAnimated, canPrompt, noteSkippedPrompts, outroSuccess, playWriteSweep, restoreCliTerminal, showPanel } from './ui.ts'
+import { joinCapped, spinOk, spinWarn, truncateMiddle, truncateVisible } from './theme.ts'
 import {
   runFixPipeline,
   type FixCourseMode,
@@ -93,6 +93,8 @@ async function writeFixExports(outDir: string, result: FixPipelineResult): Promi
 }
 
 const SWITCH_STUDENT = '__switch_student__'
+const ENTER_COURSE_CODE = '__enter_course_code__'
+const COURSE_SELECT_CAP = 40
 
 type SessionNext = 'same-student' | 'other-student' | 'done'
 
@@ -100,14 +102,41 @@ function courseSelectOptions(
   courses: { course_code: string; course_title: string }[],
   includeSwitch: boolean,
 ): { value: string; label: string }[] {
-  const options = courses.map((c) => ({
+  // A select renders every option — cap so a pathological enrollment can't flood.
+  const options = courses.slice(0, COURSE_SELECT_CAP).map((c) => ({
     value: c.course_code,
-    label: c.course_title ? `${c.course_code} - ${c.course_title}` : c.course_code,
+    label: c.course_title
+      ? truncateVisible(`${c.course_code} - ${c.course_title}`, 88)
+      : c.course_code,
   }))
+  if (courses.length > COURSE_SELECT_CAP) {
+    options.push({
+      value: ENTER_COURSE_CODE,
+      label: `Enter a course code manually (${courses.length - COURSE_SELECT_CAP} more not listed)`,
+    })
+  }
   if (includeSwitch) {
     options.push({ value: SWITCH_STUDENT, label: 'Choose a different student' })
   }
   return options
+}
+
+async function promptManualCourseCode(
+  courses: { course_code: string }[],
+): Promise<string | 'cancelled'> {
+  restoreCliTerminal({ prepareForPrompt: true })
+  const answer = await p.text({
+    message: 'Course code',
+    placeholder: 'e.g. 21MAB310T',
+    validate: (value) => {
+      const code = cleanCourseCode(String(value ?? ''))
+      return courses.some((course) => course.course_code === code)
+        ? undefined
+        : 'Enter a course code from this student\'s enrollment.'
+    },
+  })
+  if (p.isCancel(answer)) return 'cancelled'
+  return cleanCourseCode(String(answer ?? ''))
 }
 
 async function promptSessionNext(args: {
@@ -207,7 +236,8 @@ export async function runSurgicalEdit(opts: {
     return 1
   }
 
-  const session = opts.interactive && !opts.skipPrompts
+  const session = opts.interactive && !opts.skipPrompts && canPrompt()
+  if (opts.interactive && !opts.skipPrompts && !canPrompt()) noteSkippedPrompts()
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
   if (opts.nomenclature) {
@@ -299,7 +329,11 @@ export async function runSurgicalEdit(opts: {
     }
 
     p.log.info(
-      `${register} · ${courses.length} course(s): ` + courses.map((c) => c.course_code).join(', '),
+      `${register} · ${courses.length} course(s): ` +
+        joinCapped(
+          courses.map((c) => c.course_code),
+          15,
+        ),
     )
 
     if (opts.mode === 'fix-course') {
@@ -315,7 +349,13 @@ export async function runSurgicalEdit(opts: {
           clearEditFields()
           continue
         }
-        fromCode = String(selected)
+        if (String(selected) === ENTER_COURSE_CODE) {
+          const entered = await promptManualCourseCode(courses)
+          if (entered === 'cancelled') return abortOrFinish()
+          fromCode = entered
+        } else {
+          fromCode = String(selected)
+        }
       }
       if (!toCode && session) {
         restoreCliTerminal({ prepareForPrompt: true })
@@ -325,6 +365,7 @@ export async function runSurgicalEdit(opts: {
         })
         if (p.isCancel(answer)) return abortOrFinish()
         toCode = cleanCourseCode(String(answer ?? ''))
+        if (!toCode) continue // empty answer → ask again instead of aborting the session
       }
       if (!fromCode || !toCode) {
         p.log.error('fix-course requires --from and --to (or interactive prompts).')
@@ -366,7 +407,13 @@ export async function runSurgicalEdit(opts: {
           clearEditFields()
           continue
         }
-        dropCode = String(selected)
+        if (String(selected) === ENTER_COURSE_CODE) {
+          const entered = await promptManualCourseCode(courses)
+          if (entered === 'cancelled') return abortOrFinish()
+          dropCode = entered
+        } else {
+          dropCode = String(selected)
+        }
       }
       if (!dropCode) {
         p.log.error('drop-course requires --course (or interactive prompts).')
@@ -459,7 +506,7 @@ export async function runSurgicalEdit(opts: {
         )
       }
       if (report.pruned_courses.length) {
-        lines.push(`  pruned empty: ${report.pruned_courses.join(', ')}`)
+        lines.push(`  pruned empty: ${joinCapped(report.pruned_courses, 12)}`)
       }
       lines.push(
         `  RED ${report.red_before} → ${report.red_after}`,
@@ -477,7 +524,7 @@ export async function runSurgicalEdit(opts: {
       await playWriteSweep()
     }
     const writeSpin = p.spinner()
-    writeSpin.start(`Writing exports to ${outDir}…`)
+    writeSpin.start(`Writing exports to ${truncateMiddle(outDir, 60)}…`)
     try {
       lastFiles = await writeFixExports(outDir, result)
       writeSpin.stop(spinOk(`${lastFiles.length} file(s)`))

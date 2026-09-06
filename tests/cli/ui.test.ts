@@ -1,16 +1,32 @@
 import { describe, expect, it, vi } from 'vitest'
-import { box, col, divider, glyphs, visibleLen } from '../../cli/theme'
+import * as p from '@clack/prompts'
 import {
+  box,
+  col,
+  divider,
+  glyphs,
+  joinCapped,
+  strWidth,
+  truncateMiddle,
+  truncateVisible,
+  visibleLen,
+  wrapAnsi,
+} from '../../cli/theme'
+import {
+  canPrompt,
+  cleanFlagNumber,
   createSolveSpinner,
   formatMetrics,
   formatMetricsLines,
   installTerminalSafetyNet,
   playTransition,
   restoreCliTerminal,
+  showPanel,
   TRANSITION_TICKS,
   transitionFrame,
   type TransitionName,
 } from '../../cli/ui'
+import { parseReproToken, parseSeedInput } from '../../cli/seedPrompt'
 
 describe('theme helpers', () => {
   it('visibleLen ignores ANSI sequences', () => {
@@ -291,8 +307,7 @@ describe('installTerminalSafetyNet', () => {
 })
 
 describe('createSolveSpinner live panel', () => {
-  it('every cursor-up jump matches the row count actually painted just before it (no drift)', async () => {
-    vi.useFakeTimers()
+  it('never emits raw cursor-up/clear ANSI (clack owns the spinner line)', async () => {
     const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean; isTTY?: boolean }
     const originalWrite = stdout.write
     const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
@@ -307,16 +322,7 @@ describe('createSolveSpinner live panel', () => {
       const spin = createSolveSpinner(4)
       spin.start('Reading enrollment workbook…')
       spin.applyCpsat({ type: 'start', workers: 4, courses: 373, edges: 584, students: 1102 } as never)
-      // Let the initial 'scan' transition (8 ticks) finish and the real, tall
-      // clash-stage frame (5 lines) paint a few times, as happens for real while
-      // the Python subprocess is still starting up.
-      await vi.advanceTimersByTimeAsync(80 * 12)
-      // Triggers the shorter 'assemble' transition overlay — tall(5) -> short(3),
-      // the exact shrink that used to strand old rows as scrollback.
       spin.applyCpsat({ type: 'model_ready', elapsed: 0.4 } as never)
-      // Run past assemble (9 ticks) + the checkpoint + clash_enter (7 ticks) with margin,
-      // landing back on the real (tall) clash frame.
-      await vi.advanceTimersByTimeAsync(80 * 20)
       spin.applyCpsat({
         type: 'progress',
         phase: 'minimize_clash',
@@ -330,34 +336,272 @@ describe('createSolveSpinner live panel', () => {
         activity: 'proving',
         seconds_since_improve: 1,
       } as never)
-      await vi.advanceTimersByTimeAsync(80 * 3)
+      spin.applyCpsat({
+        type: 'progress',
+        phase: 'minimize_red',
+        phase_label: '2/3 Minimizing RED',
+        elapsed: 2.4,
+        workers: 4,
+        solutions: 2,
+        best_clash: 9,
+        best_red: 7,
+        bound: null,
+        activity: 'improving',
+        seconds_since_improve: 0,
+      } as never)
       await spin.stop('done')
 
-      // Replay the captured ANSI stream: each cursor-up jump must equal the
-      // number of rows the previous paint/clear burst actually wrote, or the
-      // block drifts and leaves stale content behind (the screenshot bug).
-      const ups: number[] = []
-      const segments: number[] = []
-      const cursorUp = new RegExp(`^${String.fromCharCode(27)}\\[(\\d+)A$`)
-      let rows = 0
-      for (const w of writes) {
-        const up = cursorUp.exec(w)
-        if (up) {
-          segments.push(rows)
-          ups.push(Number(up[1]))
-          rows = 0
-        } else if (w === '\x1b[1B' || w.startsWith('\x1b[2K')) {
-          rows++
-        }
-      }
-      expect(ups.length).toBeGreaterThan(0)
-      for (let i = 0; i < ups.length; i++) {
-        expect(ups[i]).toBe(segments[i])
-      }
+      const blob = writes.join('')
+      const cursorUp = new RegExp(`${String.fromCharCode(27)}\\[[0-9]+A`)
+      expect(blob).not.toMatch(cursorUp)
+      expect(spin.state.bestClash).toBe(9)
+      expect(spin.state.bestRed).toBe(7)
     } finally {
       stdout.write = originalWrite
       if (originalDescriptor) Object.defineProperty(process.stdout, 'isTTY', originalDescriptor)
-      vi.useRealTimers()
     }
+  })
+
+  it('pause/resume keeps progress flowing (late-mode mid-run prompts)', async () => {
+    const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean }
+    const originalWrite = stdout.write
+    const writes: string[] = []
+    stdout.write = (chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    }
+    try {
+      const spin = createSolveSpinner(4)
+      spin.start('Merging late enrollments…')
+      spin.pause('Capacity decision needed')
+      spin.updateFromPipeline('waiting on user…')
+      spin.resume('Continuing late merge…')
+      spin.applyCpsat({
+        type: 'progress',
+        phase: 'minimize_clash',
+        phase_label: '1/3 Minimizing clashes',
+        elapsed: 3,
+        workers: 4,
+        solutions: 1,
+        best_clash: 5,
+        best_red: 4,
+        bound: null,
+        activity: 'searching',
+        seconds_since_improve: 0,
+      } as never)
+      await spin.stop('finished')
+      expect(spin.state.bestClash).toBe(5)
+      expect(writes.join('')).toContain('finished')
+    } finally {
+      stdout.write = originalWrite
+    }
+  })
+
+  it('cancel during pause still stamps Cancelled, and later stop cannot override it', async () => {
+    const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean }
+    const originalWrite = stdout.write
+    const writes: string[] = []
+    stdout.write = (chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    }
+    try {
+      const spin = createSolveSpinner(2)
+      spin.start('Merging late enrollments…')
+      spin.pause('Capacity decision needed')
+      spin.cancel()
+      await spin.stop('override')
+      const blob = writes.join('')
+      expect(blob).toContain('Cancelled')
+      expect(blob).not.toContain('override')
+    } finally {
+      stdout.write = originalWrite
+    }
+  })
+
+  it('stop after cancel keeps the Cancelled message (no override)', async () => {
+    const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean }
+    const originalWrite = stdout.write
+    const writes: string[] = []
+    stdout.write = (chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    }
+    try {
+      const spin = createSolveSpinner(2)
+      spin.start('Working…')
+      spin.cancel()
+      await spin.stop('override')
+      const blob = writes.join('')
+      expect(blob).toContain('Cancelled')
+      expect(blob).not.toContain('override')
+    } finally {
+      stdout.write = originalWrite
+    }
+  })
+})
+
+describe('huge text boxes', () => {
+  it('wrapAnsi hard-splits a single word longer than the width', () => {
+    const rows = wrapAnsi('x'.repeat(100), 20)
+    expect(rows.length).toBeGreaterThan(1)
+    for (const row of rows) expect(strWidth(row)).toBeLessThanOrEqual(20)
+    expect(rows.join('')).toBe('x'.repeat(100))
+  })
+
+  it('wrapAnsi preserves mid-line color state on every row', () => {
+    const esc = String.fromCharCode(27)
+    const line = `${esc}[31mred ${esc}[1mbold-word-that-is-long ${esc}[0mplain tail here`
+    const rows = wrapAnsi(line, 16)
+    expect(rows.length).toBeGreaterThan(1)
+    for (const row of rows) expect(strWidth(row)).toBeLessThanOrEqual(16)
+    // No border-bleed: the last SGR on a styled row must be a reset.
+    for (const row of rows) {
+      const codes = [...row.matchAll(new RegExp(`${esc}\\[[0-9;]*m`, 'g'))].map((m) => m[0])
+      if (codes.length) expect(codes[codes.length - 1]).toBe(`${esc}[0m`)
+    }
+  })
+
+  it('wrapAnsi does not let a color run bleed into a later uncolored token', () => {
+    const esc = String.fromCharCode(27)
+    const rows = wrapAnsi(`${esc}[31mred-word ${esc}[0mplain-word-here`, 12)
+    const plain = rows.find((row) => row.includes('plain'))
+    expect(plain).toBeDefined()
+    expect(plain).not.toContain(`${esc}[31m`)
+  })
+
+  it('wrapAnsi tracks 256-color SGR across a wrap', () => {
+    const esc = String.fromCharCode(27)
+    const rows = wrapAnsi(`${esc}[38;5;196m${'x'.repeat(30)}${esc}[0m`, 10)
+    expect(rows.length).toBeGreaterThan(1)
+    for (const row of rows) {
+      expect(strWidth(row)).toBeLessThanOrEqual(10)
+      expect(row).toContain(`${esc}[38;5;196m`)
+      expect(row.endsWith(`${esc}[0m`)).toBe(true)
+    }
+  })
+
+  it('strWidth counts CJK/emoji as 2 columns', () => {
+    expect(strWidth('abc')).toBe(3)
+    expect(strWidth('中文')).toBe(4)
+    expect(strWidth('✓')).toBe(1)
+    expect(strWidth('😀')).toBe(2)
+    expect(strWidth('👩‍💻')).toBe(2)
+    expect(strWidth('a\tb')).toBe(9) // tab advances to the next 8-column stop
+  })
+
+  it('wrapAnsi preserves indentation and nested SGR state', () => {
+    const esc = String.fromCharCode(27)
+    const rows = wrapAnsi(`  ${esc}[1m${esc}[31mred words that wrap${esc}[39m still bold${esc}[0m`, 12)
+    expect(rows[0]).toMatch(/^ {2}/)
+    const still = rows.find((row) => row.includes('still'))
+    expect(still).toBeDefined()
+    expect(still).toContain(`${esc}[1m`)
+    // 39m dropped the red; bold must survive without a hanging 31m after the last reset.
+    const afterReset = still!.split(`${esc}[0m`).pop() ?? ''
+    expect(afterReset).not.toContain(`${esc}[31m`)
+    for (const row of rows) expect(strWidth(row)).toBeLessThanOrEqual(12)
+  })
+
+  it('box never overflows on narrow terminals, even with unspaced words', () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+    Object.defineProperty(process.stdout, 'columns', { value: 20, configurable: true })
+    try {
+      const out = box('T', [`C:\\${'very'.repeat(30)}.xlsx`, 'short line'])
+      for (const row of out.split('\n')) expect(strWidth(row)).toBeLessThanOrEqual(20)
+    } finally {
+      if (originalDescriptor) Object.defineProperty(process.stdout, 'columns', originalDescriptor)
+    }
+  })
+
+  it('box remains contained even below the usual minimum terminal width', () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+    Object.defineProperty(process.stdout, 'columns', { value: 5, configurable: true })
+    try {
+      const out = box('a\nb', ['😀'])
+      for (const row of out.split('\n')) expect(strWidth(row)).toBeLessThanOrEqual(5)
+    } finally {
+      if (originalDescriptor) Object.defineProperty(process.stdout, 'columns', originalDescriptor)
+    }
+  })
+
+  it('showPanel caps huge bodies with an explicit more-tail (piped)', () => {
+    const stdout = process.stdout as unknown as {
+      write: (chunk: unknown) => boolean
+      isTTY?: boolean
+    }
+    const originalWrite = stdout.write
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+    const writes: string[] = []
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true })
+    stdout.write = (chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    }
+    try {
+      const body = Array.from({ length: 150 }, (_, i) => `row ${i} · detail`).join('\n')
+      showPanel('Huge', body)
+      const blob = writes.join('')
+      expect(blob).toContain('+50 more')
+    } finally {
+      stdout.write = originalWrite
+      if (originalDescriptor) Object.defineProperty(process.stdout, 'isTTY', originalDescriptor)
+    }
+  })
+
+  it('showPanel logs a friendly empty-body note instead of a blank box', () => {
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => undefined)
+    try {
+      expect(() => showPanel('Empty', '\n\n')).not.toThrow()
+      expect(info).toHaveBeenCalledOnce()
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  it('joinCapped / truncateMiddle / truncateVisible degrade gracefully', () => {
+    expect(joinCapped(['a', 'b', 'c'], 5)).toBe('a, b, c')
+    expect(joinCapped(['a', 'b', 'c', 'd'], 2)).toContain('+2 more')
+    expect(truncateMiddle('short', 60)).toBe('short')
+    expect(truncateMiddle('x'.repeat(100), 60).length).toBeLessThanOrEqual(60)
+    expect(truncateVisible('hello world', 5)).toBe('hell…')
+    expect(truncateVisible('hi', 5)).toBe('hi')
+  })
+})
+
+describe('input edge cases', () => {
+  it('parseSeedInput tolerates pasted quotes', () => {
+    expect(parseSeedInput('"77"')).toBe(77)
+    expect(parseSeedInput("'77/8/0/0'".slice(1, -1))).toBeUndefined() // slashes are not a seed
+    expect(parseReproToken('"77/8/0/0"')).toEqual({
+      seed: 77,
+      workers: 8,
+      portfolio: 0,
+      allowSaturdayForMath: false,
+    })
+    expect(parseReproToken('“77/8/0/0”')).toEqual({
+      seed: 77,
+      workers: 8,
+      portfolio: 0,
+      allowSaturdayForMath: false,
+    })
+    expect(parseSeedInput('  42  ')).toBe(42)
+    expect(parseSeedInput('999999999999999999999')).toBeUndefined()
+    expect(parseSeedInput('-5')).toBeUndefined()
+    expect(parseSeedInput('')).toBeUndefined()
+  })
+
+  it('cleanFlagNumber rejects NaN/Infinity/below-min', () => {
+    expect(cleanFlagNumber(undefined)).toBeUndefined()
+    expect(cleanFlagNumber(Number.NaN, { min: 0, integer: true })).toBeUndefined()
+    expect(cleanFlagNumber(Number.POSITIVE_INFINITY, { min: 0 })).toBeUndefined()
+    expect(cleanFlagNumber(-3, { min: 0, integer: true })).toBeUndefined()
+    expect(cleanFlagNumber(0, { min: 1, integer: true })).toBeUndefined()
+    expect(cleanFlagNumber(8.9, { min: 1, integer: true })).toBe(8)
+    expect(cleanFlagNumber(8, { min: 1, integer: true })).toBe(8)
+  })
+
+  it('canPrompt is a boolean reflecting stdin TTY state', () => {
+    expect(typeof canPrompt()).toBe('boolean')
   })
 })
