@@ -827,10 +827,13 @@ async function runRectify(opts: {
 
   const ac = new AbortController()
   const spin = createSolveSpinner(requestedWorkers)
-  process.on('SIGINT', () => {
+  const onSigInt = () => {
     ac.abort()
     void killAllCpsatChildren()
-  })
+  }
+  process.on('SIGINT', onSigInt)
+  process.on('SIGTERM', onSigInt)
+  process.on('SIGHUP', onSigInt)
 
   spin.start('Rectifying schedule…')
 
@@ -1343,10 +1346,13 @@ async function runLate(opts: {
   const previousSummary = await loadPreviousSummary(previousDir)
   const ac = new AbortController()
   const spin = createSolveSpinner(requestedWorkers)
-  process.on('SIGINT', () => {
+  const onSigInt = () => {
     ac.abort()
     void killAllCpsatChildren()
-  })
+  }
+  process.on('SIGINT', onSigInt)
+  process.on('SIGTERM', onSigInt)
+  process.on('SIGHUP', onSigInt)
 
   spin.start('Merging late enrollments…')
 
@@ -1684,6 +1690,7 @@ async function runSolve(opts: {
   }
   process.on('SIGINT', onSigInt)
   process.on('SIGTERM', onSigInt)
+  process.on('SIGHUP', onSigInt)
 
   spin.start('Reading enrollment workbook…')
 
@@ -1721,6 +1728,7 @@ async function runSolve(opts: {
 
     process.off('SIGINT', onSigInt)
     process.off('SIGTERM', onSigInt)
+    process.off('SIGHUP', onSigInt)
 
     if (!result.validation.is_valid || !result.schedule) {
       spin.stop('Validation failed')
@@ -1840,6 +1848,7 @@ async function runSolve(opts: {
   } catch (err) {
     process.off('SIGINT', onSigInt)
     process.off('SIGTERM', onSigInt)
+    process.off('SIGHUP', onSigInt)
     await killAllCpsatChildren().catch(() => undefined)
 
     const cancelled =

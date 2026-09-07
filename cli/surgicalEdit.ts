@@ -16,6 +16,8 @@ import {
   type FixCourseMode,
   type FixPipelineResult,
 } from '../src/modules/scheduling/pipeline/fixRun.ts'
+import { PipelineCancelledError } from '../src/modules/scheduling/pipeline/cancellation.ts'
+import { killAllCpsatChildren } from '../src/modules/scheduling/solver/cpsatBridge.ts'
 import {
   listStudentCourses,
   StudentCourseEditError,
@@ -441,6 +443,31 @@ export async function runSurgicalEdit(opts: {
 
     const spin = p.spinner()
     spin.start(opts.mode === 'fix-course' ? 'Fixing course assignment…' : 'Dropping course…')
+
+    const ac = new AbortController()
+    let forceQuit = false
+    let quitting = false
+    const onSigInt = () => {
+      if (forceQuit) {
+        void killAllCpsatChildren().finally(() => {
+          spin.cancel()
+          p.cancel('Force quit.')
+          process.exit(130)
+        })
+        return
+      }
+      forceQuit = true
+      if (!quitting) {
+        quitting = true
+        p.log.warn('Cancelling… stopping solver processes (Ctrl+C again to force quit)')
+        ac.abort()
+        void killAllCpsatChildren()
+      }
+    }
+    process.on('SIGINT', onSigInt)
+    process.on('SIGTERM', onSigInt)
+    process.on('SIGHUP', onSigInt)
+
     let result
     try {
       result = await runFixPipeline(
@@ -462,9 +489,19 @@ export async function runSurgicalEdit(opts: {
           allowSaturdayForMath: inferredSaturday,
           saturdayExtraCourseCodes: inferredExtras,
           seed: snapshot.seed,
+          signal: ac.signal,
         },
       )
     } catch (err) {
+      process.off('SIGINT', onSigInt)
+      process.off('SIGTERM', onSigInt)
+      process.off('SIGHUP', onSigInt)
+      await killAllCpsatChildren().catch(() => undefined)
+      if (ac.signal.aborted || err instanceof PipelineCancelledError) {
+        spin.cancel()
+        p.cancel('Cancelled.')
+        return 130
+      }
       spin.stop(spinWarn('Failed'))
       const message =
         err instanceof StudentCourseEditError
@@ -477,6 +514,9 @@ export async function runSurgicalEdit(opts: {
       clearEditFields()
       continue
     }
+    process.off('SIGINT', onSigInt)
+    process.off('SIGTERM', onSigInt)
+    process.off('SIGHUP', onSigInt)
 
     if (result.infeasible) {
       spin.stop(spinWarn('Aborted'))
