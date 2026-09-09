@@ -9,8 +9,8 @@ import {
   pickOutputFolder,
   pickPreviousOutputFolder,
 } from './fileDialog.ts'
-import { bannerAnimated, canPrompt, noteSkippedPrompts, outroSuccess, playWriteSweep, restoreCliTerminal, showPanel } from './ui.ts'
-import { joinCapped, spinOk, spinWarn, truncateMiddle, truncateVisible } from './theme.ts'
+import { bannerAnimated, canPrompt, noteSkippedPrompts, outroSuccess, playWriteSweep, restoreCliTerminal, selectPrompt, showPanel, textPrompt } from './ui.ts'
+import { joinCapped, spinOk, spinWarn, truncateMiddle } from './theme.ts'
 import {
   runFixPipeline,
   type FixCourseMode,
@@ -108,7 +108,7 @@ function courseSelectOptions(
   const options = courses.slice(0, COURSE_SELECT_CAP).map((c) => ({
     value: c.course_code,
     label: c.course_title
-      ? truncateVisible(`${c.course_code} - ${c.course_title}`, 88)
+      ? `${c.course_code} - ${c.course_title}`
       : c.course_code,
   }))
   if (courses.length > COURSE_SELECT_CAP) {
@@ -127,7 +127,7 @@ async function promptManualCourseCode(
   courses: { course_code: string }[],
 ): Promise<string | 'cancelled'> {
   restoreCliTerminal({ prepareForPrompt: true })
-  const answer = await p.text({
+  const answer = await textPrompt({
     message: 'Course code',
     placeholder: 'e.g. 21MAB310T',
     validate: (value) => {
@@ -160,11 +160,12 @@ async function promptSessionNext(args: {
     { value: 'done', label: 'Done' },
   )
   restoreCliTerminal({ prepareForPrompt: true })
-  const selected = await p.select({
+  const selected = await selectPrompt({
     message: args.studentRemoved
       ? `${args.register} has no remaining courses. What next?`
       : `${args.register} · ${args.remaining} course(s) left. What next?`,
     options,
+    withGuide: true,
   })
   if (p.isCancel(selected)) return 'done'
   return selected as SessionNext
@@ -297,7 +298,7 @@ export async function runSurgicalEdit(opts: {
         return 1
       }
       restoreCliTerminal({ prepareForPrompt: true })
-      const answer = await p.text({
+      const answer = await textPrompt({
         message: 'Student register number',
         placeholder: 'e.g. RA2111003010001',
       })
@@ -341,9 +342,10 @@ export async function runSurgicalEdit(opts: {
     if (opts.mode === 'fix-course') {
       if (!fromCode && session) {
         restoreCliTerminal({ prepareForPrompt: true })
-        const selected = await p.select({
+        const selected = await selectPrompt({
           message: 'Which course code is wrong?',
           options: courseSelectOptions(courses, true),
+          withGuide: true,
         })
         if (p.isCancel(selected)) return abortOrFinish()
         if (String(selected) === SWITCH_STUDENT) {
@@ -361,7 +363,7 @@ export async function runSurgicalEdit(opts: {
       }
       if (!toCode && session) {
         restoreCliTerminal({ prepareForPrompt: true })
-        const answer = await p.text({
+        const answer = await textPrompt({
           message: 'Correct course code (existing on schedule, or new — CP-SAT will place it)',
           placeholder: 'e.g. 21MAB310T',
         })
@@ -386,7 +388,7 @@ export async function runSurgicalEdit(opts: {
           ''
         if (!existingTitle) {
           restoreCliTerminal({ prepareForPrompt: true })
-          const answer = await p.text({
+          const answer = await textPrompt({
             message: targetExists
               ? 'Correct course title (optional)'
               : 'New course title (recommended)',
@@ -399,9 +401,10 @@ export async function runSurgicalEdit(opts: {
     } else {
       if (!dropCode && session) {
         restoreCliTerminal({ prepareForPrompt: true })
-        const selected = await p.select({
+        const selected = await selectPrompt({
           message: `Remove ${register} from which of ${courses.length} course(s)?`,
           options: courseSelectOptions(courses, true),
+          withGuide: true,
         })
         if (p.isCancel(selected)) return abortOrFinish()
         if (String(selected) === SWITCH_STUDENT) {

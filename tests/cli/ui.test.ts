@@ -20,6 +20,8 @@ import {
   formatMetricsLines,
   installTerminalSafetyNet,
   playTransition,
+  renderSelectFrame,
+  renderTextFrame,
   restoreCliTerminal,
   showPanel,
   TRANSITION_TICKS,
@@ -58,6 +60,137 @@ describe('theme helpers', () => {
     expect(visibleLen(a)).toBeGreaterThanOrEqual(13)
     expect(a).toContain('clash')
     expect(a).toContain('12')
+  })
+})
+
+describe('custom text input', () => {
+  const base = { message: 'Student register number', value: '', cursor: 0, state: 'active' as const, columns: 72 }
+
+  it('shows a bordered field, example and keyboard help', () => {
+    const out = renderTextFrame({ ...base, placeholder: 'e.g. RA211003010001' })
+    expect(out).toContain('e.g. RA211003010001')
+    expect(out).toContain('Enter Continue')
+    expect(out).toContain('Esc Cancel')
+    expect(out).toContain('┌')
+  })
+
+  it('replaces the placeholder when typing and wraps validation feedback', () => {
+    const out = renderTextFrame({ ...base, columns: 36, value: 'RA123', cursor: 5, placeholder: 'Example', state: 'error', error: 'Enter a register number from the enrollment file.' })
+    expect(out).toContain('RA123')
+    expect(out).not.toContain('Example')
+    expect(out).toContain('! Enter a register number')
+    expect(out.split('\n').every((line) => strWidth(line) < 36)).toBe(true)
+  })
+
+  it('scrolls long input to keep the caret visible at the start, middle and end', () => {
+    const value = 'a'.repeat(80) + 'END'
+    for (const cursor of [0, 40, value.length]) {
+      const out = renderTextFrame({ ...base, value, cursor, columns: 36 })
+      expect(out.split('\n').every((line) => strWidth(line) < 36)).toBe(true)
+      expect(out).toContain(cursor === 0 ? '›' : '‹')
+      if (cursor === value.length) expect(out).toContain('END')
+    }
+  })
+
+  it('keeps wide Unicode input within the field', () => {
+    const value = '学生😀'.repeat(25)
+    const out = renderTextFrame({ ...base, value, cursor: value.length, columns: 36 })
+    expect(out.split('\n').every((line) => strWidth(line) < 36)).toBe(true)
+    expect(out).not.toContain('�')
+  })
+
+  it('shows default values and compact completion receipts', () => {
+    expect(renderTextFrame({ ...base, defaultValue: '42' })).toContain('Default: 42')
+    const submitted = renderTextFrame({ ...base, value: 'RA123', state: 'submit' })
+    expect(submitted).toContain('✓')
+    expect(submitted).toContain('RA123')
+    expect(submitted).not.toContain('┌')
+    const cancelled = renderTextFrame({ ...base, value: 'unfinished', state: 'cancel' })
+    expect(cancelled).toContain('Input cancelled')
+    expect(cancelled).not.toContain('unfinished')
+  })
+})
+
+describe('custom select picker', () => {
+  const options = [
+    { value: 'solve', label: 'Create schedule', hint: 'Build a new timetable' },
+    { value: 'rectify', label: 'Rectify schedule', hint: 'Adapt an existing timetable' },
+    { value: 'issues', label: 'Find enrollment issues', hint: 'Validate the source file' },
+  ]
+
+  it('preserves long course titles and keeps wrapped rows within the panel', () => {
+    const label = '19ARH209T - HISTORY OF ARCHITECTURE - III (ROMANESQUE ARCHITECTURE AND GOTHIC ARCHITECTURE)'
+    const out = renderSelectFrame({
+      message: 'Which course code is wrong?',
+      options: [{ value: 'course', label }],
+      cursor: 0,
+      state: 'active',
+      columns: 48,
+      rows: 24,
+    })
+    expect(out).not.toContain('…')
+    expect(out).toContain('GOTHIC ARCHITECTURE)')
+    expect(out).not.toContain('Press Enter to continue.')
+    expect(out.split('\n').every((line) => strWidth(line) < 48)).toBe(true)
+  })
+
+  it('renders one emphasized option and its supporting description', () => {
+    const out = renderSelectFrame({
+      message: 'What would you like to do?',
+      options,
+      cursor: 1,
+      state: 'active',
+      columns: 80,
+      rows: 24,
+    })
+    expect(out).toContain('┌')
+    expect(out).toContain('›')
+    expect(out).toContain('Rectify schedule')
+    expect(out).toContain('Adapt an existing timetable')
+    expect(out).toContain('2 / 3')
+    expect(out).toContain('Enter Select')
+  })
+
+  it('uses a compact completion receipt after submit', () => {
+    const out = renderSelectFrame({
+      message: 'What would you like to do?',
+      options,
+      cursor: 0,
+      state: 'submit',
+      columns: 80,
+    })
+    expect(out).toContain('✓ Create schedule')
+    expect(out).not.toContain('Rectify schedule')
+    expect(out).not.toContain('┌')
+  })
+
+  it('shows the abandoned choice once when cancelled', () => {
+    const out = renderSelectFrame({
+      message: 'Choose an action',
+      options,
+      cursor: 2,
+      state: 'cancel',
+      columns: 80,
+    })
+    expect(out).toContain('Find enrollment issues')
+    expect(out.match(/Find enrollment issues/g)).toHaveLength(1)
+    expect(out).not.toContain('Cancelled')
+  })
+
+  it('limits long menus by terminal rows and advertises scrolling', () => {
+    const many = Array.from({ length: 20 }, (_, index) => ({ value: index, label: `Option ${index + 1}` }))
+    const out = renderSelectFrame({
+      message: 'Choose an action',
+      options: many,
+      cursor: 10,
+      state: 'active',
+      columns: 60,
+      rows: 12,
+    })
+    expect(out.split('\n').length).toBeLessThan(12)
+    expect(out).toContain('↑')
+    expect(out).toContain('↓')
+    expect(out).toContain('Option 11')
   })
 })
 

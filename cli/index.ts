@@ -20,7 +20,9 @@ import {
   playWriteSweep,
   promptSaturdayPolicy,
   restoreCliTerminal,
+  selectPrompt,
   showPanel,
+  textPrompt,
 } from './ui.ts'
 import {
   capLines,
@@ -119,7 +121,7 @@ async function ensurePythonReady(): Promise<string> {
 async function promptSaturdayExtraCodes(
   initial: string[] = [],
 ): Promise<string[] | 'cancelled'> {
-  const answer = await p.text({
+  const answer = await textPrompt({
     message: 'Extra course codes allowed on Saturday (comma-separated, optional)',
     placeholder: 'e.g. 21CSE101T, 21ECE202T',
     initialValue: initial.length ? initial.join(', ') : '',
@@ -388,24 +390,24 @@ function formatRectifyResult(report: RectificationReport): string {
 async function promptRunMode(): Promise<
   'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | null
 > {
-  const mode = await p.select({
+  const mode = await selectPrompt({
     message: 'What would you like to do?',
     options: [
-      { value: 'solve', label: 'Create schedule' },
-      { value: 'rectify', label: 'Rectify schedule', hint: 'after registration changes' },
-      { value: 'late', label: 'Add late enrollments', hint: 'existing schedule stays frozen' },
+      { value: 'solve', label: 'Create schedule', hint: 'Build a new timetable from enrollment data' },
+      { value: 'rectify', label: 'Rectify schedule', hint: 'Adapt an existing schedule after registration changes' },
+      { value: 'late', label: 'Add late enrollments', hint: 'Place new enrollments without moving published classes' },
       {
         value: 'fix-course',
         label: 'Fix wrong student course',
-        hint: 'surgical — new course placed via CP-SAT',
+        hint: 'Replace one incorrect enrollment and place the new course',
       },
       {
         value: 'drop-course',
         label: 'Remove student from a course',
-        hint: 'surgical — timetable stays frozen',
+        hint: 'Remove one enrollment while keeping the timetable frozen',
       },
-      { value: 'filter', label: 'Filter schedule', hint: 'by course codes' },
-      { value: 'issues', label: 'Find issues in enrollment file' },
+      { value: 'filter', label: 'Filter schedule', hint: 'Export a focused schedule by course code' },
+      { value: 'issues', label: 'Find enrollment issues', hint: 'Check the source file before scheduling' },
     ],
   })
   if (p.isCancel(mode)) return null
@@ -513,7 +515,7 @@ async function runIssues(opts: {
 
 async function promptFilterCourseCodes(initial = ''): Promise<string[] | 'cancelled'> {
   // Single-line prompt: newline-separated pastes submit early, so ask for commas.
-  const answer = await p.text({
+  const answer = await textPrompt({
     message: 'Course codes to keep (comma-separated)',
     placeholder: 'e.g. 21CSC203P, 21CSE251T, 21CSE254T',
     initialValue: initial,
@@ -1098,7 +1100,7 @@ async function promptCapacityPanels(panels: CapacityPanel[]): Promise<CapacityDe
     showPanel('Capacity conflict', lines.join('\n'))
 
     restoreCliTerminal({ prepareForPrompt: true })
-    const choice = await p.select({
+    const choice = await selectPrompt({
       message: `Strategy for ${c.course_code}`,
       options: panel.options.map((o) => ({
         value: o.strategy,
@@ -1171,7 +1173,7 @@ async function promptClashPanels(panels: ClashPanel[]): Promise<ClashDecision[]>
     showPanel('Unavoidable clash', lines.join('\n'))
 
     restoreCliTerminal({ prepareForPrompt: true })
-    const choice = await p.select({
+    const choice = await selectPrompt({
       message: `Clash decision for ${cl.register_number}`,
       options: panel.options.map((o, i) => ({
         value: String(i),

@@ -1,7 +1,10 @@
 import * as p from '@clack/prompts'
+import { SelectPrompt, TextPrompt, type State } from '@clack/core'
+import chalk from 'chalk'
 import { cpus } from 'node:os'
+import type { Writable } from 'node:stream'
 import type { CpsatProgressEvent } from '../src/modules/scheduling/solver/cpsatInstance.ts'
-import { box, glyphs, pad, palette, truncateVisible, wrapAnsi } from './theme.ts'
+import { box, glyphs, pad, palette, strWidth, truncateVisible, wrapAnsi } from './theme.ts'
 
 /**
  * True when Clack prompts can be shown: they read from stdin, so piped/CI
@@ -10,6 +13,248 @@ import { box, glyphs, pad, palette, truncateVisible, wrapAnsi } from './theme.ts
  */
 export function canPrompt(): boolean {
   return Boolean(process.stdin.isTTY)
+}
+
+type PickerOption<Value> = {
+  value: Value
+  label?: string
+  hint?: string
+  disabled?: boolean
+}
+
+type PickerFrameOptions<Value> = {
+  message: string
+  options: PickerOption<Value>[]
+  cursor: number
+  state: State
+  columns?: number
+  rows?: number
+  maxItems?: number
+  showInstructions?: boolean
+  withGuide?: boolean
+}
+
+function cleanPickerText(value: unknown): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+/** Pure renderer for the custom picker, exported so its layout stays regression-tested. */
+export function renderSelectFrame<Value>(opts: PickerFrameOptions<Value>): string {
+  const withGuide = opts.withGuide ?? true
+  const selected = opts.options[opts.cursor]
+  const selectedLabel = cleanPickerText(selected?.label ?? selected?.value)
+  const messageWidth = Math.max(20, (opts.columns ?? 80) - 6)
+  const message = truncateVisible(cleanPickerText(opts.message), messageWidth)
+
+  if (opts.state === 'submit') {
+    return [
+      `${palette.ok('◇')}  ${palette.dim(message)}`,
+      withGuide ? palette.dim(glyphs.box.v) : '',
+      `${palette.ok(glyphs.box.bl)}  ${palette.ok('✓')} ${palette.bold(selectedLabel)}`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (opts.state === 'cancel') {
+    return [
+      `${palette.bad('■')}  ${palette.dim(message)}`,
+      withGuide ? palette.dim(glyphs.box.v) : '',
+      `${palette.bad(glyphs.box.bl)}  ${chalk.dim.strikethrough(selectedLabel)}`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  // Explicit colors avoid terminal themes mapping bold/default text to neon colors.
+  const ink = chalk.hex('#E2E8F0')
+  const muted = chalk.hex('#94A3B8')
+  const border = chalk.hex('#475569')
+  const highlight = chalk.bgHex('#164E63').hex('#ECFEFF')
+  const longestLabel = Math.max(0, ...opts.options.map((option) => strWidth(cleanPickerText(option.label ?? option.value))))
+  const width = Math.max(12, Math.min(Math.max(62, longestLabel + 10), 100, (opts.columns || 80) - 3))
+  const inner = width - 2
+  const textWidth = inner - 4
+  const row = (text = '') => ` ${border('│')}${pad(text, inner)}${border('│')}`
+  const content = (text: string) => row(`  ${text}  `)
+  const rule = (left: string, right: string) => ` ${border(left + '─'.repeat(inner) + right)}`
+  const titleRows = wrapAnsi(cleanPickerText(opts.message), textWidth)
+  const detailRows = wrapAnsi(cleanPickerText(selected?.hint), textWidth)
+  const showDetails = Boolean(selected?.hint) && (opts.rows || 24) >= 16
+  const showFooter = opts.showInstructions ?? true
+  const overhead = 5 + titleRows.length + (showDetails ? detailRows.length + 1 : 0) + (showFooter ? 1 : 0)
+  const maxByTerminal = Math.max(1, (opts.rows || 24) - overhead - 1)
+  const maxItems = Math.max(1, Math.min(opts.maxItems ?? maxByTerminal, maxByTerminal))
+  const labels = opts.options.map((option) => wrapAnsi(cleanPickerText(option.label ?? option.value), inner - 7))
+  // Allocate physical rows, not item counts: wrapped options must remain inside the viewport.
+  let start = opts.cursor
+  let finish = Math.min(opts.options.length, start + 1)
+  let used = labels[start]?.length ?? 0
+  while (finish - start < maxItems) {
+    const before = start > 0 ? labels[start - 1]!.length : Infinity
+    const after = finish < labels.length ? labels[finish]!.length : Infinity
+    if (used + Math.min(before, after) > maxByTerminal) break
+    if (start > 0 && used + before <= maxByTerminal && (opts.cursor - start <= finish - opts.cursor - 1 || used + after > maxByTerminal)) {
+      start--
+      used += before
+    } else {
+      finish++
+      used += after
+    }
+  }
+  const position = `${opts.cursor + 1} / ${opts.options.length}${start > 0 ? '  ↑' : ''}${finish < opts.options.length ? '  ↓' : ''}`
+  const lines = [
+    rule('┌', '┐'),
+    ...titleRows.map((line) => content(ink(line))),
+    content(muted(position)),
+    row(),
+  ]
+  for (let index = start; index < finish; index++) {
+    const option = opts.options[index]!
+    const active = index === opts.cursor
+    for (const [lineIndex, label] of labels[index]!.entries()) {
+      const text = pad(` ${active && lineIndex === 0 ? '›' : ' '} ${label}`, inner - 2)
+      lines.push(row(` ${active && !option.disabled ? highlight(text) : option.disabled ? muted(text) : ink(text)} `))
+    }
+  }
+  lines.push(row())
+  if (showDetails) {
+    lines.push(rule('├', '┤'), ...detailRows.map((line) => content(muted(line))))
+  }
+  lines.push(rule('└', '┘'))
+  if (showFooter) {
+    const help = width >= 48 ? '↑↓ Navigate    Enter Select    Esc Back' : '↑↓ Move · Enter OK · Esc Back'
+    lines.push(`   ${muted(truncateVisible(help, width - 3))}`)
+  }
+  return lines.join('\n')
+}
+
+/** A responsive, Clack-powered picker with UniSlot's own compact visual language. */
+export function selectPrompt<Value>(opts: p.SelectOptions<Value>): Promise<Value | symbol> {
+  const output = (opts.output ?? process.stdout) as Writable & { columns?: number; rows?: number }
+  const options = opts.options as PickerOption<Value>[]
+  return new SelectPrompt({
+    options,
+    signal: opts.signal,
+    input: opts.input,
+    output,
+    initialValue: opts.initialValue,
+    render() {
+      return renderSelectFrame({
+        message: opts.message,
+        options,
+        cursor: this.cursor,
+        state: this.state,
+        columns: output.columns,
+        rows: output.rows,
+        maxItems: opts.maxItems,
+        showInstructions: opts.showInstructions,
+        withGuide: opts.withGuide,
+      })
+    },
+  }).prompt() as Promise<Value | symbol>
+}
+
+type InputFrameOptions = {
+  message: string
+  value: string
+  cursor: number
+  state: State
+  placeholder?: string
+  defaultValue?: string
+  error?: string
+  columns?: number
+}
+
+/** Single-line input viewport. Cursor positions from readline are UTF-16 offsets. */
+export function renderTextFrame(opts: InputFrameOptions): string {
+  const ink = chalk.hex('#E2E8F0')
+  const muted = chalk.hex('#94A3B8')
+  const accent = chalk.hex(opts.state === 'error' ? '#FBBF24' : '#22D3EE')
+  const border = chalk.hex('#475569')
+  const field = chalk.bgHex('#164E63').hex('#ECFEFF')
+  const width = Math.max(8, Math.min(72, (opts.columns || 80) - 3))
+  const inner = width - 2
+  const contentWidth = Math.max(1, inner - 4)
+  const row = (text = '') => ` ${border('│')}${pad(text, inner)}${border('│')}`
+  const content = (text: string) => row(`  ${text}  `)
+  const rule = (left: string, right: string) => ` ${border(left + '─'.repeat(inner) + right)}`
+  const title = wrapAnsi(cleanPickerText(opts.message), contentWidth)
+
+  if (opts.state === 'submit' || opts.state === 'cancel') {
+    const cancelled = opts.state === 'cancel'
+    return [
+      ...title.map((line, index) => ` ${index === 0 ? (cancelled ? muted('×') : accent('✓')) : ' '} ${ink(line)}`),
+      ...wrapAnsi(cancelled ? 'Input cancelled' : cleanPickerText(opts.value) || 'Not set', contentWidth)
+        .map((line) => `   ${muted(line)}`),
+    ].join('\n')
+  }
+
+  // Keep a stable, one-row field even when pasted values exceed the terminal width.
+  const chars = Array.from(opts.value)
+  const cursor = Array.from(opts.value.slice(0, Math.max(0, opts.cursor))).length
+  const cell = (char: string) => /\p{Cc}/u.test(char) ? ' ' : char
+  const cells = chars.map(cell)
+  cells.push(' ')
+  const caret = Math.min(cursor, cells.length - 1)
+  const budget = Math.max(1, contentWidth - 2)
+  let start = caret
+  let used = strWidth(cells[caret]!)
+  while (start > 0 && used + strWidth(cells[start - 1]!) <= budget) {
+    used += strWidth(cells[--start]!)
+  }
+  let end = caret + 1
+  while (end < cells.length && used + strWidth(cells[end]!) <= budget) {
+    used += strWidth(cells[end++]!)
+  }
+  const visible = cells.slice(start, end).map((char, index) =>
+    start + index === caret ? chalk.bgHex('#67E8F9').hex('#083344')(char) : char,
+  ).join('')
+  const placeholder = opts.placeholder || opts.defaultValue || 'Type here…'
+  const entry = opts.value
+    ? `${start > 0 ? '‹' : ' '}${visible}${end < cells.length ? '›' : ' '}`
+    : ` ${chalk.bgHex('#67E8F9').hex('#083344')(' ')}${muted(truncateVisible(placeholder, Math.max(1, contentWidth - 2)))}`
+  const lines = [
+    rule('┌', '┐'),
+    ...title.map((line) => content(ink(line))),
+    row(),
+    row(` ${accent('›')} ${field(pad(entry, contentWidth))} `),
+    row(),
+  ]
+  if (opts.state === 'error' && opts.error) {
+    lines.push(...wrapAnsi(`! ${cleanPickerText(opts.error)}`, contentWidth).map((line) => content(accent(line))))
+  } else if (opts.defaultValue) {
+    lines.push(...wrapAnsi(`Default: ${cleanPickerText(opts.defaultValue)}`, contentWidth).map((line) => content(muted(line))))
+  }
+  lines.push(rule('└', '┘'))
+  lines.push(`   ${muted(truncateVisible('Enter Continue   Esc Cancel', width - 3))}`)
+  return lines.join('\n')
+}
+
+/** Preserve Clack's editing, validation, defaults and cancellation; customize only presentation. */
+export function textPrompt(opts: p.TextOptions): Promise<string | symbol> {
+  const output = (opts.output ?? process.stdout) as Writable & { columns?: number }
+  return new TextPrompt({
+    validate: opts.validate,
+    placeholder: opts.placeholder,
+    defaultValue: opts.defaultValue,
+    initialValue: opts.initialValue,
+    input: opts.input,
+    output,
+    signal: opts.signal,
+    render() {
+      return renderTextFrame({
+        message: opts.message,
+        value: this.state === 'submit' ? this.value ?? '' : this.userInput,
+        cursor: this.cursor,
+        state: this.state,
+        placeholder: opts.placeholder,
+        defaultValue: opts.defaultValue,
+        error: this.error,
+        columns: output.columns,
+      })
+    },
+  }).prompt() as Promise<string | symbol>
 }
 
 /** One friendly line when a command skips its wizard because stdin is piped. */
@@ -715,7 +960,7 @@ export async function promptSaturdayPolicy(opts: {
     initialValue: opts.initialAllow,
   })
   if (p.isCancel(allow)) return 'cancelled'
-  const extrasAnswer = await p.text({
+  const extrasAnswer = await textPrompt({
     message: 'Extra course codes allowed on Saturday (comma-separated, optional)',
     placeholder: 'e.g. 21CSE101T, 21ECE202T',
     initialValue: opts.initialExtras.length ? opts.initialExtras.join(', ') : '',

@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts'
 import { randomInt } from 'node:crypto'
+import { textPrompt } from './ui.ts'
 
 /** New-run seed in [1, 2^31 − 1] (safe for CP-SAT and JSON). */
 export function generateRunSeed(): number {
@@ -106,7 +107,7 @@ export async function resolveRunSeed(
   }
 
   if (hasSeed) {
-    const entered = await p.text({
+    const entered = await textPrompt({
       message: 'Enter reproduction token (seed/workers/portfolio/sat)',
       placeholder: '77/8/0/0',
       validate: (value) => {
