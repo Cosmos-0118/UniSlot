@@ -18,19 +18,22 @@ const runner = spawn(
   },
 )
 
-/** Forward stop signals to the tsx child; let it run the proper quit flow. */
-function forward(signal) {
+/**
+ * The tsx child shares this foreground process group, so it already received
+ * SIGINT from the terminal. Forwarding a second SIGINT used to flip the CLI
+ * into force-quit (`process.exit`) before solver children were reaped.
+ * Swallow here and wait for the child to finish its cancel path.
+ */
+process.on('SIGINT', () => undefined)
+process.on('SIGTERM', () => {
   if (!runner.killed && runner.pid) {
     try {
-      runner.kill(signal)
+      runner.kill('SIGTERM')
     } catch {
       /* child already gone */
     }
   }
-}
-
-process.on('SIGINT', () => forward('SIGINT'))
-process.on('SIGTERM', () => forward('SIGTERM'))
+})
 
 runner.on('exit', (code, signal) => {
   if (signal) {

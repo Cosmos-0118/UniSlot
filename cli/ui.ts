@@ -429,8 +429,14 @@ const PROGRESS_THROTTLE_MS = 250
  * log lines. No raw ANSI, no per-tick repaint — safe on Windows, quiet
  * when piped.
  */
-export function createSolveSpinner(workers = cpus().length) {
-  const spin = p.spinner()
+export function createSolveSpinner(
+  workers = cpus().length,
+  opts?: { onCancel?: () => void; signal?: AbortSignal },
+) {
+  const spin = p.spinner({
+    onCancel: opts?.onCancel,
+    signal: opts?.signal,
+  })
   const state: LiveSolveState = {
     phase: 'starting',
     phaseLabel: 'Starting',

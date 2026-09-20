@@ -37,6 +37,7 @@ import {
 import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
+  installCpsatExitGuard,
   killAllCpsatChildren,
   portfolioMemberWorkers,
   resolveCpsatPython,
@@ -829,7 +830,13 @@ async function runRectify(opts: {
   const previousSummary = await loadPreviousSummary(previousDir)
 
   const ac = new AbortController()
-  const spin = createSolveSpinner(requestedWorkers)
+  const spin = createSolveSpinner(requestedWorkers, {
+    signal: ac.signal,
+    onCancel: () => {
+      ac.abort()
+      void killAllCpsatChildren()
+    },
+  })
   const onSigInt = () => {
     ac.abort()
     void killAllCpsatChildren()
@@ -1348,7 +1355,13 @@ async function runLate(opts: {
 
   const previousSummary = await loadPreviousSummary(previousDir)
   const ac = new AbortController()
-  const spin = createSolveSpinner(requestedWorkers)
+  const spin = createSolveSpinner(requestedWorkers, {
+    signal: ac.signal,
+    onCancel: () => {
+      ac.abort()
+      void killAllCpsatChildren()
+    },
+  })
   const onSigInt = () => {
     ac.abort()
     void killAllCpsatChildren()
@@ -1679,7 +1692,17 @@ async function runSolve(opts: {
   const ac = new AbortController()
   let forceQuit = false
   let quitting = false
-  const spin = createSolveSpinner(requestedWorkers)
+  const spin = createSolveSpinner(requestedWorkers, {
+    signal: ac.signal,
+    onCancel: () => {
+      if (!quitting) {
+        quitting = true
+        forceQuit = true
+        ac.abort()
+        void killAllCpsatChildren()
+      }
+    },
+  })
 
   const onSigInt = () => {
     if (forceQuit) {
@@ -2302,4 +2325,5 @@ async function main(): Promise<void> {
 }
 
 installTerminalSafetyNet()
+installCpsatExitGuard()
 void main()

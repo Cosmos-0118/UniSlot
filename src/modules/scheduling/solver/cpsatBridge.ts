@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { cpus, tmpdir } from 'node:os'
@@ -37,10 +37,26 @@ export function portfolioMemberWorkers(totalWorkers: number, k: number): number 
   return Math.max(1, Math.floor(budget / n))
 }
 
+/** OR-Tools Solve() ignores SIGTERM until it returns to Python; cancel must SIGKILL. */
 const SIGTERM_GRACE_MS = 1500
 
-/** Live Python solver children — for Ctrl+C / force-quit cleanup. */
+/** Live Python solver children — for Ctrl+C / force-quit / process.exit cleanup. */
 const activeChildren = new Set<ChildProcess>()
+/** PIDs kept separately so we can still kill after the ChildProcess handle is gone. */
+const activePids = new Set<number>()
+let exitGuardInstalled = false
+
+/** Track a solver child so cancel / process.exit can SIGKILL it. Exported for tests. */
+export function trackCpsatChild(child: ChildProcess): void {
+  activeChildren.add(child)
+  if (child.pid) activePids.add(child.pid)
+  installCpsatExitGuard()
+}
+
+function untrackCpsatChild(child: ChildProcess): void {
+  activeChildren.delete(child)
+  if (child.pid) activePids.delete(child.pid)
+}
 
 export type RunCpsatOptions = {
   timeLimitSeconds?: number
@@ -154,18 +170,30 @@ export async function ensureCpsatReady(pythonPath?: string): Promise<{ python: s
   return { python }
 }
 
-/** Send signal to the child process group (Unix) or the process tree (Windows). */
-function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (!child.pid || child.killed) return
+/**
+ * Synchronously kill a PID and its process group.
+ *
+ * Must stay sync: Clack's spinner puts stdin in raw mode and calls
+ * `process.exit(0)` on Esc/Ctrl+C, which skips SIGINT handlers and
+ * unref'd timers. Only an `exit` listener can still reap detached
+ * OR-Tools children before Node disappears (parent becomes launchd).
+ *
+ * Never skip because `child.killed` is true — that flag is set as soon
+ * as `child.kill()` is *called*, even when the native Solve() loop
+ * swallows SIGTERM.
+ */
+export function killPidTreeSync(pid: number): void {
+  if (!pid) return
   if (process.platform === 'win32') {
     try {
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
         stdio: 'ignore',
         windowsHide: true,
+        timeout: 5000,
       })
     } catch {
       try {
-        child.kill(signal)
+        process.kill(pid)
       } catch {
         /* already gone */
       }
@@ -173,25 +201,63 @@ function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
     return
   }
   try {
-    // Negative PID → process group (spawned with detached: true).
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    /* not a group leader yet, or already gone */
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    /* already gone */
+  }
+}
+
+export function killChildTreeSync(child: ChildProcess): void {
+  if (child.pid) killPidTreeSync(child.pid)
+  try {
+    child.kill('SIGKILL')
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Send signal to the child process group (Unix) or the process tree (Windows). */
+function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) return
+  if (signal === 'SIGKILL') {
+    killChildTreeSync(child)
+    return
+  }
+  if (process.platform === 'win32') {
+    killChildTreeSync(child)
+    return
+  }
+  try {
     process.kill(-child.pid, signal)
   } catch {
-    try {
-      child.kill(signal)
-    } catch {
-      /* already gone */
-    }
+    /* no group yet */
+  }
+  try {
+    process.kill(child.pid, signal)
+  } catch {
+    /* already gone */
+  }
+  try {
+    child.kill(signal)
+  } catch {
+    /* already gone */
   }
 }
 
 /**
- * Graceful terminate → escalate to SIGKILL if the OR-Tools process
- * is stuck inside native Solve().
+ * SIGTERM, then SIGKILL if the OR-Tools process is stuck inside native Solve().
+ * Cancel paths should prefer {@link killChildTreeSync} / a short grace:
+ * SIGTERM is deferred for the entire C++ search.
  */
 export function terminateChild(child: ChildProcess, graceMs = SIGTERM_GRACE_MS): Promise<void> {
   return new Promise((resolve) => {
     if (!child.pid || child.exitCode != null || child.signalCode) {
-      activeChildren.delete(child)
+      untrackCpsatChild(child)
       resolve()
       return
     }
@@ -200,28 +266,59 @@ export function terminateChild(child: ChildProcess, graceMs = SIGTERM_GRACE_MS):
     const done = () => {
       if (settled) return
       settled = true
-      activeChildren.delete(child)
+      untrackCpsatChild(child)
       resolve()
     }
 
     child.once('exit', done)
     child.once('error', done)
 
+    if (graceMs <= 0) {
+      killChildTreeSync(child)
+      setTimeout(done, 250).unref?.()
+      return
+    }
+
     signalChildTree(child, 'SIGTERM')
 
+    // Do not unref: if this timer is unref'd and something calls process.exit
+    // before it fires, SIGKILL never runs. The process.exit guard is the
+    // backstop, but awaited cancel should still wait for the kill.
     const timer = setTimeout(() => {
-      signalChildTree(child, 'SIGKILL')
-      // Final safety: resolve shortly even if exit event is lost.
+      killChildTreeSync(child)
       setTimeout(done, 250).unref?.()
     }, graceMs)
-    timer.unref?.()
+    void timer
   })
 }
 
-/** Force-kill every tracked CP-SAT child (second Ctrl+C / hard quit). */
+/** Immediate SIGKILL of every tracked CP-SAT child. Safe inside `process.on('exit')`. */
+export function killAllCpsatChildrenSync(): void {
+  for (const child of [...activeChildren]) {
+    killChildTreeSync(child)
+  }
+  for (const pid of [...activePids]) {
+    killPidTreeSync(pid)
+  }
+}
+
+/**
+ * Last-resort reap: Clack spinner cancel calls `process.exit(0)` without
+ * giving us a chance to await {@link killAllCpsatChildren}.
+ */
+export function installCpsatExitGuard(): void {
+  if (exitGuardInstalled) return
+  exitGuardInstalled = true
+  process.on('exit', () => {
+    killAllCpsatChildrenSync()
+  })
+}
+
+/** Force-kill every tracked CP-SAT child (Ctrl+C / hard quit). */
 export async function killAllCpsatChildren(): Promise<void> {
   const kids = [...activeChildren]
-  await Promise.all(kids.map((c) => terminateChild(c, 200)))
+  killAllCpsatChildrenSync()
+  await Promise.all(kids.map((c) => terminateChild(c, 0)))
 }
 
 type SpawnSolveOpts = RunCpsatOptions & {
@@ -269,13 +366,14 @@ export function spawnCpsatSolve(
 
       const onAbort = () => {
         aborted = true
-        if (child) void terminateChild(child)
+        if (child) killChildTreeSync(child)
       }
 
       try {
         if (options?.signal?.aborted) {
           throw new PipelineCancelledError()
         }
+        options?.signal?.addEventListener('abort', onAbort, { once: true })
 
         const { python } = await ensureCpsatReady(options?.pythonPath)
         workDir = await mkdtemp(path.join(tmpdir(), 'unislot-cpsat-'))
@@ -337,14 +435,11 @@ export function spawnCpsatSolve(
           detached: process.platform !== 'win32',
           windowsHide: true,
         })
-        activeChildren.add(child)
+        trackCpsatChild(child)
 
-        if (options?.signal) {
-          if (options.signal.aborted) {
-            await terminateChild(child)
-            throw new PipelineCancelledError()
-          }
-          options.signal.addEventListener('abort', onAbort, { once: true })
+        if (options?.signal?.aborted) {
+          killChildTreeSync(child)
+          throw new PipelineCancelledError()
         }
 
         // Keep the tail of non-NDJSON stderr (tracebacks, OR-Tools aborts) for failure messages.
@@ -383,7 +478,7 @@ export function spawnCpsatSolve(
         })
 
         options?.signal?.removeEventListener('abort', onAbort)
-        activeChildren.delete(child)
+        untrackCpsatChild(child)
         rl.close()
 
         if (aborted || options?.signal?.aborted) {
@@ -425,7 +520,10 @@ export function spawnCpsatSolve(
 
         resolve(solution)
       } catch (err) {
-        if (child) await terminateChild(child).catch(() => undefined)
+        if (child) {
+          killChildTreeSync(child)
+          await terminateChild(child, 0).catch(() => undefined)
+        }
         if (aborted || options?.signal?.aborted || isAbortError(err)) {
           reject(new PipelineCancelledError())
         } else {
@@ -433,6 +531,7 @@ export function spawnCpsatSolve(
         }
       } finally {
         options?.signal?.removeEventListener('abort', onAbort)
+        if (child) untrackCpsatChild(child)
         if (workDir) {
           await rm(workDir, { recursive: true, force: true }).catch(() => undefined)
         }
