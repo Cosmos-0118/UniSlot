@@ -13,9 +13,20 @@ Terminal evening-course scheduler for universities. Upload an enrollment Excel w
 ## Install
 
 ```bash
-npm install
-npm run setup:cpsat    # creates solver/cpsat/.venv and installs ortools
+npm run setup          # sync GitHub, install Node + OR-Tools, verify the repo
 ```
+
+`npm run setup` fetches `origin`, synchronizes the selected branch exactly to
+GitHub, installs the committed lockfile with `npm ci`, creates or repairs the
+Google OR-Tools CP-SAT environment, and runs the doctor, tests, and lint. It
+asks before discarding tracked or non-ignored untracked changes; use
+`npm run setup -- --yes` for a deliberate non-interactive reset. Ignored files
+such as `solver/cpsat/.venv` and local output folders are preserved by the Git
+cleanup unless they conflict with a tracked path in the target branch; those
+collisions are shown before confirmation. `npm ci` replaces `node_modules` as
+part of the Node installation.
+
+For only the Python solver environment, use `npm run setup:cpsat`.
 
 ## First solve
 
@@ -74,7 +85,8 @@ Enrollment .xlsx
 ```text
 cli/                      Terminal UI (file dialogs, progress, exports)
 solver/cpsat/             Python OR-Tools CP-SAT model
-scripts/setup-cpsat.mjs   Venv bootstrap
+scripts/setup.mjs          Full Git + Node + OR-Tools bootstrap
+scripts/setup-cpsat.ts     Python/OR-Tools venv bootstrap
 src/modules/scheduling/   Parse, preprocess, Excel I/O, CP-SAT bridge
 docs/                     Constraints, Excel schema, research
 tests/                    Vitest suites
@@ -86,7 +98,8 @@ GUIDE.md                  Step-by-step usage
 | Script | Purpose |
 |--------|---------|
 | `npm run unislot` | Run the scheduler CLI |
-| `npm run setup:cpsat` | Create Python venv + install ortools |
+| `npm run setup` | Sync GitHub + install and verify the complete toolchain |
+| `npm run setup:cpsat` | Create/repair Python venv + install OR-Tools |
 | `npm test` | Run Vitest |
 | `npm run lint` | ESLint |
 

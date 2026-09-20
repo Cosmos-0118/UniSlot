@@ -8,6 +8,7 @@
   },
   "scripts": {
     "unislot": "tsx --tsconfig tsconfig.json cli/index.ts",
+    "setup": "node scripts/setup.mjs",
     "setup:cpsat": "tsx --tsconfig tsconfig.json scripts/setup-cpsat.ts",
     "test": "vitest run",
     "test:watch": "vitest",

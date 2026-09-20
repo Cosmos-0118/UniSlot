@@ -8,11 +8,22 @@ You need **Node.js 20+** and **Python 3.11–3.13**.
 
 ```powershell
 cd UniSlot
-npm install
-npm run setup:cpsat
+npm run setup
 ```
 
-`setup:cpsat` finds Python on PATH (including Windows `python` / `py`), creates `solver/cpsat/.venv`, and installs Google OR-Tools. Re-run it if you change machines or delete the venv.
+`setup` fetches the `origin` GitHub remote, synchronizes the selected branch
+exactly to GitHub, installs the committed Node lockfile, creates or repairs
+`solver/cpsat/.venv`, installs Google OR-Tools, and verifies the doctor, tests,
+and lint. If local tracked or non-ignored untracked changes exist, it asks for
+confirmation before clearing them. Use `npm run setup -- --yes` only when that
+reset is intentional; ignored files such as `node_modules`, `.venv`, and local
+outputs are not removed by the Git cleanup unless they conflict with a tracked
+path in the target branch; those collisions are shown before confirmation
+(`npm ci` replaces `node_modules` as part of the Node installation).
+
+For a Python-only repair, `npm run setup:cpsat` finds Python on PATH (including
+Windows `python` / `py`), creates `solver/cpsat/.venv`, and installs Google
+OR-Tools. Re-run it if you change machines or delete the venv.
 
 **Windows tip:** `$env:UNISLOT_PYTHON=…` is PowerShell-only. In **CMD** use:
 
@@ -298,8 +309,7 @@ Rectify runs carry the same trail forward, so `Run Log`, `Clash Log`, and `Late 
 ## 9. Commands cheat sheet
 
 ```powershell
-npm install
-npm run setup:cpsat
+npm run setup
 npm run unislot -- doctor
 npm run unislot
 npm run unislot -- issues -i enroll.xlsx -y
