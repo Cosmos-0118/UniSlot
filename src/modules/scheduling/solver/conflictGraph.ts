@@ -38,7 +38,7 @@ export function buildConflictGraph(
     }
   }
 
-  const edgeWeights = new Map<string, string[]>()
+  const edgeWeights = new Map<string, Set<string>>()
 
   for (const [studentId, sectionIds] of studentSections) {
     for (let i = 0; i < sectionIds.length; i++) {
@@ -48,8 +48,8 @@ export function buildConflictGraph(
         const s1 = a! < b! ? a! : b!
         const s2 = a! < b! ? b! : a!
         const key = `${s1}|${s2}`
-        if (!edgeWeights.has(key)) edgeWeights.set(key, [])
-        edgeWeights.get(key)!.push(studentId)
+        if (!edgeWeights.has(key)) edgeWeights.set(key, new Set())
+        edgeWeights.get(key)!.add(studentId)
       }
     }
   }
@@ -57,12 +57,12 @@ export function buildConflictGraph(
   const edges: ConflictEdge[] = []
   for (const [key, shared] of edgeWeights) {
     const [s1, s2] = key.split('|') as [string, string]
-    const unique = [...new Set(shared)]
     edges.push({
       section_a: s1,
       section_b: s2,
-      weight: unique.length,
-      shared_students: unique,
+      weight: shared.size,
+      // Production scheduling only needs the weight; IDs are omitted to save memory.
+      shared_students: [],
     })
   }
 

@@ -78,7 +78,7 @@ Enrollment .xlsx
 
 - **Time model:** one evening session per weekday (Mon–Sat, 5–7 PM). Saturday is for maths (when enabled) and/or explicitly allowlisted course codes.
 - **Objective:** minimize clash weight, then RED students, then weekday balance.
-- **Proof:** `proven_optimal: true` in `summary.json` means clash weight is minimal under this model.
+- **Proof:** `proven_optimal: true` in `summary.json` means clash weight is proven minimal (integer gap closed). CP-SAT `OPTIMAL` under `--absolute-gap` is not by itself a certificate.
 
 ## Project layout
 

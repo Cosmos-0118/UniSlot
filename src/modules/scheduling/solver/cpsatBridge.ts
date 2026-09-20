@@ -29,8 +29,13 @@ export const CPSAT_SOLVE_PY = path.join(CPSAT_DIR, 'solve.py')
 export const DEFAULT_PORTFOLIO_SIZE = 0
 /** Wall-clock budget for each portfolio race member (clash-only). */
 export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
-/** Minimum workers per portfolio race member (floor). */
-const MIN_PORTFOLIO_MEMBER_WORKERS = 2
+
+/** Workers per race member so `k * workers ≤ totalWorkers` (1 worker/member allowed). */
+export function portfolioMemberWorkers(totalWorkers: number, k: number): number {
+  const n = Math.max(1, Math.floor(k))
+  const budget = Math.max(1, totalWorkers)
+  return Math.max(1, Math.floor(budget / n))
+}
 
 const SIGTERM_GRACE_MS = 1500
 
@@ -43,6 +48,10 @@ export type RunCpsatOptions = {
   hint?: Record<string, number>
   minClashWeightLowerBound?: number
   minRedStudentsLowerBound?: number
+  boundsPrecomputed?: boolean
+  cliqueCuts?: string[][]
+  /** Clash-prove CP-SAT portfolio: stock | core (default) | core_linear. */
+  proveStrategy?: 'core' | 'stock' | 'core_linear'
   /** Independent clash-only race members (default 0). Pass k>0 to race (non-reproducible). */
   portfolio?: number
   /** Seconds per portfolio race member (default 45). */
@@ -82,6 +91,10 @@ export type CpsatSchedulerResult = {
   num_workers: number
   ortools_version?: string
   python_version?: string
+  clash_bound?: number | null
+  clash_gap?: number | null
+  timings?: Record<string, number>
+  model_stats?: { variables: number; constraints: number }
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -301,6 +314,9 @@ export function spawnCpsatSolve(
         }
         if (options?.fullProve) {
           args.push('--prove')
+        }
+        if (options?.proveStrategy) {
+          args.push('--prove-strategy', options.proveStrategy)
         }
 
         child = spawn(python, args, {
@@ -542,6 +558,9 @@ export async function runCpsatScheduler(
       fixed_days: options?.fixedDays,
       min_clash_weight_lower_bound: options?.minClashWeightLowerBound,
       min_red_students_lower_bound: options?.minRedStudentsLowerBound,
+      bounds_precomputed:
+        options?.boundsPrecomputed ?? options?.minClashWeightLowerBound != null,
+      clique_cuts: options?.cliqueCuts,
       allowSaturdayForMath: options?.allowSaturdayForMath,
       saturdayExtraCourseCodes: options?.saturdayExtraCourseCodes,
     },
@@ -550,10 +569,7 @@ export async function runCpsatScheduler(
   if (portfolioK > 0) {
     // Distribute all available CPUs across race members instead of
     // hardcoding 2 per seed — utilise the user's full hardware.
-    const memberWorkers = Math.max(
-      MIN_PORTFOLIO_MEMBER_WORKERS,
-      Math.floor(totalWorkers / portfolioK),
-    )
+    const memberWorkers = portfolioMemberWorkers(totalWorkers, portfolioK)
     const raceBest = await runPortfolioRace(
       instance,
       options ?? {},
@@ -607,6 +623,10 @@ export async function runCpsatScheduler(
     num_workers: solution.num_workers,
     ortools_version: solution.ortools_version,
     python_version: solution.python_version,
+    clash_bound: solution.clash_bound,
+    clash_gap: solution.clash_gap,
+    timings: solution.timings,
+    model_stats: solution.model_stats,
   }
 }
 

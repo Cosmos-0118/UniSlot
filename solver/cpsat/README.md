@@ -21,7 +21,7 @@ solver/cpsat/.venv/bin/python solver/cpsat/solve.py \
   --output /path/to/solution.json
 ```
 
-Progress events are NDJSON on stderr. Solution JSON includes `proven_optimal` when clash weight is proven minimal.
+Progress events are NDJSON on stderr. Solution JSON includes `proven_optimal` when clash weight is proven minimal (integer `incumbent − bound < 1`). Do not treat gap-limited CP-SAT `OPTIMAL` as a certificate.
 
 ### Prove-gap diagnosis
 
@@ -44,7 +44,13 @@ solver/cpsat/.venv/bin/python solver/cpsat/solve.py \
 
 ### Prove acceleration (research roadmap)
 
-Clash phase defaults to dual-oriented CP-SAT settings (`optimize_with_core`, `linearization_level=2`). Model build injects stronger clash cuts (component + weighted-clique + heavy-edge core).
+Clash phase defaults to `--prove-strategy core` (`optimize_with_core` only). OR-Tools 9.15 already defaults probing/symmetry/find_multiple_cores; those are not re-broadcast. Compare:
+
+```bash
+--prove-strategy stock        # default CP-SAT portfolio
+--prove-strategy core         # default UniSlot prove
+--prove-strategy core_linear  # core + linearization_level=2
+```
 
 Operational escapes (prove pass only; portfolio race ignores them):
 

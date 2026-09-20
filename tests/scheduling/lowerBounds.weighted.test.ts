@@ -62,5 +62,6 @@ describe('weighted clash lower bounds', () => {
     // Unit pigeonhole for K7/6 = 1; weighted = 5
     expect(lb.min_clash_weight_lower_bound).toBeGreaterThanOrEqual(5)
     expect(lb.zero_clash_structurally_impossible).toBe(true)
+    expect(lb.clique_cuts.some((c) => c.length >= 7)).toBe(true)
   })
 })

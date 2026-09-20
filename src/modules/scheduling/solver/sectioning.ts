@@ -4,6 +4,9 @@ import { balancedTargetSize } from './capacity'
 /**
  * Edge-aware sectioning — batch students with identical *other-course* fingerprints
  * so cross-section edges stay sparse, while keeping section loads near a balanced target.
+ *
+ * Other-course lists and per-section course-count maps are cached so a candidate
+ * move is O(student's other courses), not a rescan of both sections.
  */
 export function assignStudentsToSections(
   students: Record<string, Student>,
@@ -21,10 +24,21 @@ export function assignStudentsToSections(
     m.get(row.program)!.add(row.register_number)
   }
 
+  const enrolledCache = new Map<string, string[]>()
+  for (const [reg, st] of Object.entries(students)) {
+    enrolledCache.set(reg, st.enrolled_courses)
+  }
+
+  /** Sorted other-course list for (student, current course). */
+  const otherCache = new Map<string, string[]>()
   const studentOtherCourses = (reg: string, currentCourse: string): string[] => {
-    const st = students[reg]
-    if (!st) return []
-    return st.enrolled_courses.filter((c) => c !== currentCourse).sort()
+    const key = `${reg}\0${currentCourse}`
+    const hit = otherCache.get(key)
+    if (hit) return hit
+    const all = enrolledCache.get(reg) ?? students[reg]?.enrolled_courses ?? []
+    const others = all.filter((c) => c !== currentCourse).sort()
+    otherCache.set(key, others)
+    return others
   }
 
   for (const [courseCode, sections] of Object.entries(courseSections)) {
@@ -61,23 +75,39 @@ export function assignStudentsToSections(
     }
 
     const target = balancedTargetSize(totalEnrollment, sections.length)
-    // Soft balance band: prefer staying at/under target; hard capacity remains section.capacity.
     const balancePenaltyWeight = 50
 
     cohorts.sort((a, b) => b.students.length - a.students.length)
 
     const sectionLoads = sections.map(() => 0)
+    const otherCounts: Array<Map<string, number>> = sections.map(() => new Map())
 
-    function crossEdgeScore(secIdx: number, ids: string[]): number {
-      const sec = sections[secIdx]!
-      let crossEdges = 0
-      const setOther = new Set<string>()
-      for (const oid of sec.enrolled_students) {
-        for (const oc of studentOtherCourses(oid, courseCode)) setOther.add(oc)
-      }
+    function addOtherCourses(secIdx: number, ids: string[]): void {
+      const counts = otherCounts[secIdx]!
       for (const reg of ids) {
         for (const oc of studentOtherCourses(reg, courseCode)) {
-          if (setOther.has(oc)) crossEdges++
+          counts.set(oc, (counts.get(oc) ?? 0) + 1)
+        }
+      }
+    }
+
+    function removeOtherCourses(secIdx: number, ids: string[]): void {
+      const counts = otherCounts[secIdx]!
+      for (const reg of ids) {
+        for (const oc of studentOtherCourses(reg, courseCode)) {
+          const next = (counts.get(oc) ?? 0) - 1
+          if (next <= 0) counts.delete(oc)
+          else counts.set(oc, next)
+        }
+      }
+    }
+
+    function crossEdgeScore(secIdx: number, ids: string[]): number {
+      const counts = otherCounts[secIdx]!
+      let crossEdges = 0
+      for (const reg of ids) {
+        for (const oc of studentOtherCourses(reg, courseCode)) {
+          if (counts.has(oc)) crossEdges++
         }
       }
       return crossEdges
@@ -85,7 +115,6 @@ export function assignStudentsToSections(
 
     function balancePenalty(secIdx: number, addCount: number): number {
       const next = (sectionLoads[secIdx] ?? 0) + addCount
-      // Prefer filling emptier sections first; heavily penalize going past the balanced target.
       const over = Math.max(0, next - target)
       const underFillBonus = Math.max(0, target - (sectionLoads[secIdx] ?? 0)) * 0.01
       return over * over * balancePenaltyWeight - underFillBonus
@@ -96,6 +125,7 @@ export function assignStudentsToSections(
       const sec = sections[secIdx]!
       sec.enrolled_students.push(...chunk)
       sectionLoads[secIdx] = (sectionLoads[secIdx] ?? 0) + chunk.length
+      addOtherCourses(secIdx, chunk)
       if (!sec.programs.includes(program)) sec.programs.push(program)
     }
 
@@ -107,13 +137,11 @@ export function assignStudentsToSections(
         for (let si = 0; si < sections.length; si++) {
           const space = sections[si]!.capacity - (sectionLoads[si] ?? 0)
           if (space <= 0) continue
-          // Prefer taking a chunk that keeps us near target when possible.
           const roomToTarget = Math.max(1, target - (sectionLoads[si] ?? 0))
           const takeIdeal = Math.min(space, remaining.length, Math.max(1, roomToTarget))
           const chunk = remaining.slice(0, takeIdeal)
           const cross = crossEdgeScore(si, chunk)
           const bal = balancePenalty(si, chunk.length)
-          // We want to MAXIMIZE overlap (cross) to keep the graph sparse, so we subtract it.
           const score = -cross * 1000 + bal
           if (score < bestScore) {
             bestScore = score
@@ -149,33 +177,20 @@ export function assignStudentsToSections(
       }
     }
 
-    // Final pass: if any section is empty while another is oversized vs target, leave as-is —
-    // capacity and exclusivity matter more than perfect ±1 when cohorts cannot split.
-
-    // Post-refinement: Local search to directly minimize conflict graph edges.
-    // The number of conflict edges for a section is the number of DISTINCT other courses its students take.
-    // We try moving a student to another section if it reduces the total number of distinct courses across both sections.
     let improved = true
     const maxPasses = 20
     let passes = 0
-    
+
     while (improved && passes < maxPasses) {
       improved = false
       passes++
       for (let si = 0; si < sections.length; si++) {
         const sec = sections[si]!
+        const siCounts = otherCounts[si]!
         for (let j = 0; j < sec.enrolled_students.length; j++) {
           const studentReg = sec.enrolled_students[j]!
           const otherCourses = studentOtherCourses(studentReg, courseCode)
           if (otherCourses.length === 0) continue
-
-          // Compute current distinct courses for si
-          const siCourses = new Map<string, number>()
-          for (const oid of sec.enrolled_students) {
-            for (const c of studentOtherCourses(oid, courseCode)) {
-              siCourses.set(c, (siCourses.get(c) ?? 0) + 1)
-            }
-          }
 
           let bestNewSi = -1
           let bestEdgeDelta = 0
@@ -184,29 +199,18 @@ export function assignStudentsToSections(
             if (si === ti) continue
             const targetSec = sections[ti]!
             if (targetSec.enrolled_students.length >= targetSec.capacity) continue
+            const tiCounts = otherCounts[ti]!
+            const currentEdges = siCounts.size + tiCounts.size
 
-            // Compute current distinct courses for ti
-            const tiCourses = new Set<string>()
-            for (const oid of targetSec.enrolled_students) {
-              for (const c of studentOtherCourses(oid, courseCode)) tiCourses.add(c)
-            }
-
-            const currentEdges = siCourses.size + tiCourses.size
-
-            // Compute new distinct courses if we move the student
-            let newSiEdges = siCourses.size
+            let newSiEdges = siCounts.size
             for (const c of otherCourses) {
-              if (siCourses.get(c) === 1) newSiEdges--
+              if (siCounts.get(c) === 1) newSiEdges--
             }
-
-            let newTiEdges = tiCourses.size
+            let newTiEdges = tiCounts.size
             for (const c of otherCourses) {
-              if (!tiCourses.has(c)) newTiEdges++
+              if (!tiCounts.has(c)) newTiEdges++
             }
-
-            const newEdges = newSiEdges + newTiEdges
-            const delta = newEdges - currentEdges
-
+            const delta = newSiEdges + newTiEdges - currentEdges
             if (delta < bestEdgeDelta) {
               bestEdgeDelta = delta
               bestNewSi = ti
@@ -216,7 +220,9 @@ export function assignStudentsToSections(
           if (bestNewSi !== -1) {
             sec.enrolled_students.splice(j, 1)
             sections[bestNewSi]!.enrolled_students.push(studentReg)
-            sectionLoads[si]--
+            removeOtherCourses(si, [studentReg])
+            addOtherCourses(bestNewSi, [studentReg])
+            sectionLoads[si]!--
             sectionLoads[bestNewSi]++
             improved = true
             j--
@@ -225,7 +231,6 @@ export function assignStudentsToSections(
       }
     }
 
-    // Rebuild the 'programs' array for each section just to keep the payload clean
     for (const sec of sections) {
       const progs = new Set<string>()
       for (const reg of sec.enrolled_students) {

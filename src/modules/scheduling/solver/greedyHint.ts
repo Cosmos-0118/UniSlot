@@ -1,11 +1,10 @@
 /**
  * Fast course→weekday warm start for CP-SAT (DSATUR seed + light SA polish).
- * Does not restore the old browser local-search stack — coloring only.
+ * Clash/RED scoring is incremental: a move only touches incident edges and enrolled students.
  */
 import type { ConflictGraph, Section, Student } from '../types'
 import {
   aggregateCourseConflictEdges,
-  type CpsatConflictEdge,
 } from './cpsatInstance'
 import { maxSlotIndexForCourse, normalizeSaturdayExtraCodes } from './timeModel'
 
@@ -13,6 +12,7 @@ export type GreedyHintResult = {
   hint: Record<string, number>
   clash_weight: number
   red_students: number
+  timings?: { dsat_seconds: number; polish_seconds: number }
 }
 
 type HintInput = {
@@ -28,6 +28,8 @@ type HintInput = {
   /** Extra course codes independently allowed on Saturday. */
   saturdayExtraCourseCodes?: string[]
 }
+
+const WEEKDAY_BINS = 6
 
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0
@@ -81,35 +83,99 @@ function buildFacultyForbidden(
   return forbid
 }
 
-function scoreClash(
-  dayOf: Record<string, number>,
-  edges: CpsatConflictEdge[],
-): number {
-  let w = 0
-  for (const e of edges) {
-    if (dayOf[e.course_a] === dayOf[e.course_b]) w += e.weight
+type Incident = { other: string; weight: number }
+
+class IncrementalColoring {
+  readonly dayOf: Record<string, number> = {}
+  clash = 0
+  red = 0
+  private readonly incident: Map<string, Incident[]>
+  private readonly studentsOf: Map<string, string[]>
+  private readonly studentDayCount = new Map<string, number[]>()
+  private readonly studentRed = new Map<string, boolean>()
+
+  constructor(incident: Map<string, Incident[]>, studentsOf: Map<string, string[]>, studentIds: string[]) {
+    this.incident = incident
+    this.studentsOf = studentsOf
+    for (const sid of studentIds) {
+      this.studentDayCount.set(sid, new Array(WEEKDAY_BINS).fill(0))
+      this.studentRed.set(sid, false)
+    }
   }
-  return w
+
+  isAssigned(code: string): boolean {
+    return this.dayOf[code] !== undefined
+  }
+
+  /**
+   * Clash/RED change if `code` is placed on `newDay`.
+   * Only already-assigned neighbors count (partial DSATUR must not treat
+   * undefined === undefined as a clash).
+   */
+  deltaIfSet(code: string, newDay: number): { clash: number; red: number } {
+    const old = this.dayOf[code]
+    let clash = 0
+    for (const { other, weight } of this.incident.get(code) ?? []) {
+      const od = this.dayOf[other]
+      if (od === undefined) continue
+      if (old !== undefined && od === old) clash -= weight
+      if (od === newDay) clash += weight
+    }
+
+    let red = 0
+    for (const sid of this.studentsOf.get(code) ?? []) {
+      const counts = this.studentDayCount.get(sid)
+      if (!counts) continue
+      const wasRed = this.studentRed.get(sid) === true
+      if (old !== undefined) counts[old] = (counts[old] ?? 0) - 1
+      counts[newDay] = (counts[newDay] ?? 0) + 1
+      const nowRed = studentHasClash(counts)
+      if (old !== undefined) {
+        counts[newDay]!--
+        counts[old] = (counts[old] ?? 0) + 1
+      } else {
+        counts[newDay]!--
+      }
+      if (nowRed && !wasRed) red++
+      else if (!nowRed && wasRed) red--
+    }
+    return { clash, red }
+  }
+
+  assign(code: string, newDay: number): void {
+    const old = this.dayOf[code]
+    if (old === newDay) return
+    const d = this.deltaIfSet(code, newDay)
+    this.clash += d.clash
+    this.red += d.red
+    for (const sid of this.studentsOf.get(code) ?? []) {
+      const counts = this.studentDayCount.get(sid)
+      if (!counts) continue
+      if (old !== undefined) counts[old] = (counts[old] ?? 0) - 1
+      counts[newDay] = (counts[newDay] ?? 0) + 1
+      this.studentRed.set(sid, studentHasClash(counts))
+    }
+    this.dayOf[code] = newDay
+  }
+
+  swap(c1: string, c2: string): void {
+    const d1 = this.dayOf[c1]
+    const d2 = this.dayOf[c2]
+    if (d1 === undefined || d2 === undefined || d1 === d2) return
+    this.assign(c1, d2)
+    this.assign(c2, d1)
+  }
+
+  cloneDays(): Record<string, number> {
+    return { ...this.dayOf }
+  }
 }
 
-function scoreRed(
-  dayOf: Record<string, number>,
-  studentCourses: string[][],
-): number {
-  let red = 0
-  for (const courses of studentCourses) {
-    let hit = false
-    for (let i = 0; i < courses.length && !hit; i++) {
-      for (let j = i + 1; j < courses.length; j++) {
-        if (dayOf[courses[i]!] === dayOf[courses[j]!]) {
-          hit = true
-          break
-        }
-      }
-    }
-    if (hit) red++
+function studentHasClash(counts: number[]): boolean {
+  for (const n of counts) {
+    if (n >= 2) return true
   }
-  return red
+  return false
 }
 
 function isFacultyOk(
@@ -161,43 +227,52 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
   const sectionToCourse = new Map<string, string>()
   const enrollment = new Map<string, number>()
   const codes: string[] = []
+  const studentsOf = new Map<string, string[]>()
   for (const [code, sections] of Object.entries(courseSections)) {
     codes.push(code)
     let en = 0
+    const enrolled: string[] = []
     for (const s of sections) {
       sectionToCourse.set(s.section_id, code)
       en += s.enrolled_students.length
+      enrolled.push(...s.enrolled_students)
     }
     enrollment.set(code, en)
+    studentsOf.set(code, enrolled)
   }
   codes.sort((a, b) => a.localeCompare(b))
 
   const edges = aggregateCourseConflictEdges(conflictGraph, sectionToCourse)
   const edgeWeight = new Map<string, number>()
   const adj = new Map<string, Set<string>>()
-  for (const c of codes) adj.set(c, new Set())
+  const incident = new Map<string, Incident[]>()
+  for (const c of codes) {
+    adj.set(c, new Set())
+    incident.set(c, [])
+  }
   for (const e of edges) {
     edgeWeight.set(pairKey(e.course_a, e.course_b), e.weight)
     adj.get(e.course_a)?.add(e.course_b)
     adj.get(e.course_b)?.add(e.course_a)
+    incident.get(e.course_a)?.push({ other: e.course_b, weight: e.weight })
+    incident.get(e.course_b)?.push({ other: e.course_a, weight: e.weight })
   }
 
   const forbid = buildFacultyForbidden(facultyConstraints, sectionToCourse)
-  const studentCourses: string[][] = []
-  for (const st of Object.values(students)) {
-    const enrolled = (st.enrolled_courses ?? []).filter((c) => c in courseSections)
-    const uniq = [...new Set(enrolled)]
-    if (uniq.length >= 2) studentCourses.push(uniq)
+  const studentIds = new Set(Object.keys(students))
+  for (const ids of studentsOf.values()) {
+    for (const id of ids) studentIds.add(id)
   }
 
-  const dayOf: Record<string, number> = {}
+  const coloring = new IncrementalColoring(incident, studentsOf, [...studentIds])
   const remaining = new Set(codes)
 
+  const dsatT0 = performance.now()
   while (remaining.size) {
     let best: string | null = null
     let bestKey: [number, number, number] | null = null
     for (const code of remaining) {
-      const sat = dsatSaturation(code, dayOf, adj)
+      const sat = dsatSaturation(code, coloring.dayOf, adj)
       const deg = weightedDegree(code, edgeWeight, adj)
       const en = enrollment.get(code) ?? 0
       const key: [number, number, number] = [sat, deg, en]
@@ -218,103 +293,111 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
     let pick = 0
     let pickClash = Number.POSITIVE_INFINITY
     let pickRed = Number.POSITIVE_INFINITY
+    let foundFacultyOk = false
     for (let d = 0; d <= maxD; d++) {
-      if (!isFacultyOk(code, d, dayOf, forbid)) continue
-      dayOf[code] = d
-      const clash = scoreClash(dayOf, edges)
-      const red = scoreRed(dayOf, studentCourses)
-      delete dayOf[code]
+      if (!isFacultyOk(code, d, coloring.dayOf, forbid)) continue
+      foundFacultyOk = true
+      const delta = coloring.deltaIfSet(code, d)
+      const clash = coloring.clash + delta.clash
+      const red = coloring.red + delta.red
       if (clash < pickClash || (clash === pickClash && red < pickRed)) {
         pick = d
         pickClash = clash
         pickRed = red
       }
     }
-    // If every day violates faculty (shouldn't happen for valid data), fall back to 0.
-    if (!isFacultyOk(code, pick, dayOf, forbid)) {
+    if (!foundFacultyOk) {
       for (let d = 0; d <= maxD; d++) {
-        if (isFacultyOk(code, d, dayOf, forbid)) {
+        if (isFacultyOk(code, d, coloring.dayOf, forbid)) {
           pick = d
           break
         }
       }
     }
-    dayOf[code] = pick
+    coloring.assign(code, pick)
   }
+  const dsatSeconds = (performance.now() - dsatT0) / 1000
 
-  // Light SA polish: random move / swap, accept improving or Metropolis on clash.
   const rand = mulberry32(seed)
-  let curClash = scoreClash(dayOf, edges)
-  let curRed = scoreRed(dayOf, studentCourses)
+  let curClash = coloring.clash
+  let curRed = coloring.red
   let bestClash = curClash
   let bestRed = curRed
-  const bestDay = { ...dayOf }
+  const bestDay = coloring.cloneDays()
   let temp = Math.max(1, curClash * 0.15)
 
+  const polishT0 = performance.now()
   for (let it = 0; it < polishIters; it++) {
     const useSwap = rand() < 0.35 && codes.length >= 2
     const c1 = codes[Math.floor(rand() * codes.length)]!
-    let c2: string | null = null
-    const old1 = dayOf[c1]!
-    let old2 = 0
+    const old1 = coloring.dayOf[c1]!
 
     if (useSwap) {
-      c2 = codes[Math.floor(rand() * codes.length)]!
+      const c2 = codes[Math.floor(rand() * codes.length)]!
       if (c2 === c1) continue
-      old2 = dayOf[c2]!
-      // Try swap if domains allow.
+      const old2 = coloring.dayOf[c2]!
       if (
         old2 > maxDayFor(c1, allowSaturdayForMath, saturdayExtras) ||
         old1 > maxDayFor(c2, allowSaturdayForMath, saturdayExtras)
       )
         continue
-      dayOf[c1] = old2
-      dayOf[c2] = old1
-      if (!isFacultyOk(c1, dayOf[c1]!, dayOf, forbid) || !isFacultyOk(c2, dayOf[c2]!, dayOf, forbid)) {
-        dayOf[c1] = old1
-        dayOf[c2] = old2
+      coloring.swap(c1, c2)
+      if (
+        !isFacultyOk(c1, coloring.dayOf[c1]!, coloring.dayOf, forbid) ||
+        !isFacultyOk(c2, coloring.dayOf[c2]!, coloring.dayOf, forbid)
+      ) {
+        coloring.assign(c1, old1)
+        coloring.assign(c2, old2)
         continue
+      }
+      const clash = coloring.clash
+      const red = coloring.red
+      const better = clash < curClash || (clash === curClash && red < curRed)
+      const delta = clash - curClash
+      const accept = better || (delta > 0 && rand() < Math.exp(-delta / Math.max(0.01, temp)))
+      if (accept) {
+        curClash = clash
+        curRed = red
+        if (clash < bestClash || (clash === bestClash && red < bestRed)) {
+          bestClash = clash
+          bestRed = red
+          Object.assign(bestDay, coloring.dayOf)
+        }
+      } else {
+        coloring.assign(c1, old1)
+        coloring.assign(c2, old2)
       }
     } else {
       const maxD = maxDayFor(c1, allowSaturdayForMath, saturdayExtras)
       const nd = Math.floor(rand() * (maxD + 1))
       if (nd === old1) continue
-      dayOf[c1] = nd
-      if (!isFacultyOk(c1, nd, dayOf, forbid)) {
-        dayOf[c1] = old1
-        continue
+      if (!isFacultyOk(c1, nd, coloring.dayOf, forbid)) continue
+      const delta = coloring.deltaIfSet(c1, nd)
+      const clash = coloring.clash + delta.clash
+      const red = coloring.red + delta.red
+      const better = clash < curClash || (clash === curClash && red < curRed)
+      const dClash = clash - curClash
+      const accept = better || (dClash > 0 && rand() < Math.exp(-dClash / Math.max(0.01, temp)))
+      if (accept) {
+        coloring.assign(c1, nd)
+        curClash = coloring.clash
+        curRed = coloring.red
+        if (clash < bestClash || (clash === bestClash && red < bestRed)) {
+          bestClash = clash
+          bestRed = red
+          Object.assign(bestDay, coloring.dayOf)
+        }
       }
-    }
-
-    const clash = scoreClash(dayOf, edges)
-    const red = scoreRed(dayOf, studentCourses)
-    const better =
-      clash < curClash || (clash === curClash && red < curRed)
-    const delta = clash - curClash
-    const accept =
-      better || (delta > 0 && rand() < Math.exp(-delta / Math.max(0.01, temp)))
-
-    if (accept) {
-      curClash = clash
-      curRed = red
-      if (clash < bestClash || (clash === bestClash && red < bestRed)) {
-        bestClash = clash
-        bestRed = red
-        Object.assign(bestDay, dayOf)
-      }
-    } else if (useSwap && c2) {
-      dayOf[c1] = old1
-      dayOf[c2] = old2
-    } else {
-      dayOf[c1] = old1
     }
 
     temp *= 0.9992
   }
+  const polishSeconds = (performance.now() - polishT0) / 1000
 
   return {
     hint: bestDay,
     clash_weight: bestClash,
     red_students: bestRed,
+    timings: { dsat_seconds: dsatSeconds, polish_seconds: polishSeconds },
   }
 }

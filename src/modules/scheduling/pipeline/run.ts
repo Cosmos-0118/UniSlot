@@ -99,6 +99,8 @@ export type RunPipelineOptions = {
   cpsatProvePlateauSeconds?: number
   /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
   cpsatFullProve?: boolean
+  /** Clash-prove CP-SAT portfolio (stock | core | core_linear). */
+  cpsatProveStrategy?: 'core' | 'stock' | 'core_linear'
   /**
    * When false, Saturday is blocked for maths courses.
    * Default true (Constraints.md Saturday maths-only).
@@ -151,6 +153,7 @@ export interface PipelineResult {
   solver_message?: string
   ortools_version?: string
   python_version?: string
+  timings?: Record<string, number>
 }
 
 async function buildEagerExportsSequential(
@@ -270,11 +273,17 @@ export async function runPipeline(
     fraction: 0.15,
   })
   throwIfAborted(signal)
+  const preprocessT0 = performance.now()
   let courseSections = computeSectionSplits(courses)
   applyDistinctFacultyPerSection(courses, courseSections)
+  const sectioningT0 = performance.now()
   courseSections = assignStudentsToSections(students, courseSections, enrollmentRows)
+  const sectioningSeconds = (performance.now() - sectioningT0) / 1000
+  const graphT0 = performance.now()
   const conflictGraph = buildConflictGraph(students, courseSections)
+  const conflictGraphSeconds = (performance.now() - graphT0) / 1000
   const facultyConstraints = extractFacultyConstraints(courseSections)
+  const preprocessSeconds = (performance.now() - preprocessT0) / 1000
 
   const sectionCount = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
   const edgeWeight = sumConflictGraphWeights(conflictGraph)
@@ -317,15 +326,21 @@ export async function runPipeline(
   })
   emit({
     stage: 'schedule',
-    message: `Warm start · clash ${warm.clash_weight} · RED ${warm.red_students}`,
+    message: `Warm start · clash ${warm.clash_weight} · RED ${warm.red_students}${
+      warm.timings
+        ? ` · DSATUR ${warm.timings.dsat_seconds.toFixed(2)}s · SA ${warm.timings.polish_seconds.toFixed(2)}s`
+        : ''
+    }`,
     fraction: SCHEDULE_LO + 0.01,
     etaSeconds: null,
   })
 
+  const boundsT0 = performance.now()
   const structuralLb = computeSchedulingLowerBounds(courseSections, conflictGraph, students, {
     allowSaturdayForMath,
     saturdayExtraCourseCodes,
   })
+  const boundsSeconds = (performance.now() - boundsT0) / 1000
   const portfolio =
     options?.cpsatPortfolio === undefined ? undefined : options.cpsatPortfolio
   emit({
@@ -346,6 +361,9 @@ export async function runPipeline(
       hint: warm.hint,
       minClashWeightLowerBound: structuralLb.min_clash_weight_lower_bound,
       minRedStudentsLowerBound: structuralLb.min_red_students_lower_bound,
+      boundsPrecomputed: true,
+      cliqueCuts: structuralLb.clique_cuts,
+      proveStrategy: options?.cpsatProveStrategy,
       portfolio,
       portfolioRaceSeconds: options?.cpsatPortfolioRaceSeconds,
       absoluteGap: options?.cpsatAbsoluteGap,
@@ -439,7 +457,7 @@ export async function runPipeline(
     flatSectionsEarly,
     slotAssignments,
     conflictGraph,
-    { courseSections, students },
+    { courseSections, students, lower_bounds: structuralLb },
   )
   const lb = schedulingStatsPreview.lower_bounds
   let programNomenclatureMap: Record<string, string> | undefined = DEFAULT_PROGRAM_NOMENCLATURE_MAP as Record<
@@ -592,5 +610,14 @@ export async function runPipeline(
     solver_message: solverMessage,
     ortools_version: ortoolsVersion,
     python_version: pythonVersion,
+    timings: {
+      preprocess_seconds: preprocessSeconds,
+      sectioning_seconds: sectioningSeconds,
+      conflict_graph_seconds: conflictGraphSeconds,
+      bounds_seconds: boundsSeconds,
+      dsat_seconds: warm.timings?.dsat_seconds ?? 0,
+      polish_seconds: warm.timings?.polish_seconds ?? 0,
+      ...cpsat.timings,
+    },
   }
 }

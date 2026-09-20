@@ -6,6 +6,7 @@ connected-component additivity, weighted-clique pigeonhole, and heavy-edge core.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any
 
@@ -135,6 +136,78 @@ def _best_cliques_lb(
     return max(best, packed)
 
 
+def _collect_cut_cliques(
+    adj: dict[str, set[str]],
+    nodes: list[str],
+    colors: int,
+    starts: int = 24,
+) -> list[list[str]]:
+    if not nodes:
+        return []
+    ranked = sorted(nodes, key=lambda v: len(adj.get(v, ())), reverse=True)
+    out: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for start in ranked[: min(starts, len(ranked))]:
+        clique = _greedy_clique(adj, nodes, start)
+        if min_monochrome_pairs(len(clique), colors) <= 0:
+            continue
+        key = tuple(sorted(clique))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clique)
+    return out[:16]
+
+
+def gershgorin_lambda_max_laplacian(
+    weights: dict[tuple[str, str], int],
+) -> tuple[float, float, int]:
+    """Return (λ_max upper bound, total_weight W, n) for the weighted Laplacian.
+
+    Gershgorin: every eigenvalue of L = D-A lies in a disk of radius d_i about d_i,
+    so λ_max(L) ≤ 2 Δ_max. This is a proven overestimate (safe for dual cuts).
+    """
+    deg: dict[str, float] = defaultdict(float)
+    total = 0.0
+    nodes: set[str] = set()
+    for (a, b), w in weights.items():
+        if w <= 0 or a == b:
+            continue
+        deg[a] += w
+        deg[b] += w
+        total += w
+        nodes.add(a)
+        nodes.add(b)
+    n = len(nodes)
+    if n == 0:
+        return 0.0, 0.0, 0
+    delta = max(deg.values()) if deg else 0.0
+    return 2.0 * delta, total, n
+
+
+def spectral_clash_lower_bound(
+    weights: dict[tuple[str, str], int],
+    colors: int,
+) -> int:
+    """Valid clash LB from a conservative Max-k-Cut upper bound.
+
+    Max-k-Cut ≤ min(W, (k-1)/(2k) * n * λ_max(L)) using Gershgorin λ_max ≤ 2Δ.
+    clash ≥ W − that UB. Heuristic (primal) Max-k-Cut is never used here.
+    """
+    k = max(1, colors)
+    lam_ub, total_w, n = gershgorin_lambda_max_laplacian(weights)
+    if n == 0 or total_w <= 0:
+        return 0
+    # (k-1)/(2k) * n * λ_max  with λ_max ≤ 2Δ  →  (k-1)/k * n * Δ
+    cut_ub = ((k - 1) / (2 * k)) * n * lam_ub
+    cut_ub = min(total_w, cut_ub)
+    clash_lb = total_w - cut_ub
+    if clash_lb <= 0:
+        return 0
+    # Floor: never overstate the dual.
+    return int(math.floor(clash_lb))
+
+
 def compute_clash_lower_bound(
     instance: dict[str, Any],
     *,
@@ -144,6 +217,12 @@ def compute_clash_lower_bound(
     edges = list(instance.get("conflict_edges") or [])
     num_weekdays = int(instance.get("num_weekdays") or 6)
     existing = int(instance.get("min_clash_weight_lower_bound") or 0)
+    precomputed = bool(instance.get("bounds_precomputed"))
+    provided_cuts = [
+        [str(c) for c in clique]
+        for clique in (instance.get("clique_cuts") or [])
+        if isinstance(clique, list) and clique
+    ]
     adj, weights = _build_weighted_adj(edges)
     notes: list[str] = []
 
@@ -152,64 +231,83 @@ def compute_clash_lower_bound(
             "min_clash_weight_lower_bound": existing,
             "component_count": 0,
             "core_edge_count": 0,
+            "clique_cuts": provided_cuts,
+            "spectral_clash_lower_bound": 0,
             "notes": notes,
         }
 
-    # Additive LB across connected components.
     comps = _connected_components(adj)
     comp_lb = 0
-    for comp in comps:
-        comp_lb += _best_cliques_lb(adj, weights, comp, num_weekdays)
-    if comp_lb > existing:
-        notes.append(
-            f"Component-wise weighted clique LB raised clash cut to {comp_lb} "
-            f"({len(comps)} components)."
-        )
-
-    # Heavy-edge core: valid LB on subgraph of edges with weight >= tau.
-    if core_weight_tau is None:
-        # Default tau: median weight (at least 2) so residual light edges are deferred.
-        ws = sorted(weights.values())
-        core_weight_tau = max(2, ws[len(ws) // 2] if ws else 2)
-    core_edges = [
-        {"course_a": a, "course_b": b, "weight": w}
-        for (a, b), w in weights.items()
-        if w >= core_weight_tau
-    ]
-    core_adj, core_w = _build_weighted_adj(core_edges)
     core_lb = 0
-    if core_adj:
-        for comp in _connected_components(core_adj):
-            core_lb += _best_cliques_lb(core_adj, core_w, comp, num_weekdays)
-        if core_lb > existing:
+    core_edges: list[dict[str, Any]] = []
+    twin_folds = 0
+
+    if precomputed:
+        notes.append(
+            f"Reusing TypeScript clash lower bound {existing}; skipping duplicate clique packing."
+        )
+    else:
+        for comp in comps:
+            comp_lb += _best_cliques_lb(adj, weights, comp, num_weekdays)
+        if comp_lb > existing:
             notes.append(
-                f"Core-edge LB (τ≥{core_weight_tau}, {len(core_edges)} edges) ≥ {core_lb}."
+                f"Component-wise weighted clique LB raised clash cut to {comp_lb} "
+                f"({len(comps)} components)."
             )
 
-    # Identical-twin fold hint: count foldable pairs (LB-safe merge of equal neighborhoods).
-    twin_folds = 0
-    nodes = list(adj.keys())
-    for i, u in enumerate(nodes):
-        for v in nodes[i + 1 :]:
-            if weights.get(_pair_key(u, v), 0) > 0:
-                continue
-            nu = adj.get(u, set())
-            nv = adj.get(v, set())
-            if nu != nv:
-                continue
-            if all(weights.get(_pair_key(u, k), 0) == weights.get(_pair_key(v, k), 0) for k in nu):
-                twin_folds += 1
-    if twin_folds:
+        if core_weight_tau is None:
+            ws = sorted(weights.values())
+            core_weight_tau = max(2, ws[len(ws) // 2] if ws else 2)
+        core_edges = [
+            {"course_a": a, "course_b": b, "weight": w}
+            for (a, b), w in weights.items()
+            if w >= core_weight_tau
+        ]
+        core_adj, core_w = _build_weighted_adj(core_edges)
+        if core_adj:
+            for comp in _connected_components(core_adj):
+                core_lb += _best_cliques_lb(core_adj, core_w, comp, num_weekdays)
+            if core_lb > existing:
+                notes.append(
+                    f"Core-edge LB (τ≥{core_weight_tau}, {len(core_edges)} edges) ≥ {core_lb}."
+                )
+
+        nodes = list(adj.keys())
+        for i, u in enumerate(nodes):
+            for v in nodes[i + 1 :]:
+                if weights.get(_pair_key(u, v), 0) > 0:
+                    continue
+                nu = adj.get(u, set())
+                nv = adj.get(v, set())
+                if nu != nv:
+                    continue
+                if all(weights.get(_pair_key(u, k), 0) == weights.get(_pair_key(v, k), 0) for k in nu):
+                    twin_folds += 1
+        if twin_folds:
+            notes.append(
+                f"Detected {twin_folds} identical-twin course pair(s) "
+                "(equal weighted neighborhoods; fold only with a full constraint signature)."
+            )
+
+    spectral_lb = spectral_clash_lower_bound(weights, num_weekdays)
+    if spectral_lb > existing:
         notes.append(
-            f"Detected {twin_folds} identical-twin course pair(s) (equal weighted neighborhoods)."
+            f"Gershgorin Max-{num_weekdays}-Cut dual raised clash cut to {spectral_lb}."
         )
 
-    final_lb = max(existing, comp_lb, core_lb)
+    clique_cuts = provided_cuts
+    if not clique_cuts:
+        for comp in comps:
+            clique_cuts.extend(_collect_cut_cliques(adj, comp, num_weekdays))
+
+    final_lb = max(existing, comp_lb, core_lb, spectral_lb)
     return {
         "min_clash_weight_lower_bound": final_lb,
         "component_count": len(comps),
         "core_edge_count": len(core_edges),
         "core_weight_tau": core_weight_tau,
         "twin_fold_candidates": twin_folds,
+        "spectral_clash_lower_bound": spectral_lb,
+        "clique_cuts": clique_cuts,
         "notes": notes,
     }

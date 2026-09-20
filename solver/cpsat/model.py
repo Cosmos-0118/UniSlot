@@ -7,7 +7,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from bounds import compute_clash_lower_bound
+from bounds import compute_clash_lower_bound, min_monochrome_pairs
 
 NUM_WEEKDAYS = 6
 SATURDAY = 5
@@ -88,9 +88,8 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
     for group in instance.get("faculty_groups") or []:
         codes = [str(x) for x in (group.get("course_codes") or []) if str(x) in day]
         uniq = sorted(set(codes))
-        for i, a in enumerate(uniq):
-            for b in uniq[i + 1 :]:
-                model.Add(day[a] != day[b])
+        if len(uniq) >= 2:
+            model.AddAllDifferent([day[c] for c in uniq])
 
     # Canonical same-day bools shared by clash weight and RED student encoding.
     needed_pairs: set[tuple[str, str]] = set()
@@ -125,6 +124,22 @@ def build_model(instance: dict[str, Any]) -> BuiltModel:
         model.Add(day[a] == day[b]).OnlyEnforceIf(same)
         model.Add(day[a] != day[b]).OnlyEnforceIf(same.Not())
         same_day[(a, b)] = same
+
+    # Clique inequalities: at least min_monochrome_pairs same-day edges in a k-coloring.
+    clique_cuts = list(bound_info.get("clique_cuts") or instance.get("clique_cuts") or [])
+    for clique in clique_cuts:
+        codes = [str(c) for c in clique if str(c) in day]
+        pairs_needed = min_monochrome_pairs(len(codes), num_weekdays)
+        if pairs_needed <= 0:
+            continue
+        terms = []
+        for i, a in enumerate(codes):
+            for b in codes[i + 1 :]:
+                var = same_day.get(_pair_key(a, b))
+                if var is not None:
+                    terms.append(var)
+        if len(terms) >= pairs_needed:
+            model.Add(sum(terms) >= pairs_needed)
 
     # Clash weight: sum of monochrome course-conflict edge weights.
     clash_terms: list[cp_model.LinearExpr] = []

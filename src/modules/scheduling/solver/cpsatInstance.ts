@@ -38,6 +38,10 @@ export type CpsatInstance = {
   min_clash_weight_lower_bound?: number
   /** Structural lower bound injected as CP-SAT cut (red_students >= lb). */
   min_red_students_lower_bound?: number
+  /** When true, Python skips duplicate clique packing and reuses the TS bound. */
+  bounds_precomputed?: boolean
+  /** Greedy cliques for same-day inequalities. */
+  clique_cuts?: string[][]
 }
 
 export type CpsatSolution = {
@@ -45,16 +49,20 @@ export type CpsatSolution = {
   proven_optimal: boolean
   proven_levels?: string[]
   slot_by_course: Record<string, number>
-  clash_weight: number | null
-  red_students: number | null
-  weekday_balance_l1_scaled?: number | null
-  parallel_excess?: number | null
-  solver_time_seconds: number
-  num_workers: number
-  message?: string
-  error?: string
-  ortools_version?: string
-  python_version?: string
+    clash_weight: number | null
+    red_students: number | null
+    weekday_balance_l1_scaled?: number | null
+    parallel_excess?: number | null
+    clash_bound?: number | null
+    clash_gap?: number | null
+    solver_time_seconds: number
+    num_workers: number
+    message?: string
+    error?: string
+    ortools_version?: string
+    python_version?: string
+    timings?: Record<string, number>
+    model_stats?: { variables: number; constraints: number }
 }
 
 /** Present on events from a portfolio race member (multi-seed clash race). */
@@ -88,6 +96,16 @@ export type CpsatProgressEvent =
       type: 'model_ready'
       elapsed?: number
       courses?: number
+      variables?: number
+      constraints?: number
+      portfolio?: CpsatPortfolioMeta
+    }
+  | {
+      type: 'profile'
+      timings?: Record<string, number>
+      model_stats?: { variables: number; constraints: number }
+      clash_bound?: number | null
+      clash_gap?: number | null
       portfolio?: CpsatPortfolioMeta
     }
   | {
@@ -171,6 +189,8 @@ export function buildCpsatInstance(
     fixed_days?: Record<string, number>
     min_clash_weight_lower_bound?: number
     min_red_students_lower_bound?: number
+    bounds_precomputed?: boolean
+    clique_cuts?: string[][]
     /** Default true (Constraints.md). Pass false to exclude Saturday for maths. */
     allowSaturdayForMath?: boolean
     /** Extra course codes independently allowed on Saturday. */
@@ -244,6 +264,8 @@ export function buildCpsatInstance(
     fixed_days: options?.fixed_days,
     min_clash_weight_lower_bound: options?.min_clash_weight_lower_bound,
     min_red_students_lower_bound: options?.min_red_students_lower_bound,
+    bounds_precomputed: options?.bounds_precomputed,
+    clique_cuts: options?.clique_cuts,
   }
 }
 

@@ -28,6 +28,8 @@ export function computeSchedulingStats(
   options?: {
     courseSections?: Record<string, Section[]>
     students?: Record<string, Student>
+    /** Reuse bounds already computed for this run (skip a second clique search). */
+    lower_bounds?: SchedulingLowerBounds
   },
 ): SchedulingStats {
   const loads = new Array(TOTAL_WEEKLY_SLOTS).fill(0)
@@ -47,8 +49,8 @@ export function computeSchedulingStats(
     0,
   )
 
-  let lower_bounds: SchedulingLowerBounds | undefined
-  if (options?.courseSections) {
+  let lower_bounds: SchedulingLowerBounds | undefined = options?.lower_bounds
+  if (!lower_bounds && options?.courseSections) {
     lower_bounds = computeSchedulingLowerBounds(
       options.courseSections,
       conflictGraph,

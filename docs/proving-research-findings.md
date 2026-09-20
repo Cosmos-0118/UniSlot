@@ -58,7 +58,7 @@ What you have today: clique size vs 6 colors + pigeonhole → `min_clash_weight_
 | **Weighted improper coloring bounds** (Araujo et al.; Guðmundsson et al. FPT by treewidth) | Same monochrome-weight language | Theory-heavy; treewidth of enrollment graphs may be usable |
 | Fractional / column-generation chromatic LBs | Better for *proper* coloring chromatic number | Secondary unless you first ask “is zero clash possible?” |
 
-**Actionable next experiments:** compute an offline Max-6-Cut upper bound (greedy + local search on cut) and inject `clash >= total_weight - cut_UB`; compare to clique LB on real enrollments.
+**Actionable next experiments:** compute a *valid* Max-6-Cut **upper** bound (spectral / LP / SDP relaxation) and inject `clash >= total_weight - cut_UB`. A greedy/local-search Max-k-Cut is a **lower** bound on the cut and is **not** a valid clash cut — injecting `total − heuristic_cut` can remove the true optimum.
 
 ### Graph reduction / kernelization
 
@@ -153,8 +153,11 @@ Rationale: the diagnostic shows efficiency is lost on **bound closing**, not on 
 | Item | Status |
 |------|--------|
 | Gap-trace + bound refresh on heartbeats | Done (`--gap-trace`, `diagnose_gap.py`) |
-| CP-SAT prove params (`optimize_with_core`, `linearization_level=2`, probing) | Done on clash prove; race stays primal-first |
+| CP-SAT prove params (`optimize_with_core`; stock/core/core_linear A/B) | Done — 9.15 defaults no longer re-set globally |
 | Weighted clique + component + core-edge LB cuts | Done (`lowerBounds.ts` + `bounds.py` via `model.py`) |
+| Gershgorin Max-k-Cut dual (conservative UB on cut) | Done (`bounds.py::spectral_clash_lower_bound`) |
+| Clique same-day inequalities | Done (`model.py`) |
 | Twin-fold detection (notes; fold-into-solve deferred) | Partial — counts candidates in bound notes |
-| `--absolute-gap` / `--prove-plateau` / `--prove` | Done (CLI + bridge + pipeline) |
-| Column generation / HiGHS hybrid / sectioning rewrite | Not started (Tier 2–3 research) |
+| `--absolute-gap` / `--prove-plateau` / `--prove` | Done; `proven_optimal` now requires integer gap < 1 |
+| Incremental greedyHint + sectioning | Done |
+| Column generation / HiGHS hybrid / SDP hierarchy | Not started (Tier 2–3 research) |

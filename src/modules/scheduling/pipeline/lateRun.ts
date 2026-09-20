@@ -952,6 +952,8 @@ async function solveNewCourses(args: {
         fixedDays: args.fixedDays,
         minClashWeightLowerBound: structuralLb.min_clash_weight_lower_bound,
         minRedStudentsLowerBound: structuralLb.min_red_students_lower_bound,
+        boundsPrecomputed: true,
+        cliqueCuts: structuralLb.clique_cuts,
         portfolio: 0,
         absoluteGap: options.cpsatAbsoluteGap,
         provePlateauSeconds:

@@ -38,6 +38,7 @@ import {
   CPSAT_DIR,
   cpsatVenvPythonPath,
   killAllCpsatChildren,
+  portfolioMemberWorkers,
   resolveCpsatPython,
 } from '../src/modules/scheduling/solver/cpsatBridge.ts'
 import { PipelineCancelledError } from '../src/modules/scheduling/pipeline/cancellation.ts'
@@ -1495,6 +1496,7 @@ async function runSolve(opts: {
   absoluteGap?: number
   provePlateau?: number
   prove?: boolean
+  proveStrategy?: string
   /** undefined = ask in interactive mode; default blocked when non-interactive. */
   saturday?: boolean
   /** Comma-separated extra course codes allowed on Saturday. */
@@ -1515,6 +1517,13 @@ async function runSolve(opts: {
   const portfolioFlag = numFlag('--portfolio', opts.portfolio, { min: 0, integer: true })
   const absoluteGap = numFlag('--absolute-gap', opts.absoluteGap, { min: 0, integer: true })
   const provePlateau = numFlag('--prove-plateau', opts.provePlateau, { min: 1, integer: false })
+  const proveStrategyRaw = (opts.proveStrategy ?? 'core').trim().toLowerCase()
+  const proveStrategy: 'core' | 'stock' | 'core_linear' =
+    proveStrategyRaw === 'stock' || proveStrategyRaw === 'core_linear' ? proveStrategyRaw : 'core'
+  if (opts.proveStrategy && !['core', 'stock', 'core_linear'].includes(proveStrategyRaw)) {
+    p.log.error('--prove-strategy must be core, stock, or core_linear')
+    return 1
+  }
 
   const seedResult = await resolveRunSeed({
     interactive: !opts.skipPrompts && opts.seed === undefined && canPrompt(),
@@ -1538,7 +1547,7 @@ async function runSolve(opts: {
     seedResult.portfolio !== undefined ? Math.max(0, Math.floor(seedResult.portfolio)) : 0
   const portfolioK = portfolioFlag !== undefined ? portfolioFlag : tokenPortfolio
 
-  const memberW = portfolioK > 0 ? Math.max(2, Math.floor(requestedWorkers / portfolioK)) : 0
+  const memberW = portfolioK > 0 ? portfolioMemberWorkers(requestedWorkers, portfolioK) : 0
   const cpuLine =
     portfolioK > 0
       ? `${cpuN} logical · race ${portfolioK} seeds × ${memberW}w (${portfolioK * memberW}w total) → prove ${workersLabel}w`
@@ -1547,7 +1556,7 @@ async function runSolve(opts: {
     p.log.warn(
       'Portfolio race uses a wall-clock budget — schedule will not reproduce from seed alone. Use --portfolio 0 (default) for reproducible runs.',
     )
-    if (portfolioK * memberW > requestedWorkers * 2) {
+    if (portfolioK * memberW > requestedWorkers) {
       p.log.warn(
         `--portfolio ${portfolioK} on ${requestedWorkers} workers oversubscribes CPUs — expect contention. Prefer --portfolio ≤ workers.`,
       )
@@ -1718,6 +1727,7 @@ async function runSolve(opts: {
         cpsatAbsoluteGap: absoluteGap,
         cpsatProvePlateauSeconds: provePlateau,
         cpsatFullProve: opts.prove,
+        cpsatProveStrategy: proveStrategy,
         allowSaturdayForMath,
         saturdayExtraCourseCodes,
         programNomenclatureXlsx,
@@ -1942,6 +1952,11 @@ async function main(): Promise<void> {
     )
     .option('--prove', 'Disable gap/plateau escapes; chase full clash OPTIMAL', false)
     .option(
+      '--prove-strategy <name>',
+      'Clash-prove CP-SAT portfolio: core (default), stock, or core_linear',
+      'core',
+    )
+    .option(
       '--saturday',
       'Allow Saturday slot for maths courses (use --no-saturday to block; default: ask / blocked)',
     )
@@ -1961,6 +1976,7 @@ async function main(): Promise<void> {
       absoluteGap?: number
       provePlateau?: number
       prove?: boolean
+      proveStrategy?: string
       saturday?: boolean
       saturdayCodes?: string
       yes?: boolean
@@ -1980,6 +1996,7 @@ async function main(): Promise<void> {
         absoluteGap: flags.absoluteGap,
         provePlateau: flags.provePlateau,
         prove: flags.prove,
+        proveStrategy: flags.proveStrategy,
         saturday: saturdayFlag,
         saturdayCodes: flags.saturdayCodes,
         skipPrompts: Boolean(flags.yes),

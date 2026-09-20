@@ -21,6 +21,8 @@ export type SchedulingLowerBounds = {
   min_clash_weight_lower_bound: number
   /** Students who must clash given enrollment + Saturday maths-only. */
   min_red_students_lower_bound: number
+  /** Greedy cliques used as CP-SAT same-day inequalities. */
+  clique_cuts: string[][]
   notes: string[]
 }
 
@@ -386,6 +388,7 @@ export function computeSchedulingLowerBounds(
     zero_red_structurally_impossible: minRed > 0 || zeroClash,
     min_clash_weight_lower_bound: clashWeightLb,
     min_red_students_lower_bound: minRed,
+    clique_cuts: [maxCliqueNodes, nonMathCliqueNodes].filter((c) => c.length >= 2),
     notes,
   }
 }

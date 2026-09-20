@@ -195,7 +195,7 @@ In `summary.json`, the important fields are:
 - `ortools_version` / `python_version` — toolchain used (match for cross-device repro)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash
-- `proven_optimal` — `true` means clash weight is proven minimal under the course→weekday model
+- `proven_optimal` — `true` means clash weight is proven minimal (integer gap `incumbent − bound < 1`), not merely that CP-SAT returned `OPTIMAL` (gap limits can yield that status with a remaining gap)
 - `lower_bounds` — structural notes (e.g. clique larger than 6 weekdays ⇒ zero-clash impossible)
 
 If lower bounds say zero-clash is impossible, a positive clash weight with `proven_optimal: true` is still a correct best answer — not a solver failure.

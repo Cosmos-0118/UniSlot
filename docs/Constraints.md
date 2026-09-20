@@ -35,6 +35,10 @@ Ideal outcome:
 0 student clashes
 ```
 
+Zero is not always attainable (conflict cliques larger than the number of
+weekdays, Saturday-domain pigeonhole). Residual clashes are minimized, not
+treated as infeasibility.
+
 ---
 
 ## Secondary Objectives
@@ -163,14 +167,18 @@ Maximum: 5 courses
 
 ---
 
-### Rule 5 — One Course Per Student Per Weekday
+### Rule 5 — One Course Per Student Per Weekday (primary objective)
 
-A student can attend at most one enrolled course on any weekday.
+A student should attend at most one enrolled course on any weekday.
 
-This is a hard constraint: every course on a weekday shares the same 5–7 PM session,
-so a student cannot attend more than one course that day.
+Every course on a weekday shares the same 5–7 PM session, so two enrolled courses
+on the same weekday are a timetable clash. This is the **highest-priority
+optimization target**, not a hard forbid: some enrollments are structurally
+unable to reach zero clashes (conflict cliques larger than the number of
+weekdays, Saturday-domain pigeonhole). The engine must **minimize** clashes,
+never reject a structurally feasible timetable because a clash remains.
 
-### Invalid Example
+### Example (clash to minimize)
 
 ```text
 Student:
@@ -178,17 +186,17 @@ Student:
   CS205 -> Monday, band 8
 
 Result:
-  Invalid — two courses on Monday
+  RED — two courses on Monday (same 5–7 PM session)
 ```
 
 ---
 
 ### Rule 6 — Student Collision Constraint
 
-A student cannot attend multiple courses at the same time.
+A student cannot attend multiple courses at the same time. On this time model
+that is the same event as Rule 5 (one evening session per weekday).
 
-Same-time collisions are therefore also invalid. If an existing or provisional schedule contains
-either type of student conflict:
+If a student's enrolled courses share a weekday:
 
 ```text
 Student Status = RED
@@ -204,6 +212,9 @@ Student:
 Result:
   RED (Clash Detected)
 ```
+
+Ideal outcome is 0 RED students. When that is mathematically impossible, the
+solver still ships the timetable that minimizes clash weight, then RED count.
 
 ---
 
@@ -502,14 +513,6 @@ Sections must respect maximum size
 
 ---
 
-### Student daily attendance enforced
-
-```text
-Each student may attend at most one course per weekday
-```
-
----
-
 ### Split section rules enforced
 
 ```text
@@ -527,8 +530,9 @@ Soft constraints are optimization targets.
 
 ## Soft Constraint List
 
-- Minimize student clashes
-- Reduce RED students
+- **Priority 1 — Minimize student clashes / RED students** (Rules 5–6). Highest
+  priority. Zero is ideal but not always attainable; never treat residual clashes
+  as infeasibility.
 - Reduce unnecessary splitting
 - Maintain balanced parallel load
 - Spread courses evenly across the week

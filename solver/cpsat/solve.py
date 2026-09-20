@@ -48,6 +48,43 @@ def status_name(status: int) -> str:
     return mapping.get(status, f"STATUS_{status}")
 
 
+def integer_gap_closed(incumbent: int | None, bound: int | None) -> bool:
+    """True iff an integer minimization objective is proven minimal.
+
+    OR-Tools may return OPTIMAL when ``absolute_gap_limit`` is met even if a
+    positive gap remains. For integer objectives a mathematical certificate
+    requires ``incumbent - bound < 1``.
+    """
+    if incumbent is None or bound is None:
+        return False
+    try:
+        inc = int(incumbent)
+        bnd = int(bound)
+    except (TypeError, ValueError):
+        return False
+    return inc - bnd < 1
+
+
+def solver_best_bound(solver: cp_model.CpSolver) -> int | None:
+    try:
+        raw = solver.BestObjectiveBound()
+    except Exception:  # noqa: BLE001 — bound may be unset mid-teardown
+        return None
+    if raw is None:
+        return None
+    if raw >= 2**62 or raw <= -(2**62):
+        return None
+    return int(raw)
+
+
+def model_stats(model: cp_model.CpModel) -> dict[str, int]:
+    proto = model.Proto()
+    return {
+        "variables": len(proto.variables),
+        "constraints": len(proto.constraints),
+    }
+
+
 def phase_label(phase: str) -> str:
     return {
         "minimize_clash": "1/3 Minimizing clashes",
@@ -264,6 +301,7 @@ def configure_solver(
     seed: int | None = None,
     *,
     prove_mode: bool = False,
+    prove_strategy: str = "core",
     absolute_gap: float | None = None,
 ) -> cp_model.CpSolver:
     """Configure CP-SAT.
@@ -272,9 +310,13 @@ def configure_solver(
     (``interleave_search``) so the same seed + workers yield the same trajectory
     absent wall-clock escapes.
 
-    prove_mode enables MaxSAT-core + stronger linearization aimed at dual-bound
-    closing on weighted Boolean objectives (clash phase). Portfolio race members
-    keep prove_mode=False for faster primal search.
+    prove_strategy (only when prove_mode=True):
+      - ``stock``: default OR-Tools 9.15 portfolio (no extra global flags)
+      - ``core``: ``optimize_with_core`` only (the live non-default knob)
+      - ``core_linear``: core + ``linearization_level=2`` (previous UniSlot default)
+
+    Do not set probing/symmetry/find_multiple_cores: those are already 9.15 defaults
+    and broadcasting them can collapse internal subsolver diversity.
     """
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = max(1, workers)
@@ -293,13 +335,15 @@ def configure_solver(
     if absolute_gap is not None and absolute_gap >= 0:
         solver.parameters.absolute_gap_limit = float(absolute_gap)
     if prove_mode:
-        # Weighted sum of Booleans → unsat-core LB stepping often beats weak LP.
-        solver.parameters.optimize_with_core = True
-        solver.parameters.find_multiple_cores = True
-        # Stronger LP cuts for reified same-day constraints (still keep portfolio).
-        solver.parameters.linearization_level = 2
-        solver.parameters.cp_model_probing_level = 2
-        solver.parameters.symmetry_level = 2
+        strategy = (prove_strategy or "core").strip().lower()
+        if strategy == "stock":
+            pass
+        elif strategy == "core_linear":
+            solver.parameters.optimize_with_core = True
+            solver.parameters.linearization_level = 2
+        else:
+            # "core" and unknown values: core only, keep the rest of the portfolio stock.
+            solver.parameters.optimize_with_core = True
     return solver
 
 
@@ -332,6 +376,7 @@ def solve_with_progress(
     seed: int | None = None,
     gap_trace: list[dict[str, Any]] | None = None,
     prove_mode: bool = False,
+    prove_strategy: str = "core",
     absolute_gap: float | None = None,
     prove_plateau_seconds: float | None = None,
 ) -> tuple[int, cp_model.CpSolver, ProgressCallback]:
@@ -343,6 +388,7 @@ def solve_with_progress(
             "workers": workers,
             "elapsed": round(time.time() - t0, 3),
             "prove_mode": prove_mode,
+            "prove_strategy": prove_strategy if prove_mode else None,
         }
     )
     solver = configure_solver(
@@ -350,6 +396,7 @@ def solve_with_progress(
         workers,
         seed=seed,
         prove_mode=prove_mode,
+        prove_strategy=prove_strategy,
         absolute_gap=absolute_gap if phase == "minimize_clash" else None,
     )
     plateau = prove_plateau_seconds if phase == "minimize_clash" else None
@@ -486,12 +533,16 @@ def solve_lex(
     absolute_gap: float | None = None,
     prove_plateau_seconds: float | None = None,
     full_prove: bool = False,
+    prove_strategy: str = "core",
 ) -> dict[str, Any]:
     t0 = time.time()
     remaining = time_limit
     proven_levels: list[str] = []
     last_status = cp_model.UNKNOWN
     slot_by_course: dict[str, int] = {}
+    timings: dict[str, float] = {}
+    clash_bound: int | None = None
+    clash_gap: int | None = None
     # Portfolio race (clash_only, no escapes): primal-first params.
     # Dedicated prove / clash-only with explicit escapes: dual-oriented params.
     escape_requested = (
@@ -526,6 +577,7 @@ def solve_lex(
 
     # Phase 1: minimize clash weight
     built.model.Minimize(built.clash_weight)
+    clash_t0 = time.time()
     last_status, solver, cb = solve_with_progress(
         built,
         "minimize_clash",
@@ -535,9 +587,11 @@ def solve_lex(
         seed=seed,
         gap_trace=gap_trace,
         prove_mode=clash_prove_mode,
+        prove_strategy=prove_strategy,
         absolute_gap=clash_abs_gap,
         prove_plateau_seconds=clash_plateau,
     )
+    timings["minimize_clash_seconds"] = round(time.time() - clash_t0, 4)
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return {
@@ -549,8 +603,11 @@ def solve_lex(
             "red_students": None,
             "weekday_balance_l1_scaled": None,
             "parallel_excess": None,
+            "clash_bound": solver_best_bound(solver),
+            "clash_gap": None,
             "solver_time_seconds": round(time.time() - t0, 4),
             "num_workers": workers,
+            "timings": timings,
             "message": solver.ResponseStats(),
         }
 
@@ -560,7 +617,12 @@ def solve_lex(
     bal_at_clash = int(solver.Value(built.balance_l1))
     excess_at_clash = int(solver.Value(built.parallel_excess))
     plateau_stopped = bool(cb.stopped_for_plateau)
-    if last_status == cp_model.OPTIMAL and not plateau_stopped:
+    clash_bound = solver_best_bound(solver)
+    if clash_bound is None:
+        clash_bound = cb.best_bound
+    clash_gap = None if clash_bound is None else int(clash_opt) - int(clash_bound)
+    # Certificate from integer gap, never from CP-SAT OPTIMAL alone (gap-limit false positive).
+    if (not plateau_stopped) and integer_gap_closed(clash_opt, clash_bound):
         proven_levels.append("clash_weight")
 
     if clash_only:
@@ -582,9 +644,12 @@ def solve_lex(
             "red_students": red_at_clash,
             "weekday_balance_l1_scaled": bal_at_clash,
             "parallel_excess": excess_at_clash,
+            "clash_bound": clash_bound,
+            "clash_gap": clash_gap,
             "solver_time_seconds": round(time.time() - t0, 4),
             "num_workers": workers,
             "stopped_for_plateau": plateau_stopped,
+            "timings": timings,
             "message": msg,
         }
 
@@ -593,6 +658,7 @@ def solve_lex(
     built.model.ClearObjective()
     built.model.Add(built.clash_weight == clash_opt)
     built.model.Minimize(built.red_students)
+    red_t0 = time.time()
     last_status, solver, cb = solve_with_progress(
         built,
         "minimize_red",
@@ -602,6 +668,7 @@ def solve_lex(
         seed=None if seed is None else seed + 1,
         gap_trace=gap_trace,
     )
+    timings["minimize_red_seconds"] = round(time.time() - red_t0, 4)
     consume(solver.WallTime())
     if last_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return {
@@ -613,14 +680,18 @@ def solve_lex(
             "red_students": cb.best_red if cb.best_red is not None else red_at_clash,
             "weekday_balance_l1_scaled": cb.best_balance,
             "parallel_excess": cb.best_excess,
+            "clash_bound": clash_bound,
+            "clash_gap": clash_gap,
             "solver_time_seconds": round(time.time() - t0, 4),
             "num_workers": workers,
+            "timings": timings,
             "message": "Phase-2 did not improve; returning clash-optimal incumbent.",
         }
 
     red_opt = int(solver.Value(built.red_students))
     slot_by_course = extract_assignment(built, solver)
-    if last_status == cp_model.OPTIMAL:
+    red_bound = solver_best_bound(solver)
+    if (last_status == cp_model.OPTIMAL) and integer_gap_closed(red_opt, red_bound):
         proven_levels.append("red_students")
 
     # Phase 3: balance + parallel soft
@@ -629,6 +700,7 @@ def solve_lex(
     built.model.Add(built.red_students == red_opt)
     soft = built.balance_l1 * (10**6) + built.parallel_excess
     built.model.Minimize(soft)
+    bal_t0 = time.time()
     last_status, solver, cb = solve_with_progress(
         built,
         "minimize_balance",
@@ -638,13 +710,17 @@ def solve_lex(
         seed=None if seed is None else seed + 2,
         gap_trace=gap_trace,
     )
+    timings["minimize_balance_seconds"] = round(time.time() - bal_t0, 4)
     consume(solver.WallTime())
 
     if last_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         slot_by_course = extract_assignment(built, solver)
         bal = int(solver.Value(built.balance_l1))
         excess = int(solver.Value(built.parallel_excess))
-        if last_status == cp_model.OPTIMAL:
+        soft_inc = int(bal) * (10**6) + int(excess)
+        if (last_status == cp_model.OPTIMAL) and integer_gap_closed(
+            soft_inc, solver_best_bound(solver)
+        ):
             proven_levels.append("balance_and_parallel")
         final_status = (
             "OPTIMAL"
@@ -693,9 +769,12 @@ def solve_lex(
         "red_students": red_opt,
         "weekday_balance_l1_scaled": bal,
         "parallel_excess": excess,
+        "clash_bound": clash_bound,
+        "clash_gap": clash_gap,
         "solver_time_seconds": round(time.time() - t0, 4),
         "num_workers": workers,
         "stopped_for_plateau": plateau_stopped,
+        "timings": timings,
         "message": message,
     }
 
@@ -749,6 +828,12 @@ def main() -> int:
         action="store_true",
         help="Disable plateau/gap escapes; chase full clash OPTIMAL certificate",
     )
+    parser.add_argument(
+        "--prove-strategy",
+        choices=("core", "stock", "core_linear"),
+        default="core",
+        help="Clash-prove CP-SAT portfolio: stock, core (default), or core+linearization=2",
+    )
     args = parser.parse_args()
 
     workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
@@ -770,11 +855,15 @@ def main() -> int:
             "absolute_gap": args.absolute_gap,
             "prove_plateau": args.prove_plateau,
             "full_prove": bool(args.prove),
+            "prove_strategy": args.prove_strategy,
             **tc,
         }
     )
     try:
+        build_t0 = time.time()
         built = build_model(instance)
+        model_build_seconds = round(time.time() - build_t0, 4)
+        stats = model_stats(built.model)
     except Exception as exc:  # noqa: BLE001 — surface to parent CLI
         err = {"status": "MODEL_INVALID", "error": str(exc), "proven_optimal": False}
         with open(args.output, "w", encoding="utf-8") as out:
@@ -782,7 +871,15 @@ def main() -> int:
         emit({"type": "error", "message": str(exc)})
         return 2
 
-    emit({"type": "model_ready", "elapsed": 0, "courses": len(built.course_codes)})
+    emit(
+        {
+            "type": "model_ready",
+            "elapsed": model_build_seconds,
+            "courses": len(built.course_codes),
+            "variables": stats["variables"],
+            "constraints": stats["constraints"],
+        }
+    )
     gap_samples: list[dict[str, Any]] | None = [] if args.gap_trace else None
     absolute_gap = None if args.prove else args.absolute_gap
     prove_plateau = None if args.prove else args.prove_plateau
@@ -797,6 +894,7 @@ def main() -> int:
             absolute_gap=absolute_gap,
             prove_plateau_seconds=prove_plateau,
             full_prove=bool(args.prove),
+            prove_strategy=args.prove_strategy,
         )
     except Exception as exc:  # noqa: BLE001 — always leave the parent CLI a readable file
         detail = traceback.format_exc()
@@ -811,6 +909,18 @@ def main() -> int:
             json.dump(err, out, indent=2)
         emit({"type": "error", "message": str(exc), "traceback": detail})
         return 3
+    result.setdefault("timings", {})
+    result["timings"]["model_build_seconds"] = model_build_seconds
+    result["model_stats"] = stats
+    emit(
+        {
+            "type": "profile",
+            "timings": result.get("timings"),
+            "model_stats": stats,
+            "clash_bound": result.get("clash_bound"),
+            "clash_gap": result.get("clash_gap"),
+        }
+    )
     if gap_samples is not None and args.gap_trace:
         analysis = analyze_gap_trace(gap_samples)
         result["gap_analysis"] = analysis
@@ -833,6 +943,8 @@ def main() -> int:
                     "red_students",
                     "proven_optimal",
                     "stopped_for_plateau",
+                    "clash_bound",
+                    "clash_gap",
                 )
             },
             **tc,
