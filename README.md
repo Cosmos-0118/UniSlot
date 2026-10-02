@@ -26,6 +26,12 @@ cleanup unless they conflict with a tracked path in the target branch; those
 collisions are shown before confirmation. `npm ci` replaces `node_modules` as
 part of the Node installation.
 
+To install and verify the current checkout while keeping local changes, use
+`npm run setup -- --skip-git`. Setup checks npm advisories before continuing to
+the solver installation. The committed `allowScripts` policy approves only the
+reviewed esbuild and fsevents versions; review their install scripts and refresh
+those approvals when upgrading them.
+
 For only the Python solver environment, use `npm run setup:cpsat`.
 
 ## First solve
