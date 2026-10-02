@@ -1767,6 +1767,7 @@ async function runSolve(opts: {
         cpsatProveStrategy: proveStrategy,
         allowSaturdayForMath,
         saturdayExtraCourseCodes,
+        sourceFileName: path.basename(inputPath),
         programNomenclatureXlsx,
         seed,
         eagerExports: true,

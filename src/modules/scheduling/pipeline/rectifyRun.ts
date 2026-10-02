@@ -31,6 +31,7 @@ import {
   deepCloneCourseSections,
   WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
+  SNAPSHOT_SCHEMA_VERSION,
 } from '../merge/snapshot'
 import type { RunLogEntry } from '../merge/runLog'
 import type { ClashProvenanceMap } from '../merge/clashProvenance'
@@ -526,6 +527,8 @@ export async function runRectifyPipeline(
   })
 
   const schedulingSnapshot: SchedulingSnapshot = {
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
+    ...(snapshot.source ? { source: { ...snapshot.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...slotAssignments },
     courseSections: deepCloneCourseSections(courseSections),

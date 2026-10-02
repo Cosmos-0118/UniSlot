@@ -17,8 +17,34 @@ export type LateEnrollmentRecord = {
   section_id?: string
 }
 
+/** Bump when snapshot.json gains data that older folders cannot have. Absent = version 1. */
+export const SNAPSHOT_SCHEMA_VERSION = 2
+
+/** The enrollment workbook a schedule was first created from. */
+export type SnapshotSource = {
+  file_name: string
+  /** SHA-256 (hex) of the file bytes; changes if the file is edited afterwards. */
+  sha256: string
+  bytes: number
+}
+
+/** Format version of a loaded snapshot; folders saved before versioning count as 1. */
+export function snapshotSchemaVersion(s: Pick<SchedulingSnapshot, 'schema_version'>): number {
+  return s.schema_version ?? 1
+}
+
+/** SHA-256 of the bytes as lowercase hex (Web Crypto: same in Node and browsers). */
+export async function sha256Hex(data: ArrayBuffer): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** Serializable state needed to attach late registrations without re-solving slots. */
 export type SchedulingSnapshot = {
+  /** Snapshot format version; absent on folders saved before versioning (treated as 1). */
+  schema_version?: number
+  /** Input workbook the schedule was first created from (absent on older folders). */
+  source?: SnapshotSource
   /** Absent on saved runs created before weekdays replaced intra-day time bands. */
   slot_model?: typeof WEEKDAY_SLOT_MODEL
   slot_assignments: Record<string, number>
@@ -78,6 +104,8 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     slotAssignments[sectionId] = legacy ? legacySlotToWeekday(slot) : slot
   }
   return {
+    ...(s.schema_version !== undefined ? { schema_version: s.schema_version } : {}),
+    ...(s.source ? { source: { ...s.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: slotAssignments,
     courseSections: deepCloneCourseSections(s.courseSections),

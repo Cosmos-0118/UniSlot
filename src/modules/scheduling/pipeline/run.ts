@@ -15,6 +15,8 @@ import {
   deepCloneCourseSections,
   WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
+  SNAPSHOT_SCHEMA_VERSION,
+  sha256Hex,
 } from '../merge/snapshot'
 import { throwIfAborted } from './cancellation'
 import {
@@ -106,6 +108,8 @@ export type RunPipelineOptions = {
    * Default true (Constraints.md Saturday maths-only).
    */
   allowSaturdayForMath?: boolean
+  /** Input file name, recorded in the snapshot together with the file's SHA-256. */
+  sourceFileName?: string
   /** Extra course codes independently allowed on Saturday. */
   saturdayExtraCourseCodes?: string[]
   /**
@@ -530,6 +534,16 @@ export async function runPipeline(
   })
 
   const schedulingSnapshot: SchedulingSnapshot = {
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
+    ...(options?.sourceFileName
+      ? {
+          source: {
+            file_name: options.sourceFileName,
+            sha256: await sha256Hex(arrayBuffer),
+            bytes: arrayBuffer.byteLength,
+          },
+        }
+      : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...slotAssignments },
     courseSections: deepCloneCourseSections(courseSections),

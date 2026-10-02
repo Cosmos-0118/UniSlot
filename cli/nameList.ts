@@ -49,7 +49,11 @@ export async function runNameList(opts: {
     spin.stop(spinOk(`${rows.length} rows written`))
     await outroSuccess([
       chalk.green('Done.') + chalk.dim(`  ${truncateMiddle(filePath, 64)}`),
-      chalk.dim('Same columns as the enrollment input. The schedule was not changed.'),
+      chalk.dim(
+        snapshot.source
+          ? `Schedule created from ${snapshot.source.file_name}. Same columns as that input; the schedule was not changed.`
+          : 'Same columns as the enrollment input. The schedule was not changed.',
+      ),
     ])
     return 0
   } catch (err) {

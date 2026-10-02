@@ -18,6 +18,7 @@ import {
   WEEKDAY_SLOT_MODEL,
   type LateEnrollmentRecord,
   type SchedulingSnapshot,
+  SNAPSHOT_SCHEMA_VERSION,
 } from '../merge/snapshot'
 import {
   assertFrozenInvariants,
@@ -743,6 +744,8 @@ export async function runLatePipeline(
   })
 
   const schedulingSnapshot: SchedulingSnapshot = {
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
+    ...(snapshot.source ? { source: { ...snapshot.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...workingSlots },
     courseSections: deepCloneCourseSections(workingSections),

@@ -15,6 +15,7 @@ import {
   sectionLanesFromEntries,
   WEEKDAY_SLOT_MODEL,
   type SchedulingSnapshot,
+  SNAPSHOT_SCHEMA_VERSION,
 } from '../merge/snapshot'
 import {
   appendRunLog,
@@ -511,6 +512,7 @@ export async function finishSnapshotRun(
 
   const schedulingSnapshot: SchedulingSnapshot = {
     ...cloneSchedulingSnapshot(working),
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...working.slot_assignments },
     courseSections: deepCloneCourseSections(working.courseSections),
