@@ -64,3 +64,19 @@ describe('Name List sheet (input format)', () => {
     expect(wb.getWorksheet(INPUT_SHEET_NAME)).toBeUndefined()
   })
 })
+
+describe('nameListToWorkbookBuffer', () => {
+  it('builds a single-sheet workbook that re-parses to the same rows', async () => {
+    const { nameListToWorkbookBuffer } = await import('../../src/modules/scheduling/io/excelInputSheet')
+    const { rows } = parseExcelRows([
+      HEADER,
+      [1, 'B.Tech-CSE', 'RA2111201010012', 'ASHA RAO', 8822929858, 'ar1@srmist.edu.in', '21CSC203P', 'Data Structures', 'Online Registered', 'Note'],
+    ])
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await nameListToWorkbookBuffer(rows))
+    expect(wb.worksheets.map((w) => w.name)).toEqual([INPUT_SHEET_NAME])
+    const aoa = wb.worksheets[0]!.getSheetValues().slice(1).map((r) => (r as unknown[]).slice(1))
+    expect(aoa[0]).toEqual(HEADER)
+    expect(parseExcelRows(aoa as unknown[][]).rows).toEqual(rows)
+  })
+})

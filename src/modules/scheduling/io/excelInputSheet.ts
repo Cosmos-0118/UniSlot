@@ -1,5 +1,6 @@
-import type ExcelJS from 'exceljs'
+import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
+import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
 import { safeCellString } from './excelLayout'
 
 export const INPUT_SHEET_NAME = 'Name List'
@@ -67,4 +68,21 @@ export function buildInputFormatSheet(wb: ExcelJS.Workbook, rows: EnrollmentRow[
 
   ws.columns = INPUT_COLUMN_WIDTHS.map((width) => ({ width }))
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: INPUT_HEADERS.length } }
+}
+
+/** Standalone workbook holding only the Name List sheet (for exporting from a saved output folder). */
+export async function nameListToWorkbookBuffer(
+  rows: EnrollmentRow[],
+  options?: ExportDeterminismOptions,
+): Promise<ArrayBuffer> {
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'UniSlot'
+  wb.created = workbookCreatedAt(options?.seed)
+  buildInputFormatSheet(wb, rows)
+  const buf: unknown = await wb.xlsx.writeBuffer()
+  if (buf instanceof ArrayBuffer) return buf
+  if (buf instanceof Uint8Array) {
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  }
+  throw new Error('Unexpected workbook buffer type')
 }

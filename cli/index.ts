@@ -59,6 +59,7 @@ import {
 } from '../src/modules/scheduling/pipeline/lateRun.ts'
 import { runSurgicalEdit } from './surgicalEdit.ts'
 import { runRevertEdit } from './revertEdit.ts'
+import { runNameList } from './nameList.ts'
 import {
   loadSchedulingSnapshot,
   type SchedulingSnapshot,
@@ -391,7 +392,7 @@ function formatRectifyResult(report: RectificationReport): string {
 }
 
 async function promptRunMode(): Promise<
-  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | 'revert' | null
+  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | 'revert' | 'name-list' | null
 > {
   const mode = await selectPrompt({
     message: 'What would you like to do?',
@@ -414,6 +415,11 @@ async function promptRunMode(): Promise<
         label: 'Undo a wrong delete or fix',
         hint: 'Deleted the wrong course? Restore it from an older output folder',
       },
+      {
+        value: 'name-list',
+        label: 'Export name list',
+        hint: 'Rebuild the input-format name list from any output folder',
+      },
       { value: 'filter', label: 'Filter schedule', hint: 'Export a focused schedule by course code' },
       { value: 'issues', label: 'Find enrollment issues', hint: 'Check the source file before scheduling' },
     ],
@@ -428,6 +434,7 @@ async function promptRunMode(): Promise<
     | 'fix-course'
     | 'drop-course'
     | 'revert'
+    | 'name-list'
 }
 
 const ISSUE_PANEL_LINE_CAP = 200
@@ -1919,7 +1926,8 @@ async function main(): Promise<void> {
     args[0] === 'issues' ||
     args[0] === 'fix-course' ||
     args[0] === 'drop-course' ||
-    args[0] === 'revert'
+    args[0] === 'revert' ||
+    args[0] === 'name-list'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -2345,6 +2353,21 @@ async function main(): Promise<void> {
         })
       },
     )
+
+  program
+    .command('name-list')
+    .description('Export the enrollment name list (input format) from a UniSlot output folder')
+    .option('--folder <dir>', 'UniSlot output folder containing snapshot.json')
+    .option('-o, --output <dir>', 'Where to write name-list.xlsx (default: the same folder)')
+    .option('-y, --yes', 'Non-interactive when --folder is provided', false)
+    .action(async (flags: { folder?: string; output?: string; yes?: boolean }) => {
+      process.exitCode = await runNameList({
+        folder: flags.folder,
+        output: flags.output,
+        skipPrompts: Boolean(flags.yes),
+        interactive: !flags.yes && !flags.folder,
+      })
+    })
 
   program
     .command('issues')
