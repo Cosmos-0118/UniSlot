@@ -411,8 +411,8 @@ async function promptRunMode(): Promise<
       },
       {
         value: 'revert',
-        label: 'Undo a removal / fix',
-        hint: 'Compare two output folders and restore the changes you pick',
+        label: 'Undo a wrong delete or fix',
+        hint: 'Deleted the wrong course? Restore it from an older output folder',
       },
       { value: 'filter', label: 'Filter schedule', hint: 'Export a focused schedule by course code' },
       { value: 'issues', label: 'Find enrollment issues', hint: 'Check the source file before scheduling' },
@@ -2307,10 +2307,10 @@ async function main(): Promise<void> {
   program
     .command('revert')
     .description(
-      'Undo surgical edits: compare the previous and edited output folders and restore chosen changes',
+      'Undo a wrong delete/fix: compare the output with the mistake against an older one and restore chosen changes',
     )
-    .option('--edited <dir>', 'Output folder that contains the wrong change (snapshot.json)')
-    .option('--previous <dir>', 'Output folder from before the wrong change (snapshot.json)')
+    .option('--edited <dir>', 'Output folder WITH the mistake (after the wrong delete/fix)')
+    .option('--previous <dir>', 'Output folder from BEFORE the mistake (still has the course)')
     .option('-o, --output <dir>', 'NEW output directory (default: ./unislot-out-revert)')
     .option('--register <ids>', 'Revert changes for these register numbers (comma-separated)')
     .option('--course <codes>', 'Revert changes touching these course codes (comma-separated)')

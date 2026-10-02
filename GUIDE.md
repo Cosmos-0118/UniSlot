@@ -296,11 +296,11 @@ Surgical outputs rewrite `schedule.xlsx`, `clash-report.xlsx`, `course-emails.xl
 
 ### Undoing a wrong removal or fix (`revert`)
 
-Dropped or fixed the wrong student/course? Pick **Undo a removal / fix** from the menu (or run `revert`). You give it two output folders and UniSlot shows exactly what differs:
+Dropped or fixed the wrong student/course? Pick **Undo a wrong delete or fix** from the menu (or run `revert`). You pick three folders and UniSlot shows exactly what differs:
 
-1. The **edited** folder — the one where the wrong change happened.  
-2. The **previous** folder — the output from before it (UniSlot suggests it from the run log).  
-3. A **new** output folder for the restored files. It can never be the previous or edited folder, so both stay untouched.
+1. **The folder with the mistake** — the output that is missing the course (the result of the wrong delete or fix). CLI: `--edited`.  
+2. **The folder from before the mistake** — an older output that still has the course; UniSlot restores from it (it suggests it when the run log knows). CLI: `--previous`.  
+3. **A new folder to save the fixed schedule into.** It can never be either of the first two, so both stay untouched.
 
 Every differing registration is listed as *removed*, *added* or *moved* (a `fix-course` shows as one move), grouped under the student. Additions that came from a late batch are tagged `late · batch N`. The list is a live filter: type a register number or course code (several, comma-separated) and it narrows as you type — with more than 30 changes that is the first thing you do. `↑↓` move, `space` ticks a change, `ctrl+a` ticks everything shown, `Enter` restores. If you filter and press `Enter` without ticking anything, every match shown is restored; a confirmation screen lists exactly what will happen before anything is written.
 

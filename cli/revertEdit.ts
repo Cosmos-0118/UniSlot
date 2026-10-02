@@ -14,7 +14,7 @@ import {
   restoreCliTerminal,
   showPanel,
 } from './ui.ts'
-import { glyphs, joinCapped, spinOk, spinWarn, truncateMiddle } from './theme.ts'
+import { glyphs, joinCapped, spinOk, spinWarn, truncateMiddle, wrapAnsi } from './theme.ts'
 import { checklistPrompt, type ChecklistItem } from './checklistPrompt.ts'
 import { writeSnapshotExports } from './surgicalEdit.ts'
 import { loadSchedulingSnapshot, type SchedulingSnapshot } from '../src/modules/scheduling/merge/snapshot.ts'
@@ -36,7 +36,7 @@ async function requireSnapshot(dir: string, role: string): Promise<SchedulingSna
   try {
     await access(path.join(dir, 'snapshot.json'))
   } catch {
-    throw new Error(`The ${role} folder must contain snapshot.json: ${dir}`)
+    throw new Error(`The ${role} folder must contain snapshot.json (pick a UniSlot output folder): ${dir}`)
   }
   return loadSchedulingSnapshot(dir)
 }
@@ -155,8 +155,14 @@ function folderLabel(dir: string): string {
   return `${chalk.bold(name)}  ${chalk.dim(truncateMiddle(parent, 48))}`
 }
 
+/** Wrap prose to the terminal so Clack's left gutter never gets overrun. */
+function wrapDim(text: string): string {
+  const width = Math.max(30, (process.stdout.columns || 80) - 6)
+  return wrapAnsi(text, width).map((line) => chalk.dim(line)).join('\n')
+}
+
 function step(n: number, title: string, hint: string): void {
-  p.log.step(`${chalk.bold(`Step ${n} of 3`)} ${chalk.dim('·')} ${chalk.bold(title)}\n${chalk.dim(hint)}`)
+  p.log.step(`${chalk.bold(`Step ${n} of 3`)} ${chalk.dim('·')} ${chalk.bold(title)}\n${wrapDim(hint)}`)
 }
 
 function reportPanel(result: RevertPipelineResult, outDir: string): void {
@@ -206,39 +212,36 @@ export async function runRevertEdit(opts: {
   let outDir = opts.output
 
   if (session) {
-    showPanel(
-      'Undo a removal / fix',
-      [
-        'Compare two output folders, then pick which changes to take back.',
-        '',
-        `${chalk.dim('Nothing is overwritten:')} the restored schedule goes into a new folder,`,
-        `${chalk.dim('and both folders you pick stay exactly as they are.')}`,
-      ].join('\n'),
+    p.log.message(
+      wrapDim(
+        'Compare the output with the mistake against an older one, then choose what to take back. ' +
+          'Nothing is overwritten — the fixed schedule goes into a new folder.',
+      ),
     )
   }
 
   if (!editedDir && session) {
-    step(1, 'Edited folder', 'The output folder where the wrong change happened.')
-    editedDir = (await pickOutputFolder('Choose the EDITED UniSlot output folder (contains snapshot.json)')) ?? undefined
+    step(1, 'The folder with the mistake', 'The output missing the course (made by the wrong delete/fix).')
+    editedDir = (await pickOutputFolder('Step 1: choose the folder WITH the mistake (the output after the wrong delete/fix)')) ?? undefined
     restoreCliTerminal()
     if (editedDir) p.log.success(folderLabel(editedDir))
     else p.log.warn('Cancelled')
   }
   if (!editedDir) {
-    p.log.error('--edited <dir> is required (the output folder that contains the wrong change).')
+    p.log.error('--edited <dir> is required: the output folder with the mistake (after the wrong delete or fix).')
     return 1
   }
 
   let edited: SchedulingSnapshot
   try {
-    edited = await requireSnapshot(editedDir, 'edited')
+    edited = await requireSnapshot(editedDir, 'mistake')
   } catch (err) {
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }
 
   if (!previousDir && session) {
-    step(2, 'Previous folder', 'The output from before the wrong change — the one to restore from.')
+    step(2, 'The folder from before the mistake', 'An older output that still has the course — UniSlot restores from it.')
     // The edited run log remembers which folder it was built from.
     const lastEntry = [...(edited.run_log ?? [])].sort((a, b) => b.seq - a.seq)[0]
     const suggested = lastEntry?.inputs.previous_dir
@@ -247,9 +250,9 @@ export async function runRevertEdit(opts: {
       path.resolve(suggested) !== path.resolve(editedDir) &&
       (await folderExists(suggested))
     ) {
-      p.log.info(`${chalk.dim('The run log says it was built from')}  ${folderLabel(suggested)}`)
+      p.log.info(`${chalk.dim('The folder with the mistake was built from')}  ${folderLabel(suggested)}`)
       restoreCliTerminal({ prepareForPrompt: true })
-      const use = await p.confirm({ message: 'Use that folder as the previous one?', initialValue: true })
+      const use = await p.confirm({ message: 'Is that the folder from before the mistake?', initialValue: true })
       if (p.isCancel(use)) {
         p.cancel('Cancelled')
         return 1
@@ -257,20 +260,20 @@ export async function runRevertEdit(opts: {
       if (use) previousDir = suggested
     }
     if (!previousDir) {
-      previousDir = (await pickOutputFolder('Choose the PREVIOUS UniSlot output folder (contains snapshot.json)')) ?? undefined
+      previousDir = (await pickOutputFolder('Step 2: choose the folder from BEFORE the mistake (still has the course)')) ?? undefined
       restoreCliTerminal()
     }
     if (previousDir) p.log.success(folderLabel(previousDir))
     else p.log.warn('Cancelled')
   }
   if (!previousDir) {
-    p.log.error('--previous <dir> is required (the output folder from before the wrong change).')
+    p.log.error('--previous <dir> is required: the output folder from before the mistake.')
     return 1
   }
 
   if (!outDir && session) {
-    step(3, 'New output folder', 'Where the restored schedule and exports will be written. Pick an empty or new folder.')
-    outDir = (await pickOutputFolder('Choose a NEW folder for the restored exports')) ?? undefined
+    step(3, 'Where to save the fixed schedule', 'A new or empty folder. Your other two folders are never changed.')
+    outDir = (await pickOutputFolder('Step 3: choose a NEW folder to save the fixed schedule into')) ?? undefined
     restoreCliTerminal()
     if (outDir) p.log.success(folderLabel(outDir))
     else p.log.warn(`Cancelled — using ${chalk.bold('./unislot-out-revert')}`)
@@ -283,17 +286,17 @@ export async function runRevertEdit(opts: {
     out: path.resolve(outDir),
   }
   if (resolved.edited === resolved.previous) {
-    p.log.error('Previous and edited are the same folder — pick two different output folders.')
+    p.log.error('You picked the same folder twice. Pick the folder with the mistake and the folder from before it.')
     return 1
   }
   if (resolved.out === resolved.edited || resolved.out === resolved.previous) {
-    p.log.error('The output folder must be new — never the previous or edited folder (they stay untouched).')
+    p.log.error('The save folder must be a new one — not either of the two you compared (they stay untouched).')
     return 1
   }
 
   let previous: SchedulingSnapshot
   try {
-    previous = await requireSnapshot(previousDir, 'previous')
+    previous = await requireSnapshot(previousDir, 'before-the-mistake')
   } catch (err) {
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
@@ -306,13 +309,13 @@ export async function runRevertEdit(opts: {
   }
 
   if (session) {
-    const label = (name: string) => chalk.dim(name.padEnd(12))
+    const label = (name: string) => chalk.dim(name.padEnd(15))
     showPanel(
       'Comparing',
       [
-        `${label('Edited')}${folderLabel(editedDir)}`,
-        `${label('Previous')}${folderLabel(previousDir)}`,
-        `${label('Restore to')}${folderLabel(outDir)}`,
+        `${label('With mistake')}${folderLabel(editedDir)}`,
+        `${label('Before it')}${folderLabel(previousDir)}`,
+        `${label('Save to')}${folderLabel(outDir)}`,
         '',
         `${chalk.bold(String(diff.changes.length))} change${diff.changes.length === 1 ? '' : 's'} across ` +
           `${chalk.bold(String(studentCount(diff.changes)))} student${studentCount(diff.changes) === 1 ? '' : 's'}`,
@@ -443,7 +446,7 @@ export async function runRevertEdit(opts: {
   reportPanel(result, outDir)
   await outroSuccess([
     chalk.green('Done.') + chalk.dim('  Open schedule.xlsx in the new folder to check the result.'),
-    chalk.dim(`Untouched: ${truncateMiddle(previousDir, 40)} · ${truncateMiddle(editedDir, 40)}`),
+    chalk.dim(`Your other folders were not changed (${truncateMiddle(editedDir, 36)} · ${truncateMiddle(previousDir, 36)})`),
   ])
   return 0
 }

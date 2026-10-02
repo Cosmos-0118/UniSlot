@@ -104,12 +104,12 @@ export function diffSnapshots(previous: SchedulingSnapshot, edited: SchedulingSn
     if (missing) {
       errors.push(
         maxSeq(edited) < maxSeq(previous)
-          ? 'These folders look swapped: the "previous" folder has newer runs than the "edited" one.'
+          ? 'These folders look swapped: the "before the mistake" folder is newer than the "with the mistake" one.'
           : 'These folders are not from the same schedule (the run history does not line up).',
       )
     }
   } else {
-    warnings.push('The previous folder has no run history, so folder order could not be verified.')
+    warnings.push('The "before the mistake" folder has no run history, so the folder order could not be verified.')
   }
 
   const before = registrationKeys(previous)
@@ -181,8 +181,8 @@ export function diffSnapshots(previous: SchedulingSnapshot, edited: SchedulingSn
 
   if (errors.length === 0 && changes.length === 0) {
     errors.push(
-      'No differences found between the two folders. If you already restored over the original, ' +
-        'recover the old folder from Time Machine (or a backup) and pick it as "previous".',
+      'No differences found: the two folders hold the same registrations. If the older output was ' +
+        'overwritten, recover it from Time Machine (or a backup) and pick that as the "before the mistake" folder.',
     )
   }
 
@@ -255,9 +255,9 @@ function restoreRegistration(
 ): string | null {
   const prevRow = prev.enrollmentRows.find((r) => r.register_number === register && r.course_code === course)
   const prevStudent = prev.students[register]
-  if (!prevRow || !prevStudent) return 'not present in the previous folder'
+  if (!prevRow || !prevStudent) return 'not present in the folder from before the mistake'
   if (snap.enrollmentRows.some((r) => r.register_number === register && r.course_code === course)) {
-    return 'already registered in the edited folder'
+    return 'already registered in the folder with the mistake'
   }
 
   // Enrollment row — back at its original position.
@@ -292,7 +292,7 @@ function restoreRegistration(
   // Course sections — recreate the pruned course on its original weekday.
   const prevSections = prev.courseSections[course] ?? []
   if (!snap.courseSections[course]?.length) {
-    if (!prevSections.length) return 'course is missing from the previous folder'
+    if (!prevSections.length) return 'course is missing from the folder from before the mistake'
     snap.courseSections[course] = prevSections.map((s) => ({
       ...s,
       enrolled_students: [],
