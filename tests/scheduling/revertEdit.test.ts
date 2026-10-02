@@ -192,6 +192,32 @@ describe('diffSnapshots', () => {
   })
 })
 
+describe('late-enrollment tagging', () => {
+  it('tags added registrations that came from a late batch and warns about the extra run', () => {
+    const prev = baseline()
+    const edited = cloneSchedulingSnapshot(prev)
+    edited.enrollmentRows.push(
+      row({ register_number: 'RA002', course_code: '21CSE101T', course_title: 'Programming' }),
+    )
+    edited.students.RA002!.enrolled_courses.push('21CSE101T')
+    edited.courseSections['21CSE101T']![0]!.enrolled_students.push('RA002')
+    edited.late_enrollments = [{ register_number: 'RA002', course_code: '21CSE101T', batch: 2 }]
+    edited.run_log = [
+      ...prev.run_log!,
+      { ...logEntry(2, 'solve'), mode: 'late' as never },
+    ]
+
+    const diff = diffSnapshots(prev, edited)
+    expect(diff.changes).toHaveLength(1)
+    expect(diff.changes[0]).toMatchObject({ kind: 'added', lateBatch: 2 })
+    expect(diff.warnings.join(' ')).toMatch(/late ×1/)
+
+    const out = applyReverts(edited, prev, diff.changes)
+    expect(out.snapshot.late_enrollments ?? []).toEqual([])
+    expect(core(out.snapshot)).toEqual(core(prev))
+  })
+})
+
 describe('filterChanges / parseSearchTerms', () => {
   it('matches register numbers and course codes case-insensitively', () => {
     const prev = baseline()

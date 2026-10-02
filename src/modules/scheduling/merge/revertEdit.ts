@@ -25,6 +25,8 @@ export type RevertChange = {
   /** Course the student gained (added, or the "to" side of a move). */
   addedCourse?: string
   addedTitle?: string
+  /** Set when the added registration came from a late-enrollment batch. */
+  lateBatch?: number
   label: string
 }
 
@@ -151,14 +153,24 @@ export function diffSnapshots(previous: SchedulingSnapshot, edited: SchedulingSn
       droppedTitle: titleFor(previous, course),
     })
   }
+  const priorLate = new Set(
+    (previous.late_enrollments ?? []).map((r) => key(r.register_number, r.course_code)),
+  )
+  const lateBatchOf = (register: string, course: string): number | undefined =>
+    priorLate.has(key(register, course))
+      ? undefined
+      : edited.late_enrollments?.find((r) => r.register_number === register && r.course_code === course)
+          ?.batch
   for (const k of added) {
     const [register, course] = split(k)
+    const lateBatch = lateBatchOf(register, course)
     finish({
       kind: 'added',
       register,
       studentName: nameFor(register, edited, previous),
       addedCourse: course,
       addedTitle: titleFor(edited, course),
+      ...(lateBatch !== undefined ? { lateBatch } : {}),
     })
   }
   changes.sort(
@@ -179,9 +191,14 @@ export function diffSnapshots(previous: SchedulingSnapshot, edited: SchedulingSn
     (e) => e.seq > base && e.mode !== 'fix-course' && e.mode !== 'drop-course',
   )
   if (foreign.length > 0) {
+    const counts = new Map<string, number>()
+    for (const e of foreign) counts.set(e.mode, (counts.get(e.mode) ?? 0) + 1)
+    const ran = [...counts].map(([mode, n]) => `${mode} ×${n}`).join(', ')
     warnings.push(
-      `The edited folder also went through ${[...new Set(foreign.map((e) => e.mode))].join('/')} ` +
-        'run(s). Only surgical fix/drop edits are reverted cleanly; check the result.',
+      `These folders are ${foreign.length === 1 ? 'one run' : `${foreign.length} runs`} apart, ` +
+        `and not just removals or fixes (${ran}). ` +
+        'Their registrations show up below; ones from late batches are tagged. ' +
+        'Leave anything you did not mean to undo unticked.',
     )
   }
   const slotMoved = Object.keys(edited.slot_assignments).filter(

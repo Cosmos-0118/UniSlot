@@ -12,17 +12,15 @@ import {
   noteSkippedPrompts,
   outroSuccess,
   restoreCliTerminal,
-  selectPrompt,
   showPanel,
-  textPrompt,
 } from './ui.ts'
-import { joinCapped, spinOk, spinWarn, truncateMiddle } from './theme.ts'
+import { glyphs, joinCapped, spinOk, spinWarn, truncateMiddle } from './theme.ts'
+import { checklistPrompt, type ChecklistItem } from './checklistPrompt.ts'
 import { writeSnapshotExports } from './surgicalEdit.ts'
 import { loadSchedulingSnapshot, type SchedulingSnapshot } from '../src/modules/scheduling/merge/snapshot.ts'
 import {
   diffSnapshots,
   filterChanges,
-  parseSearchTerms,
   type RevertChange,
 } from '../src/modules/scheduling/merge/revertEdit.ts'
 import {
@@ -33,10 +31,6 @@ import {
 /** Above this many changes we ask which students / courses are affected instead of listing all. */
 export const FULL_LIST_MAX = 30
 
-const ACTION_RESTORE = '__restore__'
-const ACTION_SEARCH = '__search__'
-const ACTION_CANCEL = '__cancel__'
-const TOGGLE = 'toggle:'
 
 async function requireSnapshot(dir: string, role: string): Promise<SchedulingSnapshot> {
   try {
@@ -67,151 +61,129 @@ function describeChange(c: RevertChange): string {
     case 'dropped':
       return `${who} · removed from ${title(c.droppedCourse, c.droppedTitle)}`
     default:
-      return `${who} · added to ${title(c.addedCourse, c.addedTitle)}`
+      return `${who} · added to ${title(c.addedCourse, c.addedTitle)}` +
+        (c.lateBatch !== undefined ? ` (late batch ${c.lateBatch})` : '')
   }
 }
 
-function summarize(changes: RevertChange[]): string {
+function countsLine(changes: RevertChange[]): string {
   const n = (kind: RevertChange['kind']) => changes.filter((c) => c.kind === kind).length
-  const students = new Set(changes.map((c) => c.register)).size
-  return (
-    `${changes.length} change(s) across ${students} student(s): ` +
-    `${n('dropped')} removed · ${n('moved')} moved · ${n('added')} added`
-  )
+  const late = changes.filter((c) => c.kind === 'added' && c.lateBatch !== undefined).length
+  const parts = [
+    chalk.hex('#F87171')(`${n('dropped')} removed`),
+    chalk.hex('#FBBF24')(`${n('moved')} moved`),
+    chalk.hex('#4ADE80')(`${n('added')} added`) + (late ? chalk.hex('#A78BFA')(` (${late} late)`) : ''),
+  ]
+  return parts.join(chalk.dim('  ·  '))
 }
 
-async function askSearchTerms(total: number): Promise<string[] | 'cancelled'> {
-  restoreCliTerminal({ prepareForPrompt: true })
-  const answer = await textPrompt({
-    message:
-      `${total} changes found. Which students or courses were affected? ` +
-      '(register numbers or course codes, comma-separated)',
-    placeholder: 'e.g. RA2111003010001, 21CSE101T',
-    validate: (value) =>
-      parseSearchTerms(String(value ?? '')).length === 0
-        ? 'Enter at least one register number or course code.'
-        : undefined,
-  })
-  if (p.isCancel(answer)) return 'cancelled'
-  return parseSearchTerms(String(answer ?? ''))
+function studentCount(changes: RevertChange[]): number {
+  return new Set(changes.map((c) => c.register)).size
 }
 
-/**
- * Checklist built on the house select picker: pick a row to tick/untick it, then choose
- * "Restore". Returns the ticked changes, or null if the user backs out.
- */
-async function checklist(
-  pool: RevertChange[],
-  checked: Set<string>,
-  onSearch: () => Promise<RevertChange[] | 'cancelled'>,
-): Promise<RevertChange[] | null> {
-  let cursor: string = ACTION_RESTORE
-  while (true) {
-    const options = [
-      {
-        value: ACTION_RESTORE,
-        label: `Restore ${checked.size} selected change(s)`,
-        hint: checked.size === 0 ? 'tick at least one below first' : 'Enter to continue',
-      },
-      { value: ACTION_SEARCH, label: 'Search another student / course…' },
-      { value: ACTION_CANCEL, label: 'Cancel' },
-      ...pool.map((c) => ({
-        value: `${TOGGLE}${c.id}`,
-        label: `${checked.has(c.id) ? '[x]' : '[ ]'} ${describeChange(c)}`,
-      })),
-    ]
-    restoreCliTerminal({ prepareForPrompt: true })
-    const picked = await selectPrompt({
-      message: `Enter ticks / unticks a change — ${pool.length} listed`,
-      options,
-      initialValue: cursor,
-      withGuide: true,
-    })
-    if (p.isCancel(picked)) return null
-    const value = String(picked)
-    cursor = value
-    if (value === ACTION_CANCEL) return null
-    if (value === ACTION_SEARCH) {
-      const more = await onSearch()
-      if (more === 'cancelled') continue
-      const known = new Set(pool.map((c) => c.id))
-      for (const c of more) {
-        if (!known.has(c.id)) pool.push(c)
-        checked.add(c.id)
-      }
-      continue
+function summarize(changes: RevertChange[]): string {
+  return `${changes.length} change(s) across ${studentCount(changes)} student(s): ` +
+    `${changes.filter((c) => c.kind === 'dropped').length} removed · ` +
+    `${changes.filter((c) => c.kind === 'moved').length} moved · ` +
+    `${changes.filter((c) => c.kind === 'added').length} added`
+}
+
+function toChecklistItem(c: RevertChange): ChecklistItem {
+  const course = (code?: string, title?: string) => (title ? `${code}  ${title}` : String(code))
+  const base = {
+    value: c.id,
+    group: c.register,
+    groupLabel: c.studentName ? `${c.register}  ${chalk.dim(c.studentName)}` : c.register,
+    search: [c.register, c.studentName, c.droppedCourse, c.addedCourse, c.droppedTitle, c.addedTitle]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase(),
+  }
+  if (c.kind === 'dropped') {
+    return {
+      ...base,
+      badge: { text: 'removed', tone: 'bad' },
+      label: course(c.droppedCourse, c.droppedTitle),
+      detail:
+        `Puts ${c.register} back into ${c.droppedCourse}, in the same section as before. ` +
+        'If the course was deleted when it emptied, it returns on its original weekday.',
     }
-    if (value === ACTION_RESTORE) {
-      if (checked.size === 0) {
-        p.log.warn('Tick at least one change first.')
-        continue
-      }
-      return pool.filter((c) => checked.has(c.id))
+  }
+  if (c.kind === 'moved') {
+    return {
+      ...base,
+      badge: { text: 'moved', tone: 'warn' },
+      label: `${c.droppedCourse} → ${c.addedCourse}  ${c.addedTitle ?? ''}`.trim(),
+      detail: `Undoes the fix: ${c.register} goes back to ${c.droppedCourse} and is taken off ${c.addedCourse}.`,
     }
-    const id = value.slice(TOGGLE.length)
-    if (checked.has(id)) checked.delete(id)
-    else checked.add(id)
+  }
+  const late = c.lateBatch !== undefined
+  return {
+    ...base,
+    badge: { text: 'added', tone: 'ok' },
+    label: course(c.addedCourse, c.addedTitle),
+    tag: late ? `late · batch ${c.lateBatch}` : undefined,
+    detail: late
+      ? `Came in with late batch ${c.lateBatch}. Ticking this takes ${c.register} off ${c.addedCourse} again — only do that if the late add was a mistake.`
+      : `Takes ${c.register} off ${c.addedCourse} again.`,
   }
 }
 
 async function chooseChangesInteractively(all: RevertChange[]): Promise<RevertChange[] | null> {
-  p.log.info(summarize(all))
-
-  // Small diff: list everything, nothing pre-ticked.
-  if (all.length <= FULL_LIST_MAX) {
-    const search = async (): Promise<RevertChange[] | 'cancelled'> => {
-      const terms = await askSearchTerms(all.length)
-      return terms === 'cancelled' ? 'cancelled' : filterChanges(all, terms)
-    }
-    return checklist([...all], new Set(), search)
+  const big = all.length > FULL_LIST_MAX
+  restoreCliTerminal({ prepareForPrompt: true })
+  const picked = await checklistPrompt({
+    title: 'Choose the changes to undo',
+    subtitle: big
+      ? `${all.length} changes — type a register number or course code to narrow them down.`
+      : 'Space ticks a change. Anything you leave unticked stays exactly as it is.',
+    placeholder: big ? 'e.g. RA2111003010001, 21CSE101T' : 'type to filter by student or course…',
+    items: all.map(toChecklistItem),
+  })
+  if (typeof picked === 'symbol') return null
+  if (picked.length === 0) {
+    p.log.warn('Nothing was ticked — nothing to restore.')
+    return null
   }
-
-  // Large diff: the user names the affected students / courses first.
-  const pool: RevertChange[] = []
-  const checked = new Set<string>()
-  const search = async (): Promise<RevertChange[] | 'cancelled'> => {
-    while (true) {
-      const terms = await askSearchTerms(all.length)
-      if (terms === 'cancelled') return 'cancelled'
-      const matches = filterChanges(all, terms)
-      if (matches.length === 0) {
-        p.log.warn(`No changes match ${joinCapped(terms, 6)}. Try a register number or course code.`)
-        continue
-      }
-      if (matches.length > FULL_LIST_MAX) {
-        p.log.warn(`${matches.length} changes match — narrow it down (at most ${FULL_LIST_MAX}).`)
-        continue
-      }
-      p.log.success(`${matches.length} matching change(s) found.`)
-      return matches
-    }
-  }
-  const first = await search()
-  if (first === 'cancelled') return null
-  for (const c of first) {
-    pool.push(c)
-    checked.add(c.id)
-  }
-  return checklist(pool, checked, search)
+  const chosen = new Set(picked)
+  return all.filter((c) => chosen.has(c.id))
 }
 
-function reportPanel(result: RevertPipelineResult): void {
+function folderLabel(dir: string): string {
+  const name = path.basename(dir)
+  const parent = path.dirname(dir)
+  return `${chalk.bold(name)}  ${chalk.dim(truncateMiddle(parent, 48))}`
+}
+
+function step(n: number, title: string, hint: string): void {
+  p.log.step(`${chalk.bold(`Step ${n} of 3`)} ${chalk.dim('·')} ${chalk.bold(title)}\n${chalk.dim(hint)}`)
+}
+
+function reportPanel(result: RevertPipelineResult, outDir: string): void {
   const r = result.revertReport
   if (!r) return
+  const ok = chalk.hex('#4ADE80')
   const lines = [
-    chalk.bold(`Restored ${r.applied.length} change(s)`),
-    ...r.applied.slice(0, 15).map((c) => `  ${chalk.cyan('✓')} ${describeChange(c)}`),
+    ...r.applied.slice(0, 12).map((c) => `${ok(glyphs.check)} ${describeChange(c)}`),
   ]
-  if (r.applied.length > 15) lines.push(chalk.dim(`  … +${r.applied.length - 15} more`))
+  if (r.applied.length > 12) lines.push(chalk.dim(`  … +${r.applied.length - 12} more (see revert-report.json)`))
+  for (const s of r.skipped) lines.push(chalk.yellow(`! skipped ${s.change.label} — ${s.reason}`))
+  lines.push('')
   if (r.recreated_courses.length) {
-    lines.push(`  courses brought back on their original weekday: ${joinCapped(r.recreated_courses, 12)}`)
+    lines.push(`${chalk.dim('Courses brought back'.padEnd(20))}${joinCapped(r.recreated_courses, 8)} ${chalk.dim('(original weekday)')}`)
   }
   if (r.pruned_courses.length) {
-    lines.push(`  courses removed (now empty): ${joinCapped(r.pruned_courses, 12)}`)
+    lines.push(`${chalk.dim('Courses now empty'.padEnd(20))}${joinCapped(r.pruned_courses, 8)} ${chalk.dim('(removed)')}`)
   }
-  for (const s of r.skipped) lines.push(chalk.yellow(`  ! skipped ${s.change.label} — ${s.reason}`))
-  lines.push(`  RED ${r.red_before} → ${r.red_after}`, '', chalk.dim("Other students' days and sections were not changed."))
-  showPanel('Undo changes', lines.join('\n'))
+  const delta = r.red_after - r.red_before
+  const redText = `${r.red_before} → ${r.red_after}`
+  lines.push(
+    `${chalk.dim('Clashing students'.padEnd(20))}${delta > 0 ? chalk.yellow(redText) : delta < 0 ? ok(redText) : redText}`,
+    `${chalk.dim('Saved to'.padEnd(20))}${truncateMiddle(outDir, 56)}`,
+    '',
+    chalk.dim("Other students' sections and weekdays were not touched."),
+  )
+  showPanel(`Restored ${r.applied.length} change${r.applied.length === 1 ? '' : 's'}`, lines.join('\n'))
 }
 
 export async function runRevertEdit(opts: {
@@ -233,11 +205,23 @@ export async function runRevertEdit(opts: {
   let previousDir = opts.previous
   let outDir = opts.output
 
+  if (session) {
+    showPanel(
+      'Undo a removal / fix',
+      [
+        'Compare two output folders, then pick which changes to take back.',
+        '',
+        `${chalk.dim('Nothing is overwritten:')} the restored schedule goes into a new folder,`,
+        `${chalk.dim('and both folders you pick stay exactly as they are.')}`,
+      ].join('\n'),
+    )
+  }
+
   if (!editedDir && session) {
-    p.log.info('1/3  Pick the EDITED output folder (the one where the wrong change happened)…')
+    step(1, 'Edited folder', 'The output folder where the wrong change happened.')
     editedDir = (await pickOutputFolder('Choose the EDITED UniSlot output folder (contains snapshot.json)')) ?? undefined
     restoreCliTerminal()
-    if (editedDir) p.log.success(path.basename(editedDir))
+    if (editedDir) p.log.success(folderLabel(editedDir))
     else p.log.warn('Cancelled')
   }
   if (!editedDir) {
@@ -254,6 +238,7 @@ export async function runRevertEdit(opts: {
   }
 
   if (!previousDir && session) {
+    step(2, 'Previous folder', 'The output from before the wrong change — the one to restore from.')
     // The edited run log remembers which folder it was built from.
     const lastEntry = [...(edited.run_log ?? [])].sort((a, b) => b.seq - a.seq)[0]
     const suggested = lastEntry?.inputs.previous_dir
@@ -262,23 +247,20 @@ export async function runRevertEdit(opts: {
       path.resolve(suggested) !== path.resolve(editedDir) &&
       (await folderExists(suggested))
     ) {
+      p.log.info(`${chalk.dim('The run log says it was built from')}  ${folderLabel(suggested)}`)
       restoreCliTerminal({ prepareForPrompt: true })
-      const use = await p.confirm({
-        message: `Use ${truncateMiddle(suggested, 60)} as the PREVIOUS folder (before the change)?`,
-        initialValue: true,
-      })
+      const use = await p.confirm({ message: 'Use that folder as the previous one?', initialValue: true })
       if (p.isCancel(use)) {
         p.cancel('Cancelled')
         return 1
       }
       if (use) previousDir = suggested
     }
-  }
-  if (!previousDir && session) {
-    p.log.info('2/3  Pick the PREVIOUS output folder (before the wrong change)…')
-    previousDir = (await pickOutputFolder('Choose the PREVIOUS UniSlot output folder (contains snapshot.json)')) ?? undefined
-    restoreCliTerminal()
-    if (previousDir) p.log.success(path.basename(previousDir))
+    if (!previousDir) {
+      previousDir = (await pickOutputFolder('Choose the PREVIOUS UniSlot output folder (contains snapshot.json)')) ?? undefined
+      restoreCliTerminal()
+    }
+    if (previousDir) p.log.success(folderLabel(previousDir))
     else p.log.warn('Cancelled')
   }
   if (!previousDir) {
@@ -287,11 +269,11 @@ export async function runRevertEdit(opts: {
   }
 
   if (!outDir && session) {
-    p.log.info('3/3  Pick a NEW output folder for the restored files…')
+    step(3, 'New output folder', 'Where the restored schedule and exports will be written. Pick an empty or new folder.')
     outDir = (await pickOutputFolder('Choose a NEW folder for the restored exports')) ?? undefined
     restoreCliTerminal()
-    if (outDir) p.log.success(path.basename(outDir))
-    else p.log.warn('Cancelled — using ./unislot-out-revert')
+    if (outDir) p.log.success(folderLabel(outDir))
+    else p.log.warn(`Cancelled — using ${chalk.bold('./unislot-out-revert')}`)
   }
   outDir = outDir || path.join(process.cwd(), 'unislot-out-revert')
 
@@ -322,6 +304,22 @@ export async function runRevertEdit(opts: {
     for (const e of diff.errors) p.log.error(e)
     return 1
   }
+
+  if (session) {
+    const label = (name: string) => chalk.dim(name.padEnd(12))
+    showPanel(
+      'Comparing',
+      [
+        `${label('Edited')}${folderLabel(editedDir)}`,
+        `${label('Previous')}${folderLabel(previousDir)}`,
+        `${label('Restore to')}${folderLabel(outDir)}`,
+        '',
+        `${chalk.bold(String(diff.changes.length))} change${diff.changes.length === 1 ? '' : 's'} across ` +
+          `${chalk.bold(String(studentCount(diff.changes)))} student${studentCount(diff.changes) === 1 ? '' : 's'}`,
+        countsLine(diff.changes),
+      ].join('\n'),
+    )
+  }
   for (const w of diff.warnings) p.log.warn(w)
 
   let programNomenclatureXlsx: ArrayBuffer | undefined
@@ -349,7 +347,7 @@ export async function runRevertEdit(opts: {
   } else if (session) {
     const chosen = await chooseChangesInteractively(diff.changes)
     if (!chosen) {
-      p.cancel('Cancelled')
+      p.cancel('Cancelled — nothing was changed.')
       return 1
     }
     selected = chosen
@@ -359,14 +357,18 @@ export async function runRevertEdit(opts: {
   }
 
   if (session) {
-    showPanel('Will restore', selected.map((c) => `  ${describeChange(c)}`).join('\n'), { maxLines: 25 })
+    showPanel(
+      `About to restore ${selected.length} change${selected.length === 1 ? '' : 's'}`,
+      selected.map((c) => describeChange(c)).join('\n'),
+      { maxLines: 20 },
+    )
     restoreCliTerminal({ prepareForPrompt: true })
     const ok = await p.confirm({
-      message: `Restore ${selected.length} change(s) into ${truncateMiddle(outDir, 50)}? (other edits are kept)`,
+      message: `Restore into ${truncateMiddle(outDir, 48)}? Other edits stay as they are.`,
       initialValue: true,
     })
     if (p.isCancel(ok) || !ok) {
-      p.cancel('Cancelled')
+      p.cancel('Cancelled — nothing was changed.')
       return 1
     }
   }
@@ -400,8 +402,7 @@ export async function runRevertEdit(opts: {
     p.log.error(result.infeasible_reason || 'Revert aborted.')
     return 1
   }
-  spin.stop(spinOk('Done'))
-  reportPanel(result)
+  spin.stop(spinOk('Rebuilt the schedule'))
 
   const writeSpin = p.spinner()
   writeSpin.start(`Writing exports to ${truncateMiddle(outDir, 60)}…`)
@@ -432,17 +433,17 @@ export async function runRevertEdit(opts: {
       'utf8',
     )
     files.push(reportPath)
-    writeSpin.stop(spinOk(`${files.length} file(s)`))
+    writeSpin.stop(spinOk(`${files.length} files written`))
   } catch (err) {
     writeSpin.stop(spinWarn('Failed'))
     p.log.error(err instanceof Error ? err.message : String(err))
     return 1
   }
 
+  reportPanel(result, outDir)
   await outroSuccess([
-    chalk.green(`Restored ${result.revertReport?.applied.length ?? 0} change(s).`),
-    chalk.dim(`Previous and edited folders unchanged: ${previousDir} · ${editedDir}`),
-    ...files.map((f) => chalk.dim('  · ') + f),
+    chalk.green('Done.') + chalk.dim('  Open schedule.xlsx in the new folder to check the result.'),
+    chalk.dim(`Untouched: ${truncateMiddle(previousDir, 40)} · ${truncateMiddle(editedDir, 40)}`),
   ])
   return 0
 }

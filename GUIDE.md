@@ -302,7 +302,7 @@ Dropped or fixed the wrong student/course? Pick **Undo a removal / fix** from th
 2. The **previous** folder — the output from before it (UniSlot suggests it from the run log).  
 3. A **new** output folder for the restored files. It can never be the previous or edited folder, so both stay untouched.
 
-Every differing registration is listed as *removed*, *added* or *moved* (a `fix-course` shows as one move). With up to 30 changes you tick the ones to undo from the list. With more, UniSlot first asks which **students or courses** were affected (register numbers or course codes, comma-separated), shows only the matches pre-ticked, and you untick anything you don't want back. **Search another student / course…** adds more matches to the same list.
+Every differing registration is listed as *removed*, *added* or *moved* (a `fix-course` shows as one move), grouped under the student. Additions that came from a late batch are tagged `late · batch N`. The list is a live filter: type a register number or course code (several, comma-separated) and it narrows as you type — with more than 30 changes that is the first thing you do. `↑↓` move, `space` ticks a change, `ctrl+a` ticks everything shown, `Enter` restores. If you filter and press `Enter` without ticking anything, every match shown is restored; a confirmation screen lists exactly what will happen before anything is written.
 
 Only the ticked changes are undone; every other edit in the edited folder is kept. Restored students return to their original section and position, and a course that was removed because it became empty comes back on its original weekday (no solver run). Outputs match the surgical ones plus `revert-report.json`, and the run log gets a `revert` entry.
 
