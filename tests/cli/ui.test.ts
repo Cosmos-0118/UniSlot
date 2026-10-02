@@ -418,7 +418,8 @@ describe('installTerminalSafetyNet', () => {
 
       process.emit('exit', 0)
       expect(write).toHaveBeenCalledWith(expect.stringContaining('\x1b[?25h'))
-      expect(setRawMode).toHaveBeenCalledWith(false)
+      if (process.platform === 'win32') expect(setRawMode).not.toHaveBeenCalled()
+      else expect(setRawMode).toHaveBeenCalledWith(false)
 
       // Idempotent — a second 'exit' (or any listener re-firing) must not throw or double-write.
       write.mockClear()
