@@ -21,6 +21,7 @@ import {
   createRunLogEntry,
   nextRunSeq,
   type RunLogClock,
+  type RunLogDecision,
   type RunLogEntry,
   type RunMode,
 } from '../merge/runLog'
@@ -244,6 +245,152 @@ export async function runFixPipeline(
     pythonVersion = placed.python_version
   }
 
+  const notes: string[] = [
+    options.mode === 'fix-course'
+      ? `Moved ${edit.register_number}: ${edit.removed_course} → ${edit.added_course}`
+      : `Dropped ${edit.register_number} from ${edit.removed_course}`,
+  ]
+  if (edit.target_section_id) notes.push(`Placed into ${edit.target_section_id}`)
+  if (edit.created_new_course && edit.added_course) {
+    notes.push(
+      `Created new course ${edit.added_course}` +
+        (newCourseSlot !== undefined ? ` on weekday slot ${newCourseSlot}` : '') +
+        ` via ${placementMethod}`,
+    )
+  }
+  if (edit.pruned_courses.length) {
+    notes.push(`Pruned empty course(s): ${edit.pruned_courses.join(', ')}`)
+  }
+  if (edit.student_removed) notes.push(`Removed student ${edit.register_number} (no courses left)`)
+
+  const finished = await finishSnapshotRun({
+    previous,
+    working,
+    validation,
+    emit,
+    signal,
+    clock,
+    options,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+    placement: {
+      solverStatus,
+      solverMessage,
+      solverUsed,
+      solverTimeSeconds,
+      ortoolsVersion,
+      pythonVersion,
+    },
+    summary: {
+      mode: options.mode,
+      notes,
+      decisions: [
+        {
+          kind: 'other',
+          subject: edit.register_number,
+          choice: options.mode,
+          detail:
+            options.mode === 'fix-course'
+              ? `${edit.removed_course}→${edit.added_course}` +
+                (edit.created_new_course ? ` (new/${placementMethod})` : '')
+              : edit.removed_course,
+        },
+      ],
+      registrationsAdded: options.mode === 'fix-course' ? 0 : -1,
+      coursesAdded:
+        (edit.created_new_course ? 1 : 0) -
+        (edit.pruned_courses.length ? edit.pruned_courses.length : 0),
+      sectionsCreated:
+        edit.created_new_course && edit.target_section_id ? [edit.target_section_id] : [],
+      newlyAddedCourses: edit.created_new_course && edit.added_course ? [edit.added_course] : [],
+      doneMessage: edit.created_new_course
+        ? `Surgical edit complete · new course placed via ${placementMethod}`
+        : 'Surgical edit complete',
+    },
+  })
+  const { red_before, red_after, ...result } = finished
+  if (result.infeasible) return result
+
+  return {
+    ...result,
+    editReport: {
+      mode: options.mode,
+      register_number: edit.register_number,
+      removed_course: edit.removed_course,
+      added_course: edit.added_course,
+      target_section_id: edit.target_section_id,
+      pruned_courses: edit.pruned_courses,
+      student_removed: edit.student_removed,
+      created_new_course: edit.created_new_course,
+      placement_method: placementMethod,
+      new_course_slot: newCourseSlot,
+      red_before: red_before ?? 0,
+      red_after: red_after ?? 0,
+    },
+  }
+}
+
+export type SnapshotRunSummary = {
+  mode: RunMode
+  notes: string[]
+  decisions: RunLogDecision[]
+  registrationsAdded: number
+  coursesAdded: number
+  sectionsCreated: string[]
+  newlyAddedCourses: string[]
+  doneMessage: string
+}
+
+export type SnapshotRunPlacement = {
+  solverStatus: string
+  solverMessage: string
+  solverUsed: string
+  solverTimeSeconds: number
+  ortoolsVersion?: string
+  pythonVersion?: string
+}
+
+export type FinishSnapshotRunArgs = {
+  previous: SchedulingSnapshot
+  working: SchedulingSnapshot
+  validation: ValidationResult
+  emit: (event: PipelineProgressEvent) => void
+  signal?: AbortSignal
+  clock: RunLogClock
+  options: Pick<
+    RunFixOptions,
+    'seed' | 'inputFileName' | 'previousDir' | 'outputDir' | 'programNomenclatureXlsx'
+  >
+  allowSaturdayForMath: boolean
+  saturdayExtraCourseCodes: string[]
+  placement: SnapshotRunPlacement
+  summary: SnapshotRunSummary
+}
+
+/**
+ * Shared back half of the surgical pipelines: audit the edited snapshot, rebuild the
+ * schedule / clash report, append the run-log entry and render every export.
+ * `editReport` is left null for the caller to fill in.
+ */
+export async function finishSnapshotRun(
+  args: FinishSnapshotRunArgs,
+): Promise<FixPipelineResult & { red_before?: number; red_after?: number }> {
+  const {
+    previous,
+    working,
+    validation,
+    emit,
+    signal,
+    clock,
+    options,
+    allowSaturdayForMath,
+    saturdayExtraCourseCodes,
+    placement,
+    summary,
+  } = args
+  const { solverStatus, solverMessage, solverUsed, solverTimeSeconds, ortoolsVersion, pythonVersion } =
+    placement
+
   emit({ stage: 'build', message: 'Rebuilding schedule and clash report…', fraction: 0.4 })
 
   const { buildSchedule, computeClashReport, auditScheduleHardConstraints, parallelHardCap } =
@@ -320,43 +467,21 @@ export async function runFixPipeline(
   )
   schedule = { ...schedule, total_clashes: clashReport.students_with_clashes }
 
-  const mode: RunMode = options.mode
   const seq = nextRunSeq(previous.run_log ?? [])
   const at = clock().toISOString()
 
   const clashProvenance = updateClashProvenance(previous.clash_provenance ?? {}, clashDiff, {
     seq,
     at,
-    operation: mode,
-    newlyAddedCourses: edit.created_new_course && edit.added_course ? [edit.added_course] : [],
+    operation: summary.mode,
+    newlyAddedCourses: summary.newlyAddedCourses,
   })
-
-  const notes: string[] = [
-    options.mode === 'fix-course'
-      ? `Moved ${edit.register_number}: ${edit.removed_course} → ${edit.added_course}`
-      : `Dropped ${edit.register_number} from ${edit.removed_course}`,
-  ]
-  if (edit.target_section_id) notes.push(`Placed into ${edit.target_section_id}`)
-  if (edit.created_new_course && edit.added_course) {
-    notes.push(
-      `Created new course ${edit.added_course}` +
-        (newCourseSlot !== undefined ? ` on weekday slot ${newCourseSlot}` : '') +
-        ` via ${placementMethod}`,
-    )
-  }
-  if (edit.pruned_courses.length) {
-    notes.push(`Pruned empty course(s): ${edit.pruned_courses.join(', ')}`)
-  }
-  if (edit.student_removed) notes.push(`Removed student ${edit.register_number} (no courses left)`)
-
-  const coursesAdded =
-    (edit.created_new_course ? 1 : 0) - (edit.pruned_courses.length ? edit.pruned_courses.length : 0)
 
   const runEntry = createRunLogEntry(
     {
       seq,
       at,
-      mode,
+      mode: summary.mode,
       inputs: {
         enrollment: options.inputFileName,
         previous_dir: options.previousDir,
@@ -367,9 +492,9 @@ export async function runFixPipeline(
       students_before: Object.keys(previous.students).length,
       students_after: Object.keys(working.students).length,
       students_added: 0,
-      registrations_added: options.mode === 'fix-course' ? 0 : -1,
-      courses_added: coursesAdded,
-      sections_created: edit.created_new_course && edit.target_section_id ? [edit.target_section_id] : [],
+      registrations_added: summary.registrationsAdded,
+      courses_added: summary.coursesAdded,
+      sections_created: summary.sectionsCreated,
       students_moved_between_sections: 0,
       capacity_waivers: [],
       parked: [],
@@ -377,19 +502,8 @@ export async function runFixPipeline(
       red_after: clashReport.students_with_clashes,
       clashes_introduced: clashDiff.introduced.length,
       clashes_resolved: clashDiff.resolved.length,
-      decisions: [
-        {
-          kind: 'other',
-          subject: edit.register_number,
-          choice: options.mode,
-          detail:
-            options.mode === 'fix-course'
-              ? `${edit.removed_course}→${edit.added_course}` +
-                (edit.created_new_course ? ` (new/${placementMethod})` : '')
-              : edit.removed_course,
-        },
-      ],
-      notes,
+      decisions: summary.decisions,
+      notes: summary.notes,
     },
     clock,
   )
@@ -447,13 +561,7 @@ export async function runFixPipeline(
     seed: schedulingSnapshot.seed,
   })
 
-  emit({
-    stage: 'done',
-    message: edit.created_new_course
-      ? `Surgical edit complete · new course placed via ${placementMethod}`
-      : 'Surgical edit complete',
-    fraction: 1,
-  })
+  emit({ stage: 'done', message: summary.doneMessage, fraction: 1 })
 
   return {
     validation,
@@ -471,20 +579,9 @@ export async function runFixPipeline(
       scheduling: schedulingStats,
     },
     schedulingSnapshot,
-    editReport: {
-      mode: options.mode,
-      register_number: edit.register_number,
-      removed_course: edit.removed_course,
-      added_course: edit.added_course,
-      target_section_id: edit.target_section_id,
-      pruned_courses: edit.pruned_courses,
-      student_removed: edit.student_removed,
-      created_new_course: edit.created_new_course,
-      placement_method: placementMethod,
-      new_course_slot: newCourseSlot,
-      red_before: previousClashReport.students_with_clashes,
-      red_after: clashReport.students_with_clashes,
-    },
+    editReport: null,
+    red_before: previousClashReport.students_with_clashes,
+    red_after: clashReport.students_with_clashes,
     runLog,
     clashProvenance,
     allowSaturdayForMath,

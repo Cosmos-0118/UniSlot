@@ -294,6 +294,26 @@ Prefer **rectify** when many students change enrollments at once. Prefer **late*
 
 Surgical outputs rewrite `schedule.xlsx`, `clash-report.xlsx`, `course-emails.xlsx`, `snapshot.json`, plus `enrollment.xlsx`, `fix-report.json`, and `run-log.json`.
 
+### Undoing a wrong removal or fix (`revert`)
+
+Dropped or fixed the wrong student/course? Pick **Undo a removal / fix** from the menu (or run `revert`). You give it two output folders and UniSlot shows exactly what differs:
+
+1. The **edited** folder — the one where the wrong change happened.  
+2. The **previous** folder — the output from before it (UniSlot suggests it from the run log).  
+3. A **new** output folder for the restored files. It can never be the previous or edited folder, so both stay untouched.
+
+Every differing registration is listed as *removed*, *added* or *moved* (a `fix-course` shows as one move). With up to 30 changes you tick the ones to undo from the list. With more, UniSlot first asks which **students or courses** were affected (register numbers or course codes, comma-separated), shows only the matches pre-ticked, and you untick anything you don't want back. **Search another student / course…** adds more matches to the same list.
+
+Only the ticked changes are undone; every other edit in the edited folder is kept. Restored students return to their original section and position, and a course that was removed because it became empty comes back on its original weekday (no solver run). Outputs match the surgical ones plus `revert-report.json`, and the run log gets a `revert` entry.
+
+UniSlot refuses folders that don't belong together (swapped, or from different schedules) and warns if rectify/late runs happened in between — only `fix-course`/`drop-course` edits are reverted cleanly. If both folders are identical, the previous one was probably overwritten: recover it from Time Machine or a backup.
+
+```
+npm run unislot -- revert --edited .\unislot-out-fix --previous .\unislot-out -o .\unislot-out-restored --register RA2111003010001 -y
+npm run unislot -- revert --edited .\unislot-out-fix --previous .\unislot-out -o .\unislot-out-restored --course 21CSE101T -y
+npm run unislot -- revert --edited .\unislot-out-fix --previous .\unislot-out -o .\unislot-out-restored --all -y
+```
+
 ### Reading the new columns and sheets
 
 **`Late Adds`** is a change log, not a total. `5 +3` means the first late batch added 5 students and the second added 3, so the section grew by 8. The current run's trailing segment is bold amber. A blank cell means no late run has ever touched that section or course. The column is per-section on `Schedule` and `Details`, per-course on `Course Catalog` and `Course Emails`.

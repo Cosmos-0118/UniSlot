@@ -29,7 +29,11 @@ import {
   inferSaturdayExtrasFromSnapshot,
 } from '../src/modules/scheduling/merge/enrollmentDelta.ts'
 
-async function writeFixExports(outDir: string, result: FixPipelineResult): Promise<string[]> {
+/** Shared by every snapshot-based run (fix / drop / revert): xlsx exports, snapshot.json, run-log.json. */
+export async function writeSnapshotExports(
+  outDir: string,
+  result: FixPipelineResult,
+): Promise<string[]> {
   await mkdir(outDir, { recursive: true })
   const written: string[] = []
   if (result.scheduleXlsx) {
@@ -57,14 +61,19 @@ async function writeFixExports(outDir: string, result: FixPipelineResult): Promi
     await writeFile(fp, JSON.stringify(result.schedulingSnapshot, null, 2), 'utf8')
     written.push(fp)
   }
-  if (result.editReport) {
-    const fp = path.join(outDir, 'fix-report.json')
-    await writeFile(fp, JSON.stringify(result.editReport, null, 2), 'utf8')
-    written.push(fp)
-  }
   if (result.runLog.length) {
     const fp = path.join(outDir, 'run-log.json')
     await writeFile(fp, JSON.stringify(result.runLog, null, 2), 'utf8')
+    written.push(fp)
+  }
+  return written
+}
+
+async function writeFixExports(outDir: string, result: FixPipelineResult): Promise<string[]> {
+  const written = await writeSnapshotExports(outDir, result)
+  if (result.editReport) {
+    const fp = path.join(outDir, 'fix-report.json')
+    await writeFile(fp, JSON.stringify(result.editReport, null, 2), 'utf8')
     written.push(fp)
   }
   const report = result.editReport

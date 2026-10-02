@@ -58,6 +58,7 @@ import {
   type LatePipelineResult,
 } from '../src/modules/scheduling/pipeline/lateRun.ts'
 import { runSurgicalEdit } from './surgicalEdit.ts'
+import { runRevertEdit } from './revertEdit.ts'
 import {
   loadSchedulingSnapshot,
   type SchedulingSnapshot,
@@ -390,7 +391,7 @@ function formatRectifyResult(report: RectificationReport): string {
 }
 
 async function promptRunMode(): Promise<
-  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | null
+  'solve' | 'rectify' | 'late' | 'filter' | 'issues' | 'fix-course' | 'drop-course' | 'revert' | null
 > {
   const mode = await selectPrompt({
     message: 'What would you like to do?',
@@ -408,6 +409,11 @@ async function promptRunMode(): Promise<
         label: 'Remove student from a course',
         hint: 'Remove one enrollment while keeping the timetable frozen',
       },
+      {
+        value: 'revert',
+        label: 'Undo a removal / fix',
+        hint: 'Compare two output folders and restore the changes you pick',
+      },
       { value: 'filter', label: 'Filter schedule', hint: 'Export a focused schedule by course code' },
       { value: 'issues', label: 'Find enrollment issues', hint: 'Check the source file before scheduling' },
     ],
@@ -421,6 +427,7 @@ async function promptRunMode(): Promise<
     | 'issues'
     | 'fix-course'
     | 'drop-course'
+    | 'revert'
 }
 
 const ISSUE_PANEL_LINE_CAP = 200
@@ -1911,7 +1918,8 @@ async function main(): Promise<void> {
     args[0] === 'filter' ||
     args[0] === 'issues' ||
     args[0] === 'fix-course' ||
-    args[0] === 'drop-course'
+    args[0] === 'drop-course' ||
+    args[0] === 'revert'
   const nonInteractive = args.includes('-y') || args.includes('--yes')
   const wantsHelpOrVersion = args.some((a) =>
     ['-h', '--help', '-V', '--version'].includes(a),
@@ -2292,6 +2300,48 @@ async function main(): Promise<void> {
           nomenclature: flags.nomenclature,
           skipPrompts: Boolean(flags.yes),
           interactive: interactive || !flags.input,
+        })
+      },
+    )
+
+  program
+    .command('revert')
+    .description(
+      'Undo surgical edits: compare the previous and edited output folders and restore chosen changes',
+    )
+    .option('--edited <dir>', 'Output folder that contains the wrong change (snapshot.json)')
+    .option('--previous <dir>', 'Output folder from before the wrong change (snapshot.json)')
+    .option('-o, --output <dir>', 'NEW output directory (default: ./unislot-out-revert)')
+    .option('--register <ids>', 'Revert changes for these register numbers (comma-separated)')
+    .option('--course <codes>', 'Revert changes touching these course codes (comma-separated)')
+    .option('--all', 'Revert every difference between the two folders', false)
+    .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
+    .option('-y, --yes', 'Non-interactive when required flags are provided', false)
+    .action(
+      async (flags: {
+        edited?: string
+        previous?: string
+        output?: string
+        register?: string
+        course?: string
+        all?: boolean
+        nomenclature?: string
+        yes?: boolean
+      }) => {
+        const list = (v?: string) =>
+          v ? v.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean) : undefined
+        const hasSelection = Boolean(flags.register || flags.course || flags.all)
+        const interactive = !flags.yes && (!flags.edited || !flags.previous || !hasSelection)
+        process.exitCode = await runRevertEdit({
+          edited: flags.edited,
+          previous: flags.previous,
+          output: flags.output,
+          register: list(flags.register),
+          course: list(flags.course),
+          all: Boolean(flags.all),
+          nomenclature: flags.nomenclature,
+          skipPrompts: Boolean(flags.yes),
+          interactive,
         })
       },
     )

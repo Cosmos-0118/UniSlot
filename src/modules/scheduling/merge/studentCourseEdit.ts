@@ -81,7 +81,7 @@ function courseTitleFromSnapshot(snapshot: SchedulingSnapshot, code: string): st
   return row?.course_title ?? ''
 }
 
-function recomputeSectionPrograms(section: Section, students: Record<string, Student>): void {
+export function recomputeSectionPrograms(section: Section, students: Record<string, Student>): void {
   const programs = new Set<string>()
   for (const reg of section.enrolled_students) {
     const program = students[reg]?.program

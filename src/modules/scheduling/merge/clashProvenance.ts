@@ -110,6 +110,13 @@ export function buildClashCause(entry: ClashEntry, ctx: ClashCauseContext): stri
     )
   }
 
+  if (ctx.operation === 'revert') {
+    return (
+      `Revert (run #${ctx.seq}) restored an earlier registration and left a clash for ` +
+      `${entry.register_number} on ${entry.day}: ${courseList}.`
+    )
+  }
+
   // rectify
   const placed = (ctx.newlyAddedCourses ?? []).filter((c) => entry.courses.includes(c))
   if (placed.length > 0) {

@@ -62,7 +62,10 @@ export function buildRunLogSheet(wb: ExcelJS.Workbook, runLog: RunLogEntry[]): v
     const fillArgb =
       e.mode === 'late'
         ? XL.late
-        : e.mode === 'rectify' || e.mode === 'fix-course' || e.mode === 'drop-course'
+        : e.mode === 'rectify' ||
+          e.mode === 'fix-course' ||
+          e.mode === 'drop-course' ||
+          e.mode === 'revert'
           ? XL.moved
           : XL.rowAlt
     const wrapped = applyDataRow(
