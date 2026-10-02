@@ -18,6 +18,8 @@ export interface EnrollmentRow {
   faculty: string | null
   registration_type: string | null
   remarks: string | null
+  /** "Adl Remarks" column of the name list; optional so older snapshots still load. */
+  adl_remarks?: string | null
 }
 
 export interface Student {

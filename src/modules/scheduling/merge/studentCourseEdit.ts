@@ -314,6 +314,7 @@ export function fixStudentCourse(
       targetSection.faculty,
     registration_type: removedRow?.registration_type ?? null,
     remarks: removedRow?.remarks ?? null,
+    adl_remarks: removedRow?.adl_remarks ?? null,
   })
 
   return {

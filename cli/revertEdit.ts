@@ -257,7 +257,11 @@ export async function runRevertEdit(opts: {
     // The edited run log remembers which folder it was built from.
     const lastEntry = [...(edited.run_log ?? [])].sort((a, b) => b.seq - a.seq)[0]
     const suggested = lastEntry?.inputs.previous_dir
-    if (suggested && (await folderExists(suggested))) {
+    if (
+      suggested &&
+      path.resolve(suggested) !== path.resolve(editedDir) &&
+      (await folderExists(suggested))
+    ) {
       restoreCliTerminal({ prepareForPrompt: true })
       const use = await p.confirm({
         message: `Use ${truncateMiddle(suggested, 60)} as the PREVIOUS folder (before the change)?`,

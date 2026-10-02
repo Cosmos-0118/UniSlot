@@ -51,6 +51,8 @@ const COLUMN_MAPPINGS: Record<string, string> = {
   teacher: 'faculty',
   'registration type': 'registration_type',
   remarks: 'remarks',
+  'adl remarks': 'adl_remarks',
+  'additional remarks': 'adl_remarks',
   comments: 'remarks',
 }
 
@@ -303,6 +305,7 @@ export function parseExcelRows(sheetRows: unknown[][]): {
       faculty: cleanString(getCell(row, 'faculty')) || null,
       registration_type: cleanString(getCell(row, 'registration_type')) || null,
       remarks: cleanString(getCell(row, 'remarks')) || null,
+      adl_remarks: cleanString(getCell(row, 'adl_remarks')) || null,
     })
     result.valid_rows += 1
   }

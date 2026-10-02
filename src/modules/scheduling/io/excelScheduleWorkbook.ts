@@ -20,6 +20,7 @@ import {
   lateAddsFont,
   type LateMarking,
 } from './excelLateMarking'
+import { buildInputFormatSheet } from './excelInputSheet'
 import {
   buildClashLogSheet,
   buildLateEnrollmentsSheet,
@@ -208,7 +209,7 @@ export type ScheduleWorkbookOptions = {
 /**
  * Publication-style schedule workbook (multi-sheet):
  * Schedule · Details · By Day · By Program · Course Catalog · Summary · (optional) Students by Course & Weekday
- * · (optional) Late Enrollments · Run Log
+ * · (optional) Name List (input format) · (optional) Late Enrollments · Run Log
  */
 export async function scheduleToWorkbookBuffer(
   schedule: Schedule,
@@ -242,6 +243,9 @@ export async function scheduleToWorkbookBuffer(
   buildSummarySheet(wb, schedule, sorted, late, options.runLog)
   if (options.snapshot) {
     buildStudentsByCourseSlotSheet(wb, sorted, options.snapshot, late)
+    if (options.snapshot.enrollmentRows?.length) {
+      buildInputFormatSheet(wb, options.snapshot.enrollmentRows)
+    }
   }
   // Only this run's batch has per-registration detail; a carried-forward marking has none.
   if (late && (late.assignments.length > 0 || late.parked.length > 0)) {
