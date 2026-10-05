@@ -5,7 +5,6 @@ import path from 'node:path'
 import {
   assertReadableFile,
   assertSnapshotFolder,
-  pickEnrollmentFile,
   pickOutputFolder,
   pickPreviousOutputFolder,
 } from './fileDialog.ts'
@@ -69,6 +68,23 @@ export async function writeSnapshotExports(
   return written
 }
 
+/** Fields every snapshot-based run records in summary.json (rectify/late read red_students from it). */
+export function snapshotRunSummary(result: FixPipelineResult): Record<string, unknown> {
+  const snap = result.schedulingSnapshot
+  return {
+    status: result.solver_status,
+    message: result.solver_message,
+    objective_policy: snap?.objective_policy,
+    clash_weight: result.stats?.scheduling?.total_clash_weight,
+    red_students: result.clashReport?.students_with_clashes,
+    infeasible: result.infeasible ?? false,
+    allow_saturday_for_math: result.allowSaturdayForMath,
+    saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
+    seed: snap?.seed,
+    workers: snap?.workers,
+  }
+}
+
 async function writeFixExports(outDir: string, result: FixPipelineResult): Promise<string[]> {
   const written = await writeSnapshotExports(outDir, result)
   if (result.editReport) {
@@ -79,10 +95,7 @@ async function writeFixExports(outDir: string, result: FixPipelineResult): Promi
   const report = result.editReport
   const summary = {
     mode: report?.mode ?? 'fix-course',
-    status: result.solver_status,
-    message: result.solver_message,
-    clash_weight: result.stats?.scheduling?.total_clash_weight,
-    red_students: result.clashReport?.students_with_clashes,
+    ...snapshotRunSummary(result),
     red_before: report?.red_before,
     red_after: report?.red_after,
     register_number: report?.register_number,
@@ -93,9 +106,6 @@ async function writeFixExports(outDir: string, result: FixPipelineResult): Promi
     new_course_slot: report?.new_course_slot,
     pruned_courses: report?.pruned_courses ?? [],
     student_removed: report?.student_removed ?? false,
-    infeasible: result.infeasible ?? false,
-    allow_saturday_for_math: result.allowSaturdayForMath,
-    saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
   }
   const summaryPath = path.join(outDir, 'summary.json')
   await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8')
@@ -196,18 +206,10 @@ export async function runSurgicalEdit(opts: {
 }): Promise<number> {
   await bannerAnimated()
 
-  let inputPath = opts.input
+  const inputPath = opts.input
   let previousDir = opts.previous
   let outDir = opts.output
 
-  if (!inputPath && opts.interactive) {
-    p.log.info('Pick last-run enrollment workbook…')
-    inputPath =
-      (await pickEnrollmentFile('Select enrollment Excel from the last main run')) ?? undefined
-    restoreCliTerminal()
-    if (inputPath) p.log.success(path.basename(inputPath))
-    else p.log.warn('Cancelled')
-  }
   if (!previousDir && opts.interactive) {
     p.log.info('Pick previous output folder…')
     previousDir = (await pickPreviousOutputFolder()) ?? undefined
@@ -224,16 +226,14 @@ export async function runSurgicalEdit(opts: {
     outDir = outDir || path.join(process.cwd(), 'unislot-out-fix')
   }
 
-  if (!inputPath || !previousDir) {
-    p.log.error(
-      `${opts.mode} requires -i (enrollment) and --previous (output folder with snapshot.json).`,
-    )
+  if (!previousDir) {
+    p.log.error(`${opts.mode} requires --previous (output folder with snapshot.json).`)
     return 1
   }
   outDir = outDir || path.join(process.cwd(), 'unislot-out-fix')
 
   try {
-    await assertReadableFile(inputPath)
+    if (inputPath) await assertReadableFile(inputPath)
     await assertSnapshotFolder(previousDir)
   } catch (err) {
     p.log.error(err instanceof Error ? err.message : String(err))
@@ -494,7 +494,8 @@ export async function runSurgicalEdit(opts: {
               ? { register, fromCode, toCode, toTitle }
               : undefined,
           drop: opts.mode === 'drop-course' ? { register, courseCode: dropCode } : undefined,
-          inputFileName: path.basename(inputPath),
+          // The enrollment itself comes from snapshot.json; -i only labels the run log.
+          inputFileName: inputPath ? path.basename(inputPath) : snapshot.source?.file_name,
           previousDir,
           outputDir: outDir,
           programNomenclatureXlsx,

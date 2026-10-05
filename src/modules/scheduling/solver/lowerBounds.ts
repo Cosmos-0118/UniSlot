@@ -405,7 +405,11 @@ export function computeSchedulingLowerBounds(
     zero_red_structurally_impossible: minRed > 0 || zeroClash,
     min_clash_weight_lower_bound: clashWeightLb,
     min_red_students_lower_bound: minRed,
-    clique_cuts: [maxCliqueNodes, nonMathCliqueNodes].filter((c) => c.length >= 2),
+    // The non-maths clique is often the max clique itself; emit each cut once.
+    clique_cuts: [maxCliqueNodes, nonMathCliqueNodes].filter(
+      (c, i, all) =>
+        c.length >= 2 && all.findIndex((o) => [...o].sort().join('\0') === [...c].sort().join('\0')) === i,
+    ),
     notes,
   }
 }

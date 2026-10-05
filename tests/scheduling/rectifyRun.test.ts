@@ -254,4 +254,29 @@ describe('runRectifyPipeline', () => {
       expect(slots[sectionId]).toBe(slot)
     }
   })
+  it('inherits seed, workers and portfolio from the previous snapshot when no seed is given', async () => {
+    const baseline = [row('S1', 'A'), row('S2', 'B'), row('S3', 'C')]
+    const rectified = [...baseline, row('S4', 'A')]
+    const snapshot = {
+      ...buildSnapshotFromEnrollment(baseline, { A: 3, B: 1, C: 4 }),
+      seed: 77,
+      workers: 8,
+      portfolio: 0,
+      ortools_version: '9.15.0',
+    }
+
+    const result = await runRectifyPipeline(new ArrayBuffer(0), () => undefined, {
+      rectifiedRows: rectified,
+      baselineRows: baseline,
+      previousSnapshot: snapshot,
+      allowSaturdayForMath: false,
+    })
+
+    const next = result.schedulingSnapshot!
+    expect(next.seed).toBe(77)
+    expect(next.workers).toBe(8)
+    expect(next.portfolio).toBe(0)
+    expect(next.ortools_version).toBe('9.15.0')
+    expect(next.run_log!.at(-1)!.seed).toBe(77)
+  })
 })

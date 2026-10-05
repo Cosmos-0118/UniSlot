@@ -94,6 +94,21 @@ function isDayName(value: string): value is DayName {
   return (WEEKDAY_ORDER as readonly string[]).includes(value)
 }
 
+/**
+ * Day from the Day column, case-insensitively; falls back to Weekday Index.
+ * Returns null rather than guessing, so a hand-edited cell never silently moves a section.
+ */
+function resolveDay(dayRaw: string, slotIndex: number | null): DayName | null {
+  if (isDayName(dayRaw)) return dayRaw
+  const lower = dayRaw.toLowerCase()
+  const byName = WEEKDAY_ORDER.find((d) => d.toLowerCase() === lower || d.slice(0, 3).toLowerCase() === lower)
+  if (byName) return byName
+  if (!dayRaw && slotIndex !== null && Number.isInteger(slotIndex) && slotIndex >= 0 && slotIndex < WEEKDAY_ORDER.length) {
+    return WEEKDAY_ORDER[slotIndex]!
+  }
+  return null
+}
+
 function findHeaderRow(
   ws: ExcelJS.Worksheet,
 ): { rowIndex: number; colByHeader: Map<string, number> } | null {
@@ -156,8 +171,13 @@ export async function readScheduleEntriesFromBuffer(
     if (!courseCode) continue
 
     const dayRaw = cellAt(row, colByHeader, 'Day')
-    const day: DayName = isDayName(dayRaw) ? dayRaw : 'Monday'
     const slotIndex = numAt(row, colByHeader, 'Weekday Index')
+    const day = resolveDay(dayRaw, cellAt(row, colByHeader, 'Weekday Index') ? slotIndex : null)
+    if (!day) {
+      throw new Error(
+        `Details row ${r} (${courseCode}): unrecognised Day "${dayRaw}" and Weekday Index ${slotIndex}`,
+      )
+    }
     const slotBand = numAt(row, colByHeader, 'Parallel Lane')
     const timing = cellAt(row, colByHeader, 'Timing')
     const laneCount = parseLaneCountFromTiming(timing) ?? Math.max(1, slotBand)

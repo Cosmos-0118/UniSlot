@@ -79,4 +79,17 @@ describe('nameListToWorkbookBuffer', () => {
     expect(aoa[0]).toEqual(HEADER)
     expect(parseExcelRows(aoa as unknown[][]).rows).toEqual(rows)
   })
+
+  it('keeps Faculty and Registration Type when the source had them', async () => {
+    const { nameListToWorkbookBuffer } = await import('../../src/modules/scheduling/io/excelInputSheet')
+    const { rows } = parseExcelRows([
+      [...HEADER, 'Faculty', 'Registration Type'],
+      [1, 'B.Tech-CSE', 'RA2111201010012', 'ASHA RAO', 8822929858, 'ar1@srmist.edu.in', '21CSC203P', 'Data Structures', 'Online Registered', '', 'Dr. Rao', 'Online'],
+    ])
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await nameListToWorkbookBuffer(rows))
+    const aoa = wb.worksheets[0]!.getSheetValues().slice(1).map((r) => (r as unknown[]).slice(1))
+    expect(aoa[0]).toEqual([...HEADER, 'Faculty', 'Registration Type'])
+    expect(parseExcelRows(aoa as unknown[][]).rows).toEqual(rows)
+  })
 })

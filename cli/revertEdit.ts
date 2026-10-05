@@ -16,7 +16,7 @@ import {
 } from './ui.ts'
 import { glyphs, joinCapped, spinOk, spinWarn, truncateMiddle, wrapAnsi } from './theme.ts'
 import { checklistPrompt, type ChecklistItem } from './checklistPrompt.ts'
-import { writeSnapshotExports } from './surgicalEdit.ts'
+import { snapshotRunSummary, writeSnapshotExports } from './surgicalEdit.ts'
 import { loadSchedulingSnapshot, type SchedulingSnapshot } from '../src/modules/scheduling/merge/snapshot.ts'
 import {
   diffSnapshots,
@@ -436,6 +436,22 @@ export async function runRevertEdit(opts: {
       'utf8',
     )
     files.push(reportPath)
+    const summaryPath = path.join(outDir, 'summary.json')
+    await writeFile(
+      summaryPath,
+      JSON.stringify(
+        {
+          mode: 'revert',
+          ...snapshotRunSummary(result),
+          red_before: report?.red_before,
+          red_after: report?.red_after,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+    files.push(summaryPath)
     writeSpin.stop(spinOk(`${files.length} files written`))
   } catch (err) {
     writeSpin.stop(spinWarn('Failed'))

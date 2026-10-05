@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import * as p from '@clack/prompts'
 import chalk from 'chalk'
-import { Command } from 'commander'
+import { Command, InvalidArgumentError } from 'commander'
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cpus } from 'node:os'
+import { promisify } from 'node:util'
 import { assertReadableFile, pickEnrollmentFile, pickOutputFolder, pickPreviousOutputFolder, assertSnapshotFolder } from './fileDialog.ts'
 import { formatReproToken, parseSeedInput, resolveRunSeed } from './seedPrompt.ts'
 import {
@@ -168,6 +170,25 @@ function computeAsk(opts: { interactive: boolean; skipPrompts?: boolean }): bool
   return opts.interactive && !opts.skipPrompts && canPrompt()
 }
 
+/** Print the first validation errors with row numbers, plus a pointer to the full list. */
+function logValidationErrors(errors: { row_number?: number; field: string; message: string }[]): void {
+  const SHOWN = 12
+  for (const e of errors.slice(0, SHOWN)) {
+    const row = e.row_number != null ? `Row ${e.row_number} · ` : ''
+    p.log.error(`${row}${e.field}: ${e.message}`)
+  }
+  if (errors.length > SHOWN) {
+    p.log.error(`… +${errors.length - SHOWN} more — run \`npm run unislot -- issues -i <file>\` for the full list`)
+  }
+}
+
+/** Commander parser for `--seed`: reports a usage error instead of a stack trace. */
+function parseSeedFlag(v: string): number {
+  const n = parseSeedInput(String(v))
+  if (n === undefined) throw new InvalidArgumentError('must be a non-negative integer')
+  return n
+}
+
 async function writeExports(
   outDir: string,
   result: Awaited<ReturnType<typeof runPipeline>>,
@@ -316,7 +337,8 @@ async function writeRectifyExports(
     infeasible: result.infeasible ?? false,
     allow_saturday_for_math: result.allowSaturdayForMath,
     saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
-    seed: meta.seed,
+    // Inherited from the previous snapshot when --seed is omitted.
+    seed: meta.seed ?? result.schedulingSnapshot?.seed,
     workers: meta.workers,
     ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
     ...(result.python_version ? { python_version: result.python_version } : {}),
@@ -638,9 +660,12 @@ async function runFilter(opts: {
     await mkdir(outDir, { recursive: true })
     const schedule = scheduleFromFilteredEntries(filtered.entries)
     const buf = await scheduleToWorkbookBuffer(schedule)
-    const fp = path.join(outDir, 'schedule.xlsx')
+    // Never overwrite the source schedule with its own subset.
+    const sameAsSource = path.resolve(outDir, 'schedule.xlsx') === path.resolve(inputPath)
+    const fileName = sameAsSource ? 'schedule-filtered.xlsx' : 'schedule.xlsx'
+    const fp = path.join(outDir, fileName)
     await writeFile(fp, Buffer.from(buf))
-    writeSpin.stop(spinOk('Wrote schedule.xlsx'))
+    writeSpin.stop(spinOk(`Wrote ${fileName}`))
 
     await outroSuccess([
       palette.ok('Filtered schedule ready.'),
@@ -819,9 +844,7 @@ async function runRectify(opts: {
   const rectifiedParsed = await parseEnrollmentWorkbook(rectifiedArrayBuffer)
   if (!rectifiedParsed.validation.is_valid) {
     p.log.error('Rectified workbook failed validation:')
-    for (const e of rectifiedParsed.validation.errors.slice(0, 12)) {
-      p.log.error(`${e.field}: ${e.message}`)
-    }
+    logValidationErrors(rectifiedParsed.validation.errors)
     return 1
   }
 
@@ -901,9 +924,7 @@ async function runRectify(opts: {
 
     if (!result.validation.is_valid) {
       spin.stop('Validation failed')
-      for (const e of result.validation.errors.slice(0, 12)) {
-        p.log.error(`${e.field}: ${e.message}`)
-      }
+      logValidationErrors(result.validation.errors)
       return 1
     }
 
@@ -1063,7 +1084,8 @@ async function writeLateExports(
     infeasible: result.infeasible ?? false,
     allow_saturday_for_math: result.allowSaturdayForMath,
     saturday_extra_course_codes: result.saturdayExtraCourseCodes ?? [],
-    seed: meta.seed,
+    // Inherited from the previous snapshot when --seed is omitted.
+    seed: meta.seed ?? result.schedulingSnapshot?.seed,
     workers: meta.workers,
     ...(result.ortools_version ? { ortools_version: result.ortools_version } : {}),
     ...(result.python_version ? { python_version: result.python_version } : {}),
@@ -1358,9 +1380,7 @@ async function runLate(opts: {
   const lateParsed = await parseEnrollmentWorkbook(lateArrayBuffer)
   if (!lateParsed.validation.is_valid) {
     p.log.error('Late workbook failed validation:')
-    for (const e of lateParsed.validation.errors.slice(0, 12)) {
-      p.log.error(`${e.field}: ${e.message}`)
-    }
+    logValidationErrors(lateParsed.validation.errors)
     return 1
   }
 
@@ -1797,9 +1817,7 @@ async function runSolve(opts: {
 
     if (!result.validation.is_valid || !result.schedule) {
       spin.stop('Validation failed')
-      for (const e of result.validation.errors.slice(0, 12)) {
-        p.log.error(`${e.field}: ${e.message}`)
-      }
+      logValidationErrors(result.validation.errors)
       return 1
     }
 
@@ -1820,6 +1838,12 @@ async function runSolve(opts: {
           ? spinOk('CP-SAT finished — affected-student count proven optimal')
           : spinWarn('CP-SAT finished — best feasible solution'),
     )
+    const inputWarnings = result.validation.warnings.length
+    if (inputWarnings > 0) {
+      p.log.warn(
+        `Input: ${inputWarnings} warning(s) (e.g. duplicate rows dropped) — run \`npm run unislot -- issues -i <file>\` for detail`,
+      )
+    }
 
     const statusLabel = result.solver_status ?? result.schedule.solver_used
     await spin.playStamp(statusLabel)
@@ -1990,11 +2014,7 @@ async function main(): Promise<void> {
       'Multi-seed RED race before prove (default: 0; k>0 enables, breaks seed reproducibility)',
       (v) => Number(v),
     )
-    .option('--seed <n>', 'Reuse a prior run seed (skips seed prompt; works with -y)', (v) => {
-      const n = parseSeedInput(String(v))
-      if (n === undefined) throw new Error('--seed must be a non-negative integer')
-      return n
-    })
+    .option('--seed <n>', 'Reuse a prior run seed (skips seed prompt; works with -y)', parseSeedFlag)
     .option(
       '--absolute-gap <n>',
       'Ship when affected-student incumbent−bound ≤ n (skips full OPTIMAL certificate)',
@@ -2015,6 +2035,7 @@ async function main(): Promise<void> {
       '--saturday',
       'Allow Saturday slot for maths courses (use --no-saturday to block; default: ask / blocked)',
     )
+    .option('--no-saturday', 'Block Saturday for maths courses')
     .option(
       '--saturday-codes <list>',
       'Extra course codes allowed on Saturday (comma-separated), independent of maths flag',
@@ -2073,15 +2094,12 @@ async function main(): Promise<void> {
     .option('--time-limit <seconds>', 'Optional wall-clock limit', (v) => Number(v))
     .option('--workers <n>', 'CP-SAT workers (default: all CPUs)', (v) => Number(v))
     .option('--portfolio <k>', 'Portfolio race size (default: 0)', (v) => Number(v))
-    .option('--seed <n>', 'Solver seed', (v) => {
-      const n = parseSeedInput(String(v))
-      if (n === undefined) throw new Error('--seed must be a non-negative integer')
-      return n
-    })
+    .option('--seed <n>', 'Solver seed', parseSeedFlag)
     .option('--absolute-gap <n>', 'Stop when affected-student gap ≤ n', (v) => Number(v))
     .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')
+    .option('--no-saturday', 'Block Saturday for maths')
     .option(
       '--saturday-codes <list>',
       'Extra course codes allowed on Saturday (comma-separated)',
@@ -2141,15 +2159,12 @@ async function main(): Promise<void> {
     .option('--nomenclature <file>', 'Optional Nomenclature.xlsx')
     .option('--time-limit <seconds>', 'Optional wall-clock limit', (v) => Number(v))
     .option('--workers <n>', 'CP-SAT workers (default: all CPUs)', (v) => Number(v))
-    .option('--seed <n>', 'Solver seed', (v) => {
-      const n = parseSeedInput(String(v))
-      if (n === undefined) throw new Error('--seed must be a non-negative integer')
-      return n
-    })
+    .option('--seed <n>', 'Solver seed', parseSeedFlag)
     .option('--absolute-gap <n>', 'Stop when affected-student gap ≤ n', (v) => Number(v))
     .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')
+    .option('--no-saturday', 'Block Saturday for maths')
     .option(
       '--saturday-codes <list>',
       'Extra course codes allowed on Saturday (comma-separated)',
@@ -2247,7 +2262,7 @@ async function main(): Promise<void> {
     .description(
       'Surgically move a student from a wrong course to the correct one (existing target frozen; new target placed via CP-SAT)',
     )
-    .option('-i, --input <file>', 'Enrollment .xlsx from the last main run')
+    .option('-i, --input <file>', 'Optional: enrollment .xlsx name to record in the run log (data comes from snapshot.json)')
     .option('--previous <dir>', 'Previous output folder containing snapshot.json')
     .option('-o, --output <dir>', 'Output directory (default: ./unislot-out-fix)')
     .option('--register <id>', 'Student register number')
@@ -2272,8 +2287,7 @@ async function main(): Promise<void> {
         yes?: boolean
       }) => {
         const interactive =
-          !flags.yes &&
-          (!flags.input || !flags.previous || !flags.register || !flags.from || !flags.to)
+          !flags.yes && (!flags.previous || !flags.register || !flags.from || !flags.to)
         process.exitCode = await runSurgicalEdit({
           mode: 'fix-course',
           input: flags.input,
@@ -2285,7 +2299,7 @@ async function main(): Promise<void> {
           toTitle: flags.toTitle,
           nomenclature: flags.nomenclature,
           skipPrompts: Boolean(flags.yes),
-          interactive: interactive || !flags.input,
+          interactive,
         })
       },
     )
@@ -2295,7 +2309,7 @@ async function main(): Promise<void> {
     .description(
       'Surgically remove one student–course registration everywhere (timetable frozen)',
     )
-    .option('-i, --input <file>', 'Enrollment .xlsx from the last main run')
+    .option('-i, --input <file>', 'Optional: enrollment .xlsx name to record in the run log (data comes from snapshot.json)')
     .option('--previous <dir>', 'Previous output folder containing snapshot.json')
     .option('-o, --output <dir>', 'Output directory (default: ./unislot-out-fix)')
     .option('--register <id>', 'Student register number')
@@ -2313,7 +2327,7 @@ async function main(): Promise<void> {
         yes?: boolean
       }) => {
         const interactive =
-          !flags.yes && (!flags.input || !flags.previous || !flags.register || !flags.course)
+          !flags.yes && (!flags.previous || !flags.register || !flags.course)
         process.exitCode = await runSurgicalEdit({
           mode: 'drop-course',
           input: flags.input,
@@ -2323,7 +2337,7 @@ async function main(): Promise<void> {
           course: flags.course,
           nomenclature: flags.nomenclature,
           skipPrompts: Boolean(flags.yes),
-          interactive: interactive || !flags.input,
+          interactive,
         })
       },
     )
@@ -2403,8 +2417,30 @@ async function main(): Promise<void> {
     .description('Check Python / OR-Tools / CP-SAT readiness')
     .action(async () => {
       await bannerAnimated()
-      const python = await ensurePythonReady()
+      let python: string
+      try {
+        python = await ensurePythonReady()
+      } catch (err) {
+        p.log.error(err instanceof Error ? err.message : String(err))
+        process.exitCode = 1
+        return
+      }
       p.log.success(`Python: ${python}`)
+      // A venv can exist with a broken or missing OR-Tools install; import it to be sure.
+      try {
+        const { stdout } = await promisify(execFile)(
+          python,
+          ['-c', 'import sys, ortools; print(ortools.__version__, sys.version.split()[0])'],
+          { timeout: 60_000 },
+        )
+        const [ortoolsVersion, pythonVersion] = stdout.trim().split(/\s+/)
+        p.log.success(`OR-Tools ${ortoolsVersion} · Python ${pythonVersion}`)
+      } catch (err) {
+        const detail = (err as { stderr?: string }).stderr?.trim().split('\n').pop()
+        p.log.error(`OR-Tools is not importable${detail ? ` (${detail})` : ''}. Run: npm run setup:cpsat`)
+        process.exitCode = 1
+        return
+      }
       p.log.info(`Solver: ${path.join(CPSAT_DIR, 'solve.py')}`)
       p.log.info(`Repo:   ${REPO_ROOT}`)
       p.outro('Ready to schedule.')

@@ -153,6 +153,9 @@ export async function runRectifyPipeline(
   onProgress: (event: PipelineProgressEvent) => void,
   options: RunRectifyOptions,
 ): Promise<RectifyPipelineResult> {
+  // Follow-on runs inherit the previous seed (as fix/drop do) so placement, exports and the
+  // run log stay reproducible without re-entering --seed.
+  options = { ...options, seed: options.seed ?? options.previousSnapshot.seed }
   const emit = onProgress
   const signal = options?.signal
   const snapshot = options.previousSnapshot
@@ -551,9 +554,15 @@ export async function runRectifyPipeline(
     enrollmentRows: enrollmentRows.map((r) => ({ ...r })),
     allowSaturdayForMath,
     ...(saturdayExtraCourseCodes.length ? { saturdayExtraCourseCodes } : {}),
-    ...(options?.seed !== undefined ? { seed: options.seed } : {}),
-    ...(ortoolsVersion ? { ortools_version: ortoolsVersion } : {}),
-    ...(pythonVersion ? { python_version: pythonVersion } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(snapshot.workers !== undefined ? { workers: snapshot.workers } : {}),
+    ...(snapshot.portfolio !== undefined ? { portfolio: snapshot.portfolio } : {}),
+    ...(ortoolsVersion ?? snapshot.ortools_version
+      ? { ortools_version: ortoolsVersion ?? snapshot.ortools_version }
+      : {}),
+    ...(pythonVersion ?? snapshot.python_version
+      ? { python_version: pythonVersion ?? snapshot.python_version }
+      : {}),
     section_lanes: sectionLanesFromEntries(schedule.entries),
     run_log: runLog,
     clash_provenance: clashProvenance,

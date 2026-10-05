@@ -140,3 +140,53 @@ describe('schedule filter round-trip', () => {
     expect(round2.map((e) => e.course_code).sort()).toEqual(['21CSC203P', '21CSE254T'])
   })
 })
+
+describe('readScheduleEntriesFromBuffer day handling', () => {
+  async function workbookWithDay(day: string, weekdayIndex: string | number): Promise<ArrayBuffer> {
+    const ExcelJS = (await import('exceljs')).default
+    const schedule: Schedule = {
+      entries: [entry({ course_code: '21CSC203P', section_id: '21CSC203P-S1', day: 'Wednesday', slot_index: 2 })],
+      total_sections: 1,
+      solver_used: 'cpsat',
+      solver_time_seconds: 0,
+      total_clashes: 0,
+    }
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await scheduleToWorkbookBuffer(schedule))
+    const ws = wb.getWorksheet('Details')!
+    let dayCol = 0
+    let idxCol = 0
+    let headerRow = 0
+    ws.eachRow((row, r) => {
+      if (headerRow) return
+      row.eachCell((cell, c) => {
+        if (cell.value === 'Day') dayCol = c
+        if (cell.value === 'Weekday Index') idxCol = c
+      })
+      if (dayCol && idxCol) headerRow = r
+    })
+    const data = ws.getRow(headerRow + 1)
+    data.getCell(dayCol).value = day
+    data.getCell(idxCol).value = weekdayIndex === '' ? null : weekdayIndex
+    return (await wb.xlsx.writeBuffer()) as ArrayBuffer
+  }
+
+  it('accepts short or lower-case day names', async () => {
+    const [e] = await readScheduleEntriesFromBuffer(await workbookWithDay('wed', 2))
+    expect(e!.day).toBe('Wednesday')
+  })
+
+  it('falls back to Weekday Index when Day is blank', async () => {
+    const [e] = await readScheduleEntriesFromBuffer(await workbookWithDay('', 4))
+    expect(e!.day).toBe('Friday')
+  })
+
+  it('rejects an unrecognised day instead of defaulting to Monday', async () => {
+    await expect(readScheduleEntriesFromBuffer(await workbookWithDay('Someday', 2))).rejects.toThrow(
+      /unrecognised Day "Someday"/,
+    )
+    await expect(readScheduleEntriesFromBuffer(await workbookWithDay('', ''))).rejects.toThrow(
+      /unrecognised Day/,
+    )
+  })
+})

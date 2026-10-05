@@ -25,3 +25,13 @@ describe('parseExcelRows register number normalization', () => {
   })
 })
 
+
+describe('parseExcelRows empty data', () => {
+  it('explains why a header-only sheet is invalid', () => {
+    const parsed = parseExcelRows([['Program', 'Register Number', 'Student Name', 'Course Code', 'Course Title']])
+    expect(parsed.validation.is_valid).toBe(false)
+    expect(parsed.validation.errors).toEqual([
+      expect.objectContaining({ field: 'file', message: expect.stringMatching(/No enrollment data rows/) }),
+    ])
+  })
+})

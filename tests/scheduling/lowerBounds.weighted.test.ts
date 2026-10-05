@@ -63,5 +63,8 @@ describe('weighted clash lower bounds', () => {
     expect(lb.min_clash_weight_lower_bound).toBeGreaterThanOrEqual(5)
     expect(lb.zero_clash_structurally_impossible).toBe(true)
     expect(lb.clique_cuts.some((c) => c.length >= 7)).toBe(true)
+    // Max clique and non-maths clique coincide here — the cut is emitted once.
+    const keys = lb.clique_cuts.map((c) => [...c].sort().join(','))
+    expect(new Set(keys).size).toBe(keys.length)
   })
 })

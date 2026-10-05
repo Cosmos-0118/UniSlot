@@ -25,6 +25,11 @@ const INPUT_HEADERS = [
 
 const INPUT_COLUMN_WIDTHS = [6, 36, 20, 26, 14, 28, 16, 44, 16, 30]
 
+const OPTIONAL_COLUMNS: { header: string; width: number; get: (row: EnrollmentRow) => string | null }[] = [
+  { header: 'Faculty', width: 28, get: (row) => row.faculty },
+  { header: 'Registration Type', width: 18, get: (row) => row.registration_type },
+]
+
 const THIN = { style: 'thin' as const }
 const HEADER_BORDER: Partial<ExcelJS.Borders> = {
   top: THIN,
@@ -43,8 +48,13 @@ export function buildInputFormatSheet(wb: ExcelJS.Workbook, rows: EnrollmentRow[
     views: [{ state: 'frozen', ySplit: 1, activeCell: 'A2', topLeftCell: 'A2' }],
   })
 
+  // Faculty / Registration Type are not in the standard name list, but dropping them would make
+  // a re-solve from this sheet lose instructor assignments. Append them only when populated.
+  const extras = OPTIONAL_COLUMNS.filter((c) => rows.some((row) => c.get(row)))
+  const headers = [...INPUT_HEADERS, ...extras.map((c) => c.header)]
+
   const header = ws.getRow(1)
-  INPUT_HEADERS.forEach((h, i) => {
+  headers.forEach((h, i) => {
     const cell = header.getCell(i + 1)
     cell.value = h
     cell.font = { bold: true }
@@ -67,11 +77,14 @@ export function buildInputFormatSheet(wb: ExcelJS.Workbook, rows: EnrollmentRow[
     r.getCell(8).value = safeCellString(row.course_title)
     r.getCell(9).value = safeCellString(row.remarks)
     r.getCell(10).value = safeCellString(row.adl_remarks)
+    extras.forEach((c, i) => {
+      r.getCell(INPUT_HEADERS.length + 1 + i).value = safeCellString(c.get(row))
+    })
     r.commit()
   })
 
-  ws.columns = INPUT_COLUMN_WIDTHS.map((width) => ({ width }))
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: INPUT_HEADERS.length } }
+  ws.columns = [...INPUT_COLUMN_WIDTHS, ...extras.map((c) => c.width)].map((width) => ({ width }))
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } }
 }
 
 /** Standalone workbook holding only the Name List sheet (for exporting from a saved output folder). */

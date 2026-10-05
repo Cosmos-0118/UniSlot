@@ -314,6 +314,9 @@ export function parseExcelRows(sheetRows: unknown[][]): {
   const maxAbsoluteErrors = Math.max(12, Math.ceil(result.total_rows * 0.04))
   result.is_valid =
     errorRate <= 0.06 && result.errors.length <= maxAbsoluteErrors && result.valid_rows > 0
+  if (result.valid_rows === 0 && result.errors.length === 0) {
+    result.errors.push({ field: 'file', message: 'No enrollment data rows found below the header' })
+  }
 
   return { rows: out, validation: result }
 }
