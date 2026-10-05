@@ -1,7 +1,11 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
 import { writeExportBrandHeader } from './excelBranding'
-import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
+import {
+  finalizeWorkbookBuffer,
+  workbookCreatedAt,
+  type ExportDeterminismOptions,
+} from './deterministicExport'
 import {
   applyDataRow,
   ColumnWidthTracker,
@@ -10,14 +14,6 @@ import {
 } from './excelLayout'
 import { XL } from './excelStyleConstants'
 import { formatLateAddsChain, lateAddsFont, type LateMarking } from './excelLateMarking'
-
-function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
-}
 
 export type CourseEmailsWorkbookOptions = ExportDeterminismOptions & {
   lateMarking?: LateMarking | null
@@ -58,6 +54,7 @@ export async function courseEmailsToWorkbookBuffer(
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options?.seed)
+  wb.modified = wb.created
   const ws = wb.addWorksheet('Course Emails')
 
   const headerRow = writeExportBrandHeader(ws, showLate ? 6 : 5, 'COURSE EMAIL GROUPS')
@@ -188,5 +185,5 @@ export async function courseEmailsToWorkbookBuffer(
   ]
 
   const buf = await wb.xlsx.writeBuffer()
-  return writeBufferToArrayBuffer(buf)
+  return finalizeWorkbookBuffer(buf, options?.seed)
 }

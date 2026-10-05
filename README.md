@@ -1,6 +1,6 @@
 # UniSlot
 
-Terminal evening-course scheduler for universities. Upload an enrollment Excel workbook, then optimize a Mon–Sat evening timetable with **Google OR-Tools CP-SAT** using all CPU cores. When the solver reports proven optimal, clash weight cannot be reduced further under the course→weekday model.
+Terminal evening-course scheduler for universities. Upload an enrollment Excel workbook, then optimize a Mon–Sat evening timetable with **Google OR-Tools CP-SAT** using all CPU cores. The scheduling goal is to give as many students as possible a completely clash-free timetable.
 
 **Usage guide:** [GUIDE.md](GUIDE.md) · **Constraints:** [docs/Constraints.md](docs/Constraints.md) · **Excel schema:** [docs/excel_schema.md](docs/excel_schema.md)
 
@@ -83,8 +83,12 @@ Enrollment .xlsx
 ```
 
 - **Time model:** one evening session per weekday (Mon–Sat, 5–7 PM). Saturday is for maths (when enabled) and/or explicitly allowlisted course codes.
-- **Objective:** minimize clash weight, then RED students, then weekday balance.
-- **Proof:** `proven_optimal: true` in `summary.json` means clash weight is proven minimal (integer gap closed). CP-SAT `OPTIMAL` under `--absolute-gap` is not by itself a certificate.
+- **Required objective:** minimize unique RED students, then clash weight, then weekday balance and parallel excess. Count an affected student once, even if several courses overlap. Lower-priority improvements must never increase RED count.
+- **Implementation:** the solver minimizes RED students first, then clash weight, weekday balance, and parallel excess. Pair-cost and load improvements are considered only among schedules tied at higher-priority levels.
+- **Roster model:** section assignment is capacity-balanced and validates canonical enrollments. Course-pair weights come from the canonical student roster, so changing which section holds a student cannot lower the timetable conflict objective.
+- **Staffing:** supplied instructors remain identifiable on split courses. Extra sections without assigned staff receive `Planning:` placeholders, which represent staffing needs rather than confirmed faculty availability.
+- **Proof:** `proven_optimal: true` means the minimum RED count is proven. `proven_levels` records proven levels in order: `red_students`, `clash_weight`, `balance_and_parallel`. `red_bound` / `red_gap` describe the primary RED proof; `clash_bound` / `clash_gap` describe the pair-cost proof conditional on the fixed RED count. A CP-SAT `OPTIMAL` status alone does not certify a level when a configured gap limit leaves a nonzero integer gap.
+- **Run policy:** new snapshots and summaries include `objective_policy: "red-first-v1"`; folders without that field retain their historical objective and certificate meanings. Frozen edits without new course placement preserve the prior marker. `--clash-only` is a pair-cost diagnostic and never sets `proven_optimal`; `--primary-only` runs the RED-first portfolio ranking.
 
 ## Project layout
 

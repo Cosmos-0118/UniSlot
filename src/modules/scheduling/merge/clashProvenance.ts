@@ -43,7 +43,7 @@ export type ClashCauseContext = {
   batch?: number
   /** Courses that were newly placed / newly enrolled this run (optional detail for the sentence). */
   newlyAddedCourses?: string[]
-  /** Proven minimal clash weight from the initial solve (solve-only). */
+  /** Proven minimum affected-student count from the initial solve (solve-only). */
   provenMinimal?: boolean
   previousClashWeight?: number
 }
@@ -62,8 +62,8 @@ export function buildClashCause(entry: ClashEntry, ctx: ClashCauseContext): stri
     if (ctx.provenMinimal) {
       return (
         `Present from the initial solve (run #${ctx.seq}). ` +
-        `${courseList} share ${entry.day}. Clash weight was proven minimal, ` +
-        `so this clash is unavoidable under the six-weekday model.`
+        `${courseList} share ${entry.day}. The number of affected students was proven minimal ` +
+        `under the scheduling model; another optimal timetable may affect different students.`
       )
     }
     return (

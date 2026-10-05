@@ -8,6 +8,7 @@ import {
 } from '../preprocess/preprocessing'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
 import { sumConflictGraphWeights } from '../solver/conflictGraph'
+import { OBJECTIVE_POLICY } from '../solver/cpsatInstance'
 import { activeWeekdayCount, normalizeSaturdayExtraCodes, saturdaySlotOpen } from '../solver/timeModel'
 import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
 import {
@@ -95,13 +96,13 @@ export type RunPipelineOptions = {
   cpsatPortfolio?: number
   /** Seconds per portfolio race member (default 45). */
   cpsatPortfolioRaceSeconds?: number
-  /** Stop clash prove when incumbent−bound ≤ this. */
+  /** Stop primary RED prove when incumbent−bound ≤ this. */
   cpsatAbsoluteGap?: number
-  /** Stop clash prove when incumbent and bound are flat for N seconds. */
+  /** Stop primary RED prove when incumbent and bound are flat for N seconds. */
   cpsatProvePlateauSeconds?: number
-  /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
+  /** Disable plateau/gap escapes; chase a primary RED certificate. */
   cpsatFullProve?: boolean
-  /** Clash-prove CP-SAT portfolio (stock | core | core_linear). */
+  /** Primary RED-prove CP-SAT portfolio (stock | core | core_linear). */
   cpsatProveStrategy?: 'core' | 'stock' | 'core_linear'
   /**
    * When false, Saturday is blocked for maths courses.
@@ -150,9 +151,13 @@ export interface PipelineResult {
   schedule_export_blocked?: boolean
   schedule_export_block_reason?: string | null
   schedulingSnapshot: SchedulingSnapshot | null
-  /** True when clash weight is proven minimal under the course→weekday CP-SAT model. */
+  /** True when the affected-student count is proven minimal under this run's constraints. */
   proven_optimal?: boolean
   proven_levels?: string[]
+  red_bound?: number | null
+  red_gap?: number | null
+  clash_bound?: number | null
+  clash_gap?: number | null
   solver_status?: string
   solver_message?: string
   ortools_version?: string
@@ -349,7 +354,7 @@ export async function runPipeline(
     options?.cpsatPortfolio === undefined ? undefined : options.cpsatPortfolio
   emit({
     stage: 'schedule',
-    message: `CP-SAT (OR-Tools): proving minimal clash weight · ${workers} CPU workers · LB clash ≥ ${structuralLb.min_clash_weight_lower_bound} · RED ≥ ${structuralLb.min_red_students_lower_bound} · ${weekdays} weekday sessions/week${saturdayOpen ? '' : ' · Saturday blocked'}`,
+    message: `CP-SAT (OR-Tools): minimizing affected students · ${workers} CPU workers · LB RED ≥ ${structuralLb.min_red_students_lower_bound} · clash ≥ ${structuralLb.min_clash_weight_lower_bound} · ${weekdays} weekday sessions/week${saturdayOpen ? '' : ' · Saturday blocked'}`,
     fraction: SCHEDULE_LO + 0.02,
     etaSeconds: null,
   })
@@ -391,7 +396,7 @@ export async function runPipeline(
           const boundPart =
             evt.bound == null
               ? ''
-              : evt.best_clash != null && evt.bound === evt.best_clash
+              : evt.incumbent === evt.bound
                 ? ` · gap 0`
                 : ` · bound ${evt.bound}`
           emit({
@@ -461,7 +466,7 @@ export async function runPipeline(
     flatSectionsEarly,
     slotAssignments,
     conflictGraph,
-    { courseSections, students, lower_bounds: structuralLb },
+    { courseSections, students, lower_bounds: structuralLb, allowSaturdayForMath, saturdayExtraCourseCodes },
   )
   const lb = schedulingStatsPreview.lower_bounds
   let programNomenclatureMap: Record<string, string> | undefined = DEFAULT_PROGRAM_NOMENCLATURE_MAP as Record<
@@ -523,7 +528,7 @@ export async function runPipeline(
     clashes_introduced: emptyDiff.introduced.length,
     clashes_resolved: 0,
     decisions: [],
-    notes: provenOptimal ? ['Clash weight proven optimal under course→weekday model'] : [],
+    notes: provenOptimal ? ['Affected-student count proven optimal under course→weekday model'] : [],
   })
   const runLog = appendRunLog([], runEntry)
   const clashProvenance = updateClashProvenance({}, emptyDiff, {
@@ -534,6 +539,7 @@ export async function runPipeline(
   })
 
   const schedulingSnapshot: SchedulingSnapshot = {
+    objective_policy: OBJECTIVE_POLICY,
     schema_version: SNAPSHOT_SCHEMA_VERSION,
     ...(options?.sourceFileName
       ? {
@@ -593,7 +599,7 @@ export async function runPipeline(
 
   const sectionCountForStats = Object.values(courseSections).reduce((n, s) => n + s.length, 0)
   const provenNote = provenOptimal
-    ? ' · clash weight proven optimal'
+    ? ' · affected-student count proven optimal'
     : ' · best feasible (not fully proven)'
   emit({
     stage: 'done',
@@ -620,6 +626,10 @@ export async function runPipeline(
     schedulingSnapshot,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
+    red_bound: cpsat.red_bound,
+    red_gap: cpsat.red_gap,
+    clash_bound: cpsat.clash_bound,
+    clash_gap: cpsat.clash_gap,
     solver_status: solverStatus,
     solver_message: solverMessage,
     ortools_version: ortoolsVersion,

@@ -1,14 +1,10 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
-import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
-
-function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
-}
+import {
+  finalizeWorkbookBuffer,
+  workbookCreatedAt,
+  type ExportDeterminismOptions,
+} from './deterministicExport'
 
 const HEADERS = [
   'Program',
@@ -33,6 +29,7 @@ export async function enrollmentRowsToWorkbookBuffer(
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options?.seed)
+  wb.modified = wb.created
   const ws = wb.addWorksheet('Enrollment')
 
   const header = ws.getRow(1)
@@ -67,5 +64,5 @@ export async function enrollmentRowsToWorkbookBuffer(
 
   ws.columns = HEADERS.map(() => ({ width: 18 }))
   const buf = await wb.xlsx.writeBuffer()
-  return writeBufferToArrayBuffer(buf)
+  return finalizeWorkbookBuffer(buf, options?.seed)
 }

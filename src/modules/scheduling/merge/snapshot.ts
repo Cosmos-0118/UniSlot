@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { EnrollmentRow, Section, Student } from '../types'
 import { legacySlotToWeekday } from '../solver/timeModel'
+import type { OBJECTIVE_POLICY } from '../solver/cpsatInstance'
 import {
   cloneClashProvenance,
   type ClashProvenanceMap,
@@ -41,6 +42,8 @@ export async function sha256Hex(data: ArrayBuffer): Promise<string> {
 
 /** Serializable state needed to attach late registrations without re-solving slots. */
 export type SchedulingSnapshot = {
+  /** Absent on legacy pair-first runs; preserved when replaying old snapshots. */
+  objective_policy?: typeof OBJECTIVE_POLICY
   /** Snapshot format version; absent on folders saved before versioning (treated as 1). */
   schema_version?: number
   /** Input workbook the schedule was first created from (absent on older folders). */
@@ -104,6 +107,7 @@ export function cloneSchedulingSnapshot(s: SchedulingSnapshot): SchedulingSnapsh
     slotAssignments[sectionId] = legacy ? legacySlotToWeekday(slot) : slot
   }
   return {
+    ...(s.objective_policy ? { objective_policy: s.objective_policy } : {}),
     ...(s.schema_version !== undefined ? { schema_version: s.schema_version } : {}),
     ...(s.source ? { source: { ...s.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,

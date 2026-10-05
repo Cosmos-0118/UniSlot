@@ -1,3 +1,23 @@
+# Historical scheduling research
+
+**Policy update — 5 October 2026:** the authoritative objective is to give as
+many students as possible a completely clash-free timetable: minimize unique
+RED students, then conflicting course-pair weight, then weekday balance and
+parallel excess. Affected students count once regardless of their number of
+overlaps. Faculty and capacity requirements remain hard constraints.
+
+This historical report uses an older 55-slot model and pair-penalty formulas;
+those formulas are not the current objective implementation. The current solver
+uses the confirmed RED-first order. Use [Constraints §2](Constraints.md#2-core-objectives)
+for current requirements and the [algorithm review](algorithm-review-2026-10-05.md)
+for the dated baseline findings and their current implementation status.
+The report's recommendation to minimize student conflict edges by changing
+section memberships does not apply to the current course-level objective:
+UniSlot derives pair weights and unique RED count from canonical enrollments,
+then validates that each enrollment appears in one section. With course section
+counts fixed, section assignment affects administrative grouping but not the
+course-pair conflict weights.
+
 Optimization Algorithms and Constraint Modeling for the University Evening Course Scheduling Problem
 1. Introduction to the Constrained Scheduling Environment
 The allocation of educational resources within higher education institutions represents a notoriously complex combinatorial optimization challenge. Commonly referred to in operations research literature as the University Course Timetabling Problem (UCTP), the overarching objective is to assign a finite set of events (courses or sections) to a finite set of resources (timeslots, rooms, and faculty) while satisfying a dense array of institutional constraints. The specific scheduling environment analyzed in this report—the University Evening Course Scheduling Problem—introduces highly constrained temporal boundaries and complex student sectioning requirements that definitively elevate the problem to the class of NP-Hard optimization tasks.

@@ -195,6 +195,14 @@ describe('custom select picker', () => {
 })
 
 describe('formatMetrics', () => {
+  it('reports a RED certificate without claiming pair clashes are proven', () => {
+    const lines = formatMetricsLines({ clashWeight: 6, red: 1, proven: true,
+      provenLevels: ['red_students'], status: 'FEASIBLE', seconds: 1, workers: 1 })
+    expect(lines.find((line) => line.includes('Proof'))).toContain('RED proven')
+    expect(lines.find((line) => line.includes('Clash wt'))).toContain('not proven')
+    expect(lines.find((line) => /RED\s/.test(line))).toContain('proven')
+  })
+
   it('returns a boxed Result panel with aligned rows', () => {
     const out = formatMetrics({
       clashWeight: 18,
@@ -441,6 +449,35 @@ describe('installTerminalSafetyNet', () => {
 })
 
 describe('createSolveSpinner live panel', () => {
+  it('keeps each portfolio score together and does not certify gap-limited OPTIMAL', async () => {
+    const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean }
+    const originalWrite = stdout.write
+    const writes: string[] = []
+    stdout.write = (chunk: unknown) => { writes.push(String(chunk)); return true }
+    const spin = createSolveSpinner(2)
+    try {
+      spin.start('Starting')
+      spin.applyCpsat({ type: 'phase', phase: 'portfolio_race', portfolio_seeds: [1, 2] })
+      for (const [index, red, clash] of [[1, 1, 6], [2, 3, 5]]) {
+        spin.applyCpsat({ type: 'progress', phase: 'minimize_red', elapsed: 1, workers: 1,
+          solutions: 1, best_red: red, best_clash: clash,
+          portfolio: { index: index!, size: 2, seed: index!, member_workers: 1 } })
+      }
+      expect(spin.state.bestRed).toBe(1)
+      expect(spin.state.bestClash).toBe(6)
+      spin.applyCpsat({ type: 'phase', phase: 'minimize_red' })
+      spin.applyCpsat({ type: 'progress', phase: 'minimize_red', event: 'phase_end',
+        elapsed: 2, workers: 2, solutions: 1, best_red: 1, best_clash: 6,
+        bound: 0, solver_status: 'OPTIMAL', proven: false })
+      spin.applyCpsat({ type: 'phase', phase: 'minimize_clash' })
+      expect(writes.join('')).toContain('RED 1 · best feasible')
+      expect(writes.join('')).not.toContain('RED 1 · proven minimal')
+    } finally {
+      await spin.stop('done')
+      stdout.write = originalWrite
+    }
+  })
+
   it('never emits raw cursor-up/clear ANSI (clack owns the spinner line)', async () => {
     const stdout = process.stdout as unknown as { write: (chunk: unknown) => boolean; isTTY?: boolean }
     const originalWrite = stdout.write
@@ -459,21 +496,21 @@ describe('createSolveSpinner live panel', () => {
       spin.applyCpsat({ type: 'model_ready', elapsed: 0.4 } as never)
       spin.applyCpsat({
         type: 'progress',
-        phase: 'minimize_clash',
-        phase_label: '1/3 Minimizing clashes',
+        phase: 'minimize_red',
+        phase_label: '1/3 Minimizing RED',
         elapsed: 1.2,
         workers: 4,
         solutions: 1,
         best_clash: 9,
-        best_red: 9,
+        best_red: 7,
         bound: 4,
         activity: 'proving',
         seconds_since_improve: 1,
       } as never)
       spin.applyCpsat({
         type: 'progress',
-        phase: 'minimize_red',
-        phase_label: '2/3 Minimizing RED',
+        phase: 'minimize_clash',
+        phase_label: '2/3 Minimizing clashes',
         elapsed: 2.4,
         workers: 4,
         solutions: 2,
@@ -513,7 +550,7 @@ describe('createSolveSpinner live panel', () => {
       spin.applyCpsat({
         type: 'progress',
         phase: 'minimize_clash',
-        phase_label: '1/3 Minimizing clashes',
+        phase_label: '2/3 Minimizing clashes',
         elapsed: 3,
         workers: 4,
         solutions: 1,

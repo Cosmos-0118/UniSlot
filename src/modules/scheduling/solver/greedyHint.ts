@@ -210,7 +210,7 @@ function weightedDegree(code: string, edgeWeight: Map<string, number>, adj: Map<
   return w
 }
 
-/** DSATUR greedy coloring, then light SA polish minimizing clash then RED. */
+/** DSATUR greedy coloring, then light SA polish minimizing RED then clash weight. */
 export function buildGreedyHint(input: HintInput): GreedyHintResult {
   const {
     courseSections,
@@ -300,7 +300,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
       const delta = coloring.deltaIfSet(code, d)
       const clash = coloring.clash + delta.clash
       const red = coloring.red + delta.red
-      if (clash < pickClash || (clash === pickClash && red < pickRed)) {
+      if (red < pickRed || (red === pickRed && clash < pickClash)) {
         pick = d
         pickClash = clash
         pickRed = red
@@ -324,7 +324,7 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
   let bestClash = curClash
   let bestRed = curRed
   const bestDay = coloring.cloneDays()
-  let temp = Math.max(1, curClash * 0.15)
+  let temp = Math.max(1, curRed * 0.15)
 
   const polishT0 = performance.now()
   for (let it = 0; it < polishIters; it++) {
@@ -352,13 +352,13 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
       }
       const clash = coloring.clash
       const red = coloring.red
-      const better = clash < curClash || (clash === curClash && red < curRed)
-      const delta = clash - curClash
+      const better = red < curRed || (red === curRed && clash < curClash)
+      const delta = red !== curRed ? red - curRed : clash - curClash
       const accept = better || (delta > 0 && rand() < Math.exp(-delta / Math.max(0.01, temp)))
       if (accept) {
         curClash = clash
         curRed = red
-        if (clash < bestClash || (clash === bestClash && red < bestRed)) {
+        if (red < bestRed || (red === bestRed && clash < bestClash)) {
           bestClash = clash
           bestRed = red
           Object.assign(bestDay, coloring.dayOf)
@@ -375,14 +375,14 @@ export function buildGreedyHint(input: HintInput): GreedyHintResult {
       const delta = coloring.deltaIfSet(c1, nd)
       const clash = coloring.clash + delta.clash
       const red = coloring.red + delta.red
-      const better = clash < curClash || (clash === curClash && red < curRed)
-      const dClash = clash - curClash
-      const accept = better || (dClash > 0 && rand() < Math.exp(-dClash / Math.max(0.01, temp)))
+      const better = red < curRed || (red === curRed && clash < curClash)
+      const scoreDelta = red !== curRed ? red - curRed : clash - curClash
+      const accept = better || (scoreDelta > 0 && rand() < Math.exp(-scoreDelta / Math.max(0.01, temp)))
       if (accept) {
         coloring.assign(c1, nd)
         curClash = coloring.clash
         curRed = coloring.red
-        if (clash < bestClash || (clash === bestClash && red < bestRed)) {
+        if (red < bestRed || (red === bestRed && clash < bestClash)) {
           bestClash = clash
           bestRed = red
           Object.assign(bestDay, coloring.dayOf)

@@ -1,4 +1,4 @@
-"""CP-SAT model: course → weekday coloring with lex clash / RED / balance objectives."""
+"""CP-SAT model: course → weekday coloring with lex RED / clash / balance objectives."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from bounds import compute_clash_lower_bound, min_monochrome_pairs
+from validate import validate_instance
 
 NUM_WEEKDAYS = 6
 SATURDAY = 5
@@ -35,6 +36,7 @@ def _pair_key(a: str, b: str) -> tuple[str, str]:
 
 
 def build_model(instance: dict[str, Any]) -> BuiltModel:
+    validate_instance(instance)
     courses = _as_courses(instance)
     if not courses:
         raise ValueError("instance has no courses")

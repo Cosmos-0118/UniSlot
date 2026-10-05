@@ -36,7 +36,7 @@ import {
 import type { RunLogEntry } from '../merge/runLog'
 import type { ClashProvenanceMap } from '../merge/clashProvenance'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
-import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
+import { OBJECTIVE_POLICY, sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
 import type { ClashReport, CourseEmailGroup, EnrollmentRow, Schedule, ValidationResult } from '../types'
 import { throwIfAborted } from './cancellation'
 import {
@@ -122,6 +122,10 @@ export type RectifyPipelineResult = {
   saturdayExtraCourseCodes?: string[]
   proven_optimal?: boolean
   proven_levels?: string[]
+  red_bound?: number | null
+  red_gap?: number | null
+  clash_bound?: number | null
+  clash_gap?: number | null
   solver_status?: string
   solver_message?: string
   infeasible?: boolean
@@ -301,6 +305,10 @@ export async function runRectifyPipeline(
   let solverTimeSeconds = 0
   let provenOptimal = false
   let provenLevels: string[] = []
+  let redBound: number | null | undefined
+  let redGap: number | null | undefined
+  let clashBound: number | null | undefined
+  let clashGap: number | null | undefined
   let solverStatus = 'PINNED'
   let solverMessage: string | undefined
   let cpsatRan = false
@@ -365,6 +373,10 @@ export async function runRectifyPipeline(
       solverTimeSeconds = solved.solver_time_seconds
       provenOptimal = solved.proven_optimal
       provenLevels = solved.proven_levels
+      redBound = solved.red_bound
+      redGap = solved.red_gap
+      clashBound = solved.clash_bound
+      clashGap = solved.clash_gap
       solverStatus = solved.status
       solverMessage = solved.message
       ortoolsVersion = solved.ortools_version
@@ -413,6 +425,7 @@ export async function runRectifyPipeline(
   const sectionCountChanges = diffSectionCounts(snapshot.courseSections, courseSections)
   const flatSections = Object.values(courseSections).flat()
   const schedulingStats = computeSchedulingStats(flatSections, slotAssignments, conflictGraph, {
+    allowSaturdayForMath, saturdayExtraCourseCodes,
     courseSections,
     students,
   })
@@ -528,6 +541,8 @@ export async function runRectifyPipeline(
 
   const schedulingSnapshot: SchedulingSnapshot = {
     schema_version: SNAPSHOT_SCHEMA_VERSION,
+    ...(placementMethod !== 'pinned-only' ? { objective_policy: OBJECTIVE_POLICY }
+      : snapshot.objective_policy ? { objective_policy: snapshot.objective_policy } : {}),
     ...(snapshot.source ? { source: { ...snapshot.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...slotAssignments },
@@ -619,6 +634,10 @@ export async function runRectifyPipeline(
     saturdayExtraCourseCodes,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
+    red_bound: redBound,
+    red_gap: redGap,
+    clash_bound: clashBound,
+    clash_gap: clashGap,
     solver_status: solverStatus,
     solver_message: solverMessage,
     ortools_version: ortoolsVersion,

@@ -1,4 +1,5 @@
 import type { ConflictEdge, ConflictGraph, Section, Student } from '../types'
+import { TOTAL_WEEKLY_SLOTS } from './timeModel'
 
 export interface ConflictAnalysis {
   conflictDensity: Record<string, number>
@@ -78,6 +79,14 @@ export function computeClashWeight(
   assignments: Record<string, number>,
 ): number {
   let total = 0
+  const required = new Set([...conflictGraph.sections,
+    ...conflictGraph.edges.flatMap((edge) => [edge.section_a, edge.section_b])])
+  for (const sectionId of required) {
+    const slot = assignments[sectionId]
+    if (slot === undefined || !Number.isInteger(slot) || slot < 0 || slot >= TOTAL_WEEKLY_SLOTS) {
+      throw new Error(`Section ${sectionId}: invalid or missing slot assignment ${String(slot)}`)
+    }
+  }
   for (const edge of conflictGraph.edges) {
     if (assignments[edge.section_a] === assignments[edge.section_b]) {
       total += edge.weight

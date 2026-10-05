@@ -11,35 +11,39 @@ import {
   slotIndexToDay,
 } from '../solver/timeModel'
 
-/** course_code -> faculty label, built once from the faculty map. */
+/** course_code -> every real/resource faculty label used by its sections. */
 export function buildFacultyByCourse(
   courseSections: Record<string, Section[]>,
   facultyConstraints: Record<string, string[]>,
-): Map<string, string> {
+): Map<string, string[]> {
   const courseBySection = new Map<string, string>()
   for (const sections of Object.values(courseSections)) {
     for (const sec of sections) courseBySection.set(sec.section_id, sec.course_code)
   }
-  const facultyByCourse = new Map<string, string>()
+  const facultyByCourse = new Map<string, Set<string>>()
   for (const [faculty, sectionIds] of Object.entries(facultyConstraints)) {
     for (const sid of sectionIds) {
       const code = courseBySection.get(sid)
-      if (code) facultyByCourse.set(code, faculty)
+      if (code) {
+        const labels = facultyByCourse.get(code) ?? new Set<string>()
+        labels.add(faculty)
+        facultyByCourse.set(code, labels)
+      }
     }
   }
-  return facultyByCourse
+  return new Map([...facultyByCourse].map(([code, labels]) => [code, [...labels]]))
 }
 
 function facultyDaysFromPinned(
   fixedDays: Record<string, number>,
-  facultyByCourse: Map<string, string>,
+  facultyByCourse: Map<string, string[]>,
 ): Map<string, Set<number>> {
   const facultyOnDay = new Map<string, Set<number>>()
   for (const [code, day] of Object.entries(fixedDays)) {
-    const faculty = facultyByCourse.get(code)
-    if (!faculty) continue
-    if (!facultyOnDay.has(faculty)) facultyOnDay.set(faculty, new Set())
-    facultyOnDay.get(faculty)!.add(day)
+    for (const faculty of facultyByCourse.get(code) ?? []) {
+      if (!facultyOnDay.has(faculty)) facultyOnDay.set(faculty, new Set())
+      facultyOnDay.get(faculty)!.add(day)
+    }
   }
   return facultyOnDay
 }
@@ -95,16 +99,16 @@ export function preflightRectify(args: {
 
   const pinnedByFacultyDay = new Map<string, string>()
   for (const [code, day] of Object.entries(fixedDays)) {
-    const faculty = facultyByCourse.get(code)
-    if (!faculty) continue
-    const key = `${faculty}\t${day}`
-    const prev = pinnedByFacultyDay.get(key)
-    if (prev !== undefined && prev !== code) {
-      blockers.push(
-        `Faculty "${faculty}" is pinned to ${slotIndexToDay(day)} for both ${prev} and ${code}.`,
-      )
-    } else {
-      pinnedByFacultyDay.set(key, code)
+    for (const faculty of facultyByCourse.get(code) ?? []) {
+      const key = `${faculty}\t${day}`
+      const prev = pinnedByFacultyDay.get(key)
+      if (prev !== undefined && prev !== code) {
+        blockers.push(
+          `Faculty "${faculty}" is pinned to ${slotIndexToDay(day)} for both ${prev} and ${code}.`,
+        )
+      } else {
+        pinnedByFacultyDay.set(key, code)
+      }
     }
   }
 
@@ -118,16 +122,16 @@ export function preflightRectify(args: {
       blockers.push(`Course ${code} has no available weekday under the current Saturday policy.`)
       continue
     }
-    const faculty = facultyByCourse.get(code)
-    if (!faculty) continue
-    const blocked = facultyOnDay.get(faculty) ?? new Set<number>()
+    const faculties = facultyByCourse.get(code) ?? []
+    if (faculties.length === 0) continue
+    const blocked = new Set(faculties.flatMap((faculty) => [...(facultyOnDay.get(faculty) ?? [])]))
     let feasibleDays = 0
     for (let d = 0; d <= maxDay; d++) {
       if (!blocked.has(d)) feasibleDays++
     }
     if (feasibleDays === 0) {
       blockers.push(
-        `Course ${code}: faculty "${faculty}" already teaches on every available weekday, so it cannot be placed without moving an existing course.`,
+        `Course ${code}: faculty ${faculties.map((faculty) => `"${faculty}"`).join(', ')} already teaches on every available weekday, so it cannot be placed without moving an existing course.`,
       )
     }
   }
@@ -140,9 +144,31 @@ export type PlaceFreeCoursesResult = {
   clash_weight: number
 }
 
+function countAffectedStudents(
+  courseSections: Record<string, Section[]>,
+  days: Record<string, number>,
+): number {
+  const studentDays = new Map<string, Set<number>>()
+  const affected = new Set<string>()
+  for (const [code, sections] of Object.entries(courseSections)) {
+    const day = days[code]
+    if (day === undefined) continue
+    // Sections of one course run together; count each student's course once.
+    const roster = new Set(sections.flatMap((section) => section.enrolled_students))
+    for (const id of roster) {
+      const seen = studentDays.get(id) ?? new Set<number>()
+      if (seen.has(day)) affected.add(id)
+      seen.add(day)
+      studentDays.set(id, seen)
+    }
+  }
+  return affected.size
+}
+
 /**
  * Last-resort weekday placement for new courses when CP-SAT is unavailable or returns nothing.
- * Minimizes clash weight only, so it does not preserve weekday balance the way CP-SAT does.
+ * Greedily minimizes unique affected students, then clash weight at each placement.
+ * It does not prove optimality or preserve weekday balance the way CP-SAT does.
  * Returns null when no feasible day exists for a course.
  */
 export function placeFreeCourseWeekdays(
@@ -155,7 +181,8 @@ export function placeFreeCourseWeekdays(
   saturdayExtraCourseCodes: readonly string[] = [],
 ): PlaceFreeCoursesResult | null {
   if (freeCodes.length === 0) {
-    return { slot_by_course: { ...fixedDays }, clash_weight: 0 }
+    return { slot_by_course: { ...fixedDays }, clash_weight: computeClashWeight(conflictGraph,
+      sectionSlotsFromCourseSlots(courseSections, fixedDays)) }
   }
 
   const saturdayExtras = normalizeSaturdayExtraCodes([...saturdayExtraCourseCodes])
@@ -175,21 +202,26 @@ export function placeFreeCourseWeekdays(
       maxSlotIndexForCourse(code, allowSaturdayForMath, saturdayExtras),
       weekdays - 1,
     )
-    const faculty = facultyByCourse.get(code)
+    const faculties = facultyByCourse.get(code) ?? []
     const sections = courseSections[code]
     if (!sections) continue
 
     let bestDay = -1
+    let bestRed = Infinity
     let bestCost = Infinity
 
     for (let d = 0; d <= maxDay; d++) {
-      if (faculty && facultyOnDay.get(faculty)?.has(d)) continue
+      if (faculties.some((faculty) => facultyOnDay.get(faculty)?.has(d))) continue
 
       const trial = { ...assignment, [code]: d }
       const trialSections = { ...placedSections, [code]: sections }
       const slots = sectionSlotsFromCourseSlots(trialSections, trial)
-      const cost = computeClashWeight(conflictGraph, slots)
-      if (cost < bestCost) {
+      const red = countAffectedStudents(trialSections, trial)
+      const cost = computeClashWeight({ sections: Object.keys(slots), edges: conflictGraph.edges.filter(
+        (edge) => slots[edge.section_a] !== undefined && slots[edge.section_b] !== undefined,
+      ) }, slots)
+      if (red < bestRed || (red === bestRed && cost < bestCost)) {
+        bestRed = red
         bestCost = cost
         bestDay = d
       }
@@ -199,7 +231,7 @@ export function placeFreeCourseWeekdays(
 
     assignment[code] = bestDay
     placedSections[code] = sections
-    if (faculty) {
+    for (const faculty of faculties) {
       if (!facultyOnDay.has(faculty)) facultyOnDay.set(faculty, new Set())
       facultyOnDay.get(faculty)!.add(bestDay)
     }

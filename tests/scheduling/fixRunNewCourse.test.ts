@@ -136,6 +136,7 @@ describe('runFixPipeline new-course path', () => {
     expect(result.editReport?.new_course_slot).toBeTypeOf('number')
 
     const snap = result.schedulingSnapshot!
+    expect(snap.objective_policy).toBe('red-first-v1')
     expect(snap.courseSections['21NEW101T']![0]!.enrolled_students).toEqual(['RA999'])
     expect(snap.slot_assignments['21NEW101T']).toBe(result.editReport?.new_course_slot)
     // Existing courses keep their weekdays
@@ -144,9 +145,9 @@ describe('runFixPipeline new-course path', () => {
     expect(snap.courseSections['21MAB301TP']).toBeUndefined()
   })
 
-  it('keeps snapshot-rebuild path when target already exists', async () => {
+  it.each([undefined, 'red-first-v1'] as const)('preserves prior policy %s when target already exists', async (policy) => {
     const result = await runFixPipeline(() => {}, {
-      previousSnapshot: makeSnapshot(),
+      previousSnapshot: { ...makeSnapshot(), ...(policy ? { objective_policy: policy } : {}) },
       mode: 'fix-course',
       fix: {
         register: 'RA999',
@@ -160,6 +161,7 @@ describe('runFixPipeline new-course path', () => {
     expect(result.editReport?.created_new_course).toBe(false)
     expect(result.editReport?.placement_method).toBe('existing')
     expect(result.solver_status).toBe('SNAPSHOT')
+    expect(result.schedulingSnapshot!.objective_policy).toBe(policy)
     expect(result.schedulingSnapshot!.slot_assignments['21MAB310T']).toBe(0)
   })
 })

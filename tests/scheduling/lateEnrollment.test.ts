@@ -212,6 +212,7 @@ describe('lateEnrollment', () => {
 
   it('merge with new-section creates S3 and freezes existing weekdays', () => {
     const snap = snapshotFixture()
+    snap.courseSections['21MAB101T']!.forEach((section) => { section.faculty = 'Dr Rao' })
     const adds = Array.from({ length: 5 }, (_, i) => ({
       register_number: `L${i}`,
       student_name: `L${i}`,
@@ -233,6 +234,7 @@ describe('lateEnrollment', () => {
     expect(merged.slot_assignments['21MAB101T_S2']).toBe(1)
     expect(merged.slot_assignments['21MAB101T_S3']).toBe(1)
     expect(merged.courseSections['21MAB101T']!).toHaveLength(3)
+    expect(merged.courseSections['21MAB101T']![2]!.faculty).toBe('Planning:21MAB101T_S3')
   })
 
   it('equalize moves students without changing weekday', () => {

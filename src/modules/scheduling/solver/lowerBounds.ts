@@ -93,9 +93,18 @@ function greedyMaxClique(adj: Map<string, Set<string>>, starts = 48): string[] {
 
 /**
  * Bron–Kerbosch with pivoting on a degree-filtered subgraph (exact on the induced set).
- * Caps node count so browser solve stays snappy.
+ * Bounds both the induced graph size and recursive search work. Even an
+ * unfinished search returns a valid clique and therefore a safe lower bound.
  */
-function exactMaxCliqueOnCore(adj: Map<string, Set<string>>, maxNodes = 64): string[] {
+export function searchCliqueOnCore(
+  adj: Map<string, Set<string>>,
+  options: { maxNodes?: number; nodeBudget?: number } = {},
+): { clique: string[]; nodes_visited: number; budget_exhausted: boolean } {
+  const maxNodes = options.maxNodes ?? 64
+  const nodeBudget = options.nodeBudget ?? 5000
+  if (!Number.isInteger(maxNodes) || maxNodes < 0 || !Number.isInteger(nodeBudget) || nodeBudget < 0) {
+    throw new Error('Clique node counts and search budget must be non-negative integers')
+  }
   const ranked = [...adj.keys()].sort((a, b) => (adj.get(b)?.size ?? 0) - (adj.get(a)?.size ?? 0))
   const core = ranked.slice(0, Math.min(maxNodes, ranked.length))
   const coreSet = new Set(core)
@@ -105,7 +114,12 @@ function exactMaxCliqueOnCore(adj: Map<string, Set<string>>, maxNodes = 64): str
   }
 
   let best: string[] = []
+  let visited = 0
+  let exhausted = false
   function bk(r: string[], p: Set<string>, x: Set<string>): void {
+    if (visited >= nodeBudget) { exhausted = true; return }
+    visited++
+    if (r.length > best.length) best = [...r]
     if (p.size === 0 && x.size === 0) {
       if (r.length > best.length) best = [...r]
       return
@@ -123,6 +137,7 @@ function exactMaxCliqueOnCore(adj: Map<string, Set<string>>, maxNodes = 64): str
     const pivotNbrs = pivot ? local.get(pivot) ?? new Set() : new Set<string>()
     const candidates = [...p].filter((v) => !pivotNbrs.has(v))
     for (const v of candidates) {
+      if (exhausted) break
       const nbrs = local.get(v) ?? new Set()
       const p2 = new Set([...p].filter((u) => nbrs.has(u)))
       const x2 = new Set([...x].filter((u) => nbrs.has(u)))
@@ -132,7 +147,7 @@ function exactMaxCliqueOnCore(adj: Map<string, Set<string>>, maxNodes = 64): str
     }
   }
   bk([], new Set(core), new Set())
-  return best
+  return { clique: best, nodes_visited: visited, budget_exhausted: exhausted }
 }
 
 /**
@@ -302,12 +317,14 @@ export function computeSchedulingLowerBounds(
   }
   const { adj, weights } = buildCourseConflictWeighted(conflictGraph, sectionToCourse)
   const greedyClique = greedyMaxClique(adj)
-  const exactClique = exactMaxCliqueOnCore(adj)
+  const search = searchCliqueOnCore(adj)
+  const exactClique = search.clique
   const maxCliqueNodes =
     exactClique.length >= greedyClique.length ? exactClique : greedyClique
   const maxClique = maxCliqueNodes.length || (adj.size ? 1 : 0)
   const colors = activeWeekdayCount(allowSaturdayForMath, saturdayExtras)
   const notes: string[] = []
+  if (search.budget_exhausted) notes.push('Clique search reached its node budget; using valid cliques found so far.')
 
   if (maxClique > colors) {
     notes.push(
@@ -344,7 +361,7 @@ export function computeSchedulingLowerBounds(
   let nonMathCliqueNodes: string[] = []
   if (nonMathAdj.size) {
     const g = greedyMaxClique(nonMathAdj, 32)
-    const e = exactMaxCliqueOnCore(nonMathAdj, 48)
+    const e = searchCliqueOnCore(nonMathAdj, { maxNodes: 48 }).clique
     nonMathCliqueNodes = e.length >= g.length ? e : g
     nonMathClique = nonMathCliqueNodes.length
     if (nonMathClique > NON_MATH_WEEKDAY_COUNT) {

@@ -1,5 +1,20 @@
 # UniSlot proving research findings
 
+**Current implementation note — 5 October 2026:** the solver follows the
+confirmed RED-first order: unique RED students → weighted clash pairs → weekday
+balance → parallel excess. `proven_optimal` certifies the primary RED minimum;
+`proven_levels` reports `red_students`, `clash_weight`, and
+`balance_and_parallel` in that order. `red_bound` / `red_gap` apply to the
+primary phase; `clash_bound` / `clash_gap` apply conditionally after RED is
+fixed. The experiments and pair-cost benchmark below are historical; those
+results do not establish RED-first production performance. The Gershgorin
+dual recommendation was removed after it proved to yield a zero lower bound.
+The current implementation uses validated weighted clique/pigeonhole and
+component bounds, with a 5,000-node clique-search budget and a valid fallback
+clique. Exhaustive checks covered 1,458 weighted graph/color combinations.
+`--clash-only` remains a diagnostic, not a primary certificate. See
+[Constraints §2](Constraints.md#2-core-objectives).
+
 Research executed against the live course→weekday CP-SAT model (not the older 55-slot doc). Goal: understand why “proving” burns wall time and which literature/product levers actually help.
 
 ## 1. Diagnostic result (synthetic hard instance)
@@ -101,27 +116,32 @@ Laurent Perron (OR-Tools): when improvement rate slows, it usually keeps slowing
 - ITC 2019 MIP work (Holm; DTU graph-based MIP): **clique covers** of conflict graphs strengthen formulations; reduction/preprocessing removes redundant conflicts.
 - Student-level interval-graph clique formulations (RSS / ITC papers) help *assignment* constraints more than weekday Max-k-Cut, but clique inequalities on the **course** conflict graph still apply.
 
-### Sectioning before prove
+### Sectioning before prove — historical research interpretation
 
-[Edge Minimizing the Student Conflict Graph](https://optimization-online.org/wp-content/uploads/2021/02/8257.pdf) (greedy + CP-SAT sectioning) matches [`docs/research.md`](research.md): fewer/lighter conflict edges make both search and prove easier. With UniSlot’s simultaneous-section rule, sectioning cannot move sections across days — edge minimization is still valuable for **who shares which section**, shaping edge weights into the course graph.
+[Edge Minimizing the Student Conflict Graph](https://optimization-online.org/wp-content/uploads/2021/02/8257.pdf) (greedy + CP-SAT sectioning) is relevant to operational roster design. In UniSlot, the course-pair conflict weights are computed from canonical student enrollments and validated against section rosters. Assigning the same canonical students to different sections cannot change those course-level weights, RED count, or weekday load when section counts remain fixed. Section assignment balances loads and uses program cohesion to break ties; it is not a clash-objective optimization.
 
 ### Lex strategy
 
-Proving clash then fixing equality then RED is correct lexicographically. Research suggestion: treat RED/balance as **heuristic-only** once clash is proven (or gap-accepted); full three-level OPTIMAL is rarely needed for shipping schedules.
+The required and implemented lexicographic order is RED first: prove minimum
+unique RED count, fix it, minimize pair clash weight, then balance and parallel
+excess. RED cannot be treated as a heuristic-only secondary objective when
+claiming that as many students as possible have a clash-free timetable. A
+bounded run can return a feasible schedule without a RED optimality claim; later
+tie-breaker proofs can be reported separately.
 
 ---
 
-## 6. Policy decision (product)
+## 6. Historical policy recommendation (product)
 
 **Chosen default: dual-track efficiency policy**
 
 1. **Interactive / default run:** ship the best feasible schedule when either
-   - clash `absolute_gap_limit` is small (e.g. 0, or a configured δ), or
+   - the primary RED `absolute_gap_limit` is small (e.g. 0, or a configured δ), or
    - incumbent unchanged for T seconds while still proving, or
    - `--time-limit` hits  
    Mark `proven_optimal: false` honestly; show bound/gap in UI (already partially there).
-2. **Overnight / `--prove` mode:** unbounded (or long) clash prove for certificates when admins need them.
-3. **Engineering priority for true speedups:** stronger clash LBs + graph reduction + encoding bake-off — **not** more portfolio seeds for incumbent quality.
+2. **Overnight / `--prove` mode:** unbounded (or long) primary RED prove for certificates when admins need them.
+3. **Engineering priority for true speedups:** stronger primary RED bounds + graph reduction + encoding bake-off — **not** more portfolio seeds for incumbent quality.
 
 Rationale: the diagnostic shows efficiency is lost on **bound closing**, not on finding schedules. Forcing OPTIMAL on every interactive run is the wrong default; researching Max-k-Cut LBs is the right path if certificates must stay fast.
 
@@ -138,7 +158,7 @@ Rationale: the diagnostic shows efficiency is lost on **bound closing**, not on 
 
 ---
 
-## 8. Suggested implementation order (after research)
+## 8. Historical suggested research order
 
 1. Keep gap-trace; run on one real enrollment; archive NDJSON
 2. Offline stronger clash LB → inject into instance
@@ -148,16 +168,16 @@ Rationale: the diagnostic shows efficiency is lost on **bound closing**, not on 
 
 ---
 
-## 9. Implemented (2026-07-25)
+## 9. Existing solver capabilities and research status (historical table updated 2026-10-05)
 
 | Item | Status |
 |------|--------|
 | Gap-trace + bound refresh on heartbeats | Done (`--gap-trace`, `diagnose_gap.py`) |
 | CP-SAT prove params (`optimize_with_core`; stock/core/core_linear A/B) | Done — 9.15 defaults no longer re-set globally |
 | Weighted clique + component + core-edge LB cuts | Done (`lowerBounds.ts` + `bounds.py` via `model.py`) |
-| Gershgorin Max-k-Cut dual (conservative UB on cut) | Done (`bounds.py::spectral_clash_lower_bound`) |
+| Gershgorin Max-k-Cut dual | Removed; baseline derivation always yielded a zero clash lower bound |
 | Clique same-day inequalities | Done (`model.py`) |
 | Twin-fold detection (notes; fold-into-solve deferred) | Partial — counts candidates in bound notes |
-| `--absolute-gap` / `--prove-plateau` / `--prove` | Done; `proven_optimal` now requires integer gap < 1 |
+| `--absolute-gap` / `--prove-plateau` / `--prove` | Done; applies to the active primary RED phase, and `proven_optimal` requires the RED integer gap to close |
 | Incremental greedyHint + sectioning | Done |
 | Column generation / HiGHS hybrid / SDP hierarchy | Not started (Tier 2–3 research) |

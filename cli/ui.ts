@@ -470,8 +470,8 @@ export function createSolveSpinner(
     const act = activityWord(state.activity)
     if (stage === 'race' && raceBest) {
       return (
-        `Portfolio race · ${raceBest.seeds} seeds · best clash ${metric(raceBest.clash)}` +
-        ` · RED ${metric(raceBest.red)} · ${time}`
+        `Portfolio race · ${raceBest.seeds} seeds · best RED ${metric(raceBest.red)}` +
+        ` · clash ${metric(raceBest.clash)} · ${time}`
       )
     }
     if (stage === 'clash') {
@@ -479,11 +479,12 @@ export function createSolveSpinner(
         state.bestClash != null && state.bound != null
           ? ` · bound ${state.bound} · gap ${state.bestClash - state.bound}`
           : ''
-      return `1/3 Clash · clash ${metric(state.bestClash)} · RED ${metric(state.bestRed)}${gap} · ${act} · ${time}`
+      return `2/3 Clash · clash ${metric(state.bestClash)} · locked RED ${metric(state.bestRed)}${gap} · ${act} · ${time}`
     }
     if (stage === 'red') {
-      const locked = state.bestClash != null ? ` · locked clash ${state.bestClash}` : ''
-      return `2/3 RED · RED ${metric(state.bestRed)}${locked} · ${act} · ${time}`
+      const gap = state.bestRed != null && state.bound != null
+        ? ` · bound ${state.bound} · gap ${state.bestRed - state.bound}` : ''
+      return `1/3 RED · RED ${metric(state.bestRed)} · clash ${metric(state.bestClash)}${gap} · ${act} · ${time}`
     }
     if (stage === 'balance') {
       return (
@@ -563,23 +564,23 @@ export function createSolveSpinner(
       const r = raceBest?.red ?? state.bestRed
       checkpoint(`Portfolio race · best clash ${metric(c)} · RED ${metric(r)}`)
     }
-    if (stage === 'clash' && (next === 'red' || next === 'balance') && !checkpointed.clash) {
+    if (stage === 'clash' && next === 'balance' && !checkpointed.clash) {
       checkpointed.clash = true
       checkpoint(
-        `1/3 Clash · clash ${metric(state.bestClash)}` +
+        `2/3 Clash · clash ${metric(state.bestClash)}` +
           (clashProven ? ' · proven minimal' : ' · best feasible'),
       )
     }
-    if (stage === 'red' && next === 'balance' && !checkpointed.red) {
+    if (stage === 'red' && (next === 'clash' || next === 'balance') && !checkpointed.red) {
       checkpointed.red = true
       checkpoint(
-        `2/3 RED · RED ${metric(state.bestRed)}` +
+        `1/3 RED · RED ${metric(state.bestRed)}` +
           (redProven ? ' · proven minimal' : ' · best feasible'),
       )
     }
     stage = next
     if (label) state.phaseLabel = label
-    if (next === 'red') {
+    if (next === 'red' || next === 'clash') {
       state.bound = null
       state.solutions = 0
     }
@@ -652,31 +653,16 @@ export function createSolveSpinner(
       if (evt.portfolio) {
         // Per-lane race events collapse to a single best line.
         if (!raceBest) raceBest = { clash: null, red: null, seeds: 1 }
-        if (evt.type === 'progress' || evt.type === 'heartbeat') {
-          if (evt.best_clash != null) {
-            if (raceBest.clash == null || evt.best_clash < raceBest.clash) {
-              raceBest.clash = evt.best_clash
-              state.bestClash = evt.best_clash
-            }
-          }
-          if (evt.best_red != null) {
-            if (
-              raceBest.red == null ||
-              (raceBest.clash != null &&
-                evt.best_clash === raceBest.clash &&
-                evt.best_red < raceBest.red)
-            ) {
-              raceBest.red = evt.best_red
-            }
-            state.bestRed = evt.best_red
-          }
-        } else if (evt.type === 'done') {
-          if (evt.clash_weight != null) {
-            if (raceBest.clash == null || evt.clash_weight < raceBest.clash) {
-              raceBest.clash = evt.clash_weight
-            }
-          }
-          if (evt.red_students != null) raceBest.red = evt.red_students
+        const red = evt.type === 'progress' || evt.type === 'heartbeat'
+          ? evt.best_red : evt.type === 'done' ? evt.red_students : null
+        const clash = evt.type === 'progress' || evt.type === 'heartbeat'
+          ? evt.best_clash : evt.type === 'done' ? evt.clash_weight : null
+        if (red != null && clash != null && (raceBest.red == null || red < raceBest.red ||
+          (red === raceBest.red && (raceBest.clash == null || clash < raceBest.clash)))) {
+          raceBest.red = red
+          raceBest.clash = clash
+          state.bestRed = red
+          state.bestClash = clash
         }
         stage = 'race'
         push()
@@ -684,7 +670,7 @@ export function createSolveSpinner(
       }
 
       if (evt.type === 'start') {
-        enterStage('clash', 'Building model')
+        enterStage('red', 'Building model')
         state.activity = 'searching'
         state.workers = evt.workers
         state.solverElapsedAt = Date.now()
@@ -693,14 +679,14 @@ export function createSolveSpinner(
       }
 
       if (evt.type === 'model_ready') {
-        enterStage('clash', '1/3 Minimizing clashes')
+        enterStage('red', '1/3 Minimizing RED')
         push(true)
         return
       }
 
       if (evt.type === 'phase') {
         const lex = lexStageFromPhase(evt.phase)
-        if (lex === 'clash') enterStage('clash', evt.phase_label ?? '1/3 Minimizing clashes')
+        if (lex === 'clash') enterStage('clash', evt.phase_label ?? '2/3 Minimizing clashes')
         else if (lex) enterStage(lex, evt.phase_label)
         else {
           state.phase = evt.phase
@@ -717,10 +703,8 @@ export function createSolveSpinner(
 
       if (evt.type === 'progress' || evt.type === 'heartbeat') {
         const lex = lexStageFromPhase(evt.phase)
-        if (lex && lex !== stage && (lex === 'red' || lex === 'balance')) {
+        if (lex && lex !== stage) {
           enterStage(lex, evt.phase_label)
-        } else if (lex === 'clash' && stage === 'race') {
-          enterStage('clash', evt.phase_label ?? '1/3 Minimizing clashes')
         }
         state.phase = evt.phase
         if (evt.phase_label) state.phaseLabel = evt.phase_label
@@ -737,8 +721,11 @@ export function createSolveSpinner(
         state.secondsSinceImprove = evt.seconds_since_improve ?? state.secondsSinceImprove
 
         if (evt.event === 'phase_end') {
-          if (evt.phase === 'minimize_clash' && evt.solver_status === 'OPTIMAL') clashProven = true
-          if (evt.phase === 'minimize_red' && evt.solver_status === 'OPTIMAL') redProven = true
+          const incumbent = evt.phase === 'minimize_red' ? evt.best_red : evt.best_clash
+          const proven = evt.proven ?? (evt.solver_status === 'OPTIMAL' && incumbent != null &&
+            evt.bound != null && incumbent - evt.bound < 1)
+          if (evt.phase === 'minimize_clash' && proven) clashProven = true
+          if (evt.phase === 'minimize_red' && proven) redProven = true
         }
         push()
       }
@@ -864,23 +851,23 @@ export function formatMetricsLines(opts: {
   structuralImpossible?: boolean
 }): string[] {
   const levels = new Set(opts.provenLevels ?? [])
-  const clashOk = levels.has('clash_weight') || opts.proven
-  const redOk = levels.has('red_students')
-  const balOk = levels.has('balance_and_parallel')
+  const redOk = levels.has('red_students') || opts.proven
+  const clashOk = redOk && levels.has('clash_weight')
+  const balOk = clashOk && levels.has('balance_and_parallel')
   const fullLex = clashOk && redOk && balOk
   const proof = fullLex
-    ? palette.ok('full lex optimal — clash, RED, and balance are all proven minimal')
+    ? palette.ok('full lex optimal — RED, clash, and balance are all proven minimal')
     : opts.proven
-      ? palette.warn('clash proven · later lex levels not fully proven')
-      : palette.warn('best feasible (clash not fully proven)')
+      ? palette.warn('RED proven · later lex levels not fully proven')
+      : palette.warn('best feasible (RED not fully proven)')
   const row = (label: string, value: string, mark: string) => {
     const left = `${palette.bold(label.padEnd(10))} ${value.padEnd(6)}`
     return mark ? `${left}  ${mark}` : left
   }
   const aligned = [
     row('Status', opts.status, ''),
-    row('Clash wt', String(opts.clashWeight), levelMark(clashOk)),
     row('RED', String(opts.red), levelMark(redOk)),
+    row('Clash wt', String(opts.clashWeight), levelMark(clashOk)),
     row('Balance', '', levelMark(balOk)),
     `${palette.bold('Proof'.padEnd(10))} ${proof}`,
     `${palette.bold('Time'.padEnd(10))} ${opts.seconds.toFixed(2)}s · ${opts.workers} workers`,

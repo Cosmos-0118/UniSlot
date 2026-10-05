@@ -1,6 +1,17 @@
 # UniSlot user guide
 
-This guide explains how to install UniSlot and produce a clash-optimal evening timetable from an enrollment Excel workbook.
+This guide explains how to install UniSlot and produce an evening timetable from an enrollment Excel workbook.
+
+The confirmed goal is to give as many students as possible a completely
+clash-free timetable: minimize unique RED students first, then conflicting
+course pairs, then weekday balance and parallel excess. A student with several
+overlaps still counts as one affected student. Faculty and capacity rules remain
+hard constraints.
+
+The solver implements RED-first optimization: minimize the number of unique
+affected students, then weighted conflicting course pairs, then weekday load
+balance and parallel excess. Certificates identify which levels are proven;
+see [Constraints §2](docs/Constraints.md#2-core-objectives).
 
 ## 1. Install
 
@@ -77,21 +88,21 @@ What happens:
 
    ```text
    ◇  ▲ UniSlot · terminal CP-SAT scheduler
-   ◆  1/3 Clash · clash 18 · RED 18 · bound 12 · gap 6 · proving · 2m 05s
-   ◆  1/3 Clash · clash 18 · proven minimal
-   ◆  2/3 RED · RED 12 · proving · 2m 40s
+   ◆  1/3 RED · RED 12 · bound 10 · gap 2 · proving · 2m 05s
+   ◆  1/3 RED · RED 12 · proven minimal
+   ◆  2/3 Clash · clash 18 · proving · 2m 40s
    ```
 
-   - **1/3 Clash** — primary objective (clash weight).
-   - **2/3 RED** — fewest students with a same-day conflict.
-   - **3/3 Balance** — soft load balance after clashes are fixed.
+   - **1/3 RED** — prove the minimum number of unique students with a same-day conflict.
+   - **2/3 Clash** — minimize weighted conflicting course pairs among timetables tied at the minimum RED count.
+   - **3/3 Balance** — soft load balance and parallel comfort after RED and pair cost are fixed.
    - **clash / RED** — best solution found so far.
-   - **proving** — no better clash weight found recently; solver is closing the optimality proof. This can take a while on large enrollments; the clock still advances.
-   - **gap / bound** — when shown, distance between best solution and proven lower bound.
+   - **proving** — no better value for the active objective has been found recently; the solver is closing that level's proof. This can take a while on large enrollments; the clock still advances.
+   - **gap / bound** — when shown, distance between the active objective's incumbent and its lower bound.
 
    One spinner, no fullscreen animation — piped/CI logs (`-y`, non-TTY) show the same lines without color. Result summaries use one `note` panel shape.
 
-5. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED count, whether clashes are proven minimal.
+5. **Result panel** — status (`OPTIMAL` / `FEASIBLE`), clash weight, RED-student count, and which lexicographic levels are proven.
 6. **Output folder** — optional folder picker, or default `./unislot-out/`.
 
 Cancel anytime with **Ctrl+C**.
@@ -144,10 +155,12 @@ npm run unislot -- solve `
 | `--saturday-codes <list>` | Extra course codes allowed on Saturday (comma-separated), independent of maths |
 | `--seed <n>` | Reuse a prior run seed (skips seed prompt; works with `-y`) |
 | `--workers <n>` | CP-SAT workers for the prove phase (default: all CPUs) |
-| `--portfolio <k>` | Multi-seed clash race before prove (default: `0`; `k>0` enables but breaks seed reproducibility) |
-| `--time-limit <seconds>` | Escape hatch only — stops early; may not prove optimality |
+| `--portfolio <k>` | Multi-seed RED-first race before prove (default: `0`; `k>0` enables but breaks seed reproducibility) |
+| `--time-limit <seconds>` | Stops early; may return an audited schedule without proving RED optimality |
+| `--absolute-gap <n>` | Stop the primary RED proof when its incumbent-to-bound gap is at most `n` students |
+| `--prove-plateau <seconds>` | Stop proving the active objective after its incumbent and bound plateau for this long |
 
-Omit `--time-limit` for a full prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural clash/RED lower bounds as model cuts.
+Omit `--time-limit`, `--absolute-gap`, and `--prove-plateau` for an unbounded prove-to-optimal run. Before CP-SAT search, UniSlot builds a DSATUR + polish warm start and injects structural RED/clash lower bounds as model cuts. Gap and plateau controls apply to the primary RED phase.
 
 **Seeds / reproduction tokens:** Each run prints a reproduction token `seed/workers/portfolio/sat` (e.g. `77/8/0/0`) and stores the same fields in `summary.json` / `snapshot.json` (`repro_token`, `seed`, `workers`, `portfolio`, `allow_saturday_for_math`). To reproduce the same schedule:
 
@@ -195,24 +208,32 @@ In `summary.json`, the important fields are:
 - `ortools_version` / `python_version` — toolchain used (match for cross-device repro)
 - `clash_weight` — total monochrome conflict weight
 - `red_students` — students with at least one clash
-- `proven_optimal` — `true` means clash weight is proven minimal (integer gap `incumbent − bound < 1`), not merely that CP-SAT returned `OPTIMAL` (gap limits can yield that status with a remaining gap)
+- `objective_policy` — `red-first-v1` for new snapshots and summaries. Older folders without this field retain their historical objective and certificate meanings.
+- `proven_optimal` — `true` means the primary objective, unique RED-student count, is proven minimal. A CP-SAT `OPTIMAL` status alone is insufficient if a configured gap limit leaves a nonzero integer gap.
+- `proven_levels` — proven levels in priority order: `red_students`, `clash_weight`, `balance_and_parallel`.
+- `red_bound` / `red_gap` — lower bound and remaining gap for the primary RED proof.
+- `clash_bound` / `clash_gap` — pair-cost lower bound and gap conditional on fixing the minimum RED count.
 - `lower_bounds` — structural notes (e.g. clique larger than 6 weekdays ⇒ zero-clash impossible)
 
-If lower bounds say zero-clash is impossible, a positive clash weight with `proven_optimal: true` is still a correct best answer — not a solver failure.
+If lower bounds say zero-clash is impossible, a positive clash weight is not a
+solver failure. `proven_optimal: true` certifies the minimum RED count;
+`proven_levels` shows whether pair cost and load objectives are also proven.
+`--clash-only` is a pair-cost diagnostic and deliberately leaves
+`proven_optimal` false. `--primary-only` selects the RED-first portfolio run.
 
-## 6. Progress phases (detail)
+## 6. Solver progress phases (detail)
 
 | Phase | Goal |
 |-------|------|
 | Warm start | DSATUR + light SA polish → CP-SAT hints |
-| Portfolio race | Optional (`--portfolio k`); multi-seed clash-only race — wall-clock, not seed-reproducible |
+| Portfolio race | Optional (`--portfolio k`); multi-seed RED-first race — wall-clock, not seed-reproducible |
 | Building model | Encoding courses, conflict edges, faculty, students into CP-SAT |
-| 1/3 Minimizing clashes | Lex level 1 — prove minimum clash weight |
-| 2/3 Minimizing RED | Lex level 2 — among clash-optimal schedules, fewest RED students |
+| 1/3 Minimizing RED | Lex level 1 — prove minimum unique RED-student count |
+| 2/3 Minimizing clashes | Lex level 2 — among RED-optimal schedules, minimum weighted pair cost |
 | 3/3 Balancing weekdays | Lex level 3 — soft balance / parallel comfort |
 | Serialising workbooks | Writing Excel + JSON |
 
-Long stretches on **proving** with an unchanged clash number are normal: CP-SAT is verifying that nothing better exists.
+Long stretches on **proving** with an unchanged active-objective value are normal: CP-SAT is verifying that nothing better exists at that lexicographic level.
 
 ## 7. Troubleshooting
 

@@ -15,6 +15,8 @@ import type { ClashReport } from '../../src/modules/scheduling/types'
 import { formatLateAddsChain } from '../../src/modules/scheduling/io/excelLateMarking'
 import { buildSchedule } from '../../src/modules/scheduling/solver/scheduleOutput'
 import type { Section } from '../../src/modules/scheduling/types'
+import { buildSectionsForNewCourses } from '../../src/modules/scheduling/pipeline/lateRun'
+import type { LateAddition } from '../../src/modules/scheduling/merge/lateEnrollment'
 
 describe('runLog', () => {
   it('sequences and late batches increment', () => {
@@ -105,6 +107,8 @@ describe('clashProvenance', () => {
       { seq: 1, at: 't', operation: 'solve', provenMinimal: true },
     )
     expect(cause).toContain('proven minimal')
+    expect(cause).toContain('number of affected students')
+    expect(cause).not.toContain('unavoidable')
   })
 })
 
@@ -169,5 +173,25 @@ describe('laneStability', () => {
     expect(byId.A).toBe(1)
     expect(byId.B).toBe(2)
     expect(byId.C_S3).toBe(3)
+  })
+})
+
+describe('new-course section faculty identities', () => {
+  it('keeps the supplied instructor once and uses explicit planning identities for unassigned split sections', () => {
+    const adds: LateAddition[] = Array.from({ length: 65 }, (_, i) => ({
+      register_number: `R${i}`,
+      student_name: `R${i}`,
+      program: 'CSE',
+      course_code: 'NEW',
+      course_title: 'New course',
+      mobile_number: null,
+      email_id: null,
+      faculty: 'Dr Rao',
+      is_new_student: true,
+    }))
+    const sections = buildSectionsForNewCourses(adds).NEW!
+    expect(sections.map((section) => section.faculty)).toEqual([
+      'Dr Rao', 'Planning:NEW_S2',
+    ])
   })
 })

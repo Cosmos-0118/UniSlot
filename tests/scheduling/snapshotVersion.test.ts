@@ -31,6 +31,7 @@ describe('snapshot schema version + source', () => {
     const loaded = await loadSchedulingSnapshot(dir)
     expect(loaded.schema_version).toBeUndefined()
     expect(loaded.source).toBeUndefined()
+    expect(loaded.objective_policy).toBeUndefined()
   })
 
   it('clone keeps schema_version and source', () => {
@@ -39,6 +40,11 @@ describe('snapshot schema version + source', () => {
     expect(c.schema_version).toBe(2)
     expect(c.source).toEqual(src)
     expect(c.source).not.toBe(src)
+  })
+
+  it('preserves the scoring policy that distinguishes RED proofs from legacy pair proofs', () => {
+    const c = cloneSchedulingSnapshot({ ...base, objective_policy: 'red-first-v1' })
+    expect(c.objective_policy).toBe('red-first-v1')
   })
 
   it('sha256Hex matches the known digest', async () => {
@@ -54,9 +60,17 @@ describe('snapshot schema version + source', () => {
     const result = await runPipeline(ab, () => {}, {
       sourceFileName: 'tiny-enrollment.xlsx',
       cpsatTimeLimitSeconds: 20,
+      allowSaturdayForMath: false,
     })
     const snap = result.schedulingSnapshot
     expect(snap?.schema_version).toBe(SNAPSHOT_SCHEMA_VERSION)
+    expect(snap?.objective_policy).toBe('red-first-v1')
+    expect(result.red_bound).toBe(0)
+    expect(result.red_gap).toBe(0)
+    expect(result.stats?.scheduling?.total_weekly_slots).toBe(5)
+    expect(result.stats?.scheduling?.average_parallel_sections_per_slot).toBe(
+      Object.values(snap!.courseSections).reduce((sum, sections) => sum + sections.length, 0) / 5,
+    )
     expect(snap?.source).toEqual({
       file_name: 'tiny-enrollment.xlsx',
       sha256: await sha256Hex(ab),

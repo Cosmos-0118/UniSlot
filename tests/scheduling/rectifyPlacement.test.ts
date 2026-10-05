@@ -185,13 +185,15 @@ describe('preflightRectify', () => {
 })
 
 describe('buildFacultyByCourse', () => {
-  it('maps each course to the faculty label of its sections', () => {
+  it('maps every section faculty label to its course', () => {
     const courseSections: Record<string, Section[]> = {
-      A: [section('A1', 'A', [], 'Dr X')],
+      A: [section('A1', 'A', [], 'Dr X'), section('A2', 'A', [], 'Planning:A2')],
       B: [section('B1', 'B', [], 'Dr Y')],
     }
-    const map = buildFacultyByCourse(courseSections, { 'Dr X': ['A1'], 'Dr Y': ['B1'] })
-    expect(map.get('A')).toBe('Dr X')
-    expect(map.get('B')).toBe('Dr Y')
+    const map = buildFacultyByCourse(courseSections, {
+      'Dr X': ['A1'], 'Planning:A2': ['A2'], 'Dr Y': ['B1'],
+    })
+    expect(map.get('A')).toEqual(['Dr X', 'Planning:A2'])
+    expect(map.get('B')).toEqual(['Dr Y'])
   })
 })

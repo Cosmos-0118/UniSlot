@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough } from 'node:stream'
 import { strWidth } from '../../cli/theme'
 import {
@@ -95,6 +95,35 @@ function fakeTty() {
 const tick = () => new Promise((r) => setTimeout(r, 15))
 
 describe('checklistPrompt', () => {
+  // The fake TTY advertises cursor/keyboard support. TERM=dumb makes Node's
+  // readline deliberately insert control bytes instead of interpreting them.
+  beforeEach(() => { vi.stubEnv('TERM', 'xterm') })
+  afterEach(() => { vi.unstubAllEnvs() })
+  it('ctrl+a can clear an unfiltered selection on the second press', async () => {
+    const { input, output } = fakeTty()
+    const done = checklistPrompt({ title: 'Pick', items, input, output })
+    await tick()
+    input.write('\u0001')
+    await tick()
+    input.write('\u0001')
+    await tick()
+    input.write('\r')
+    expect(await done).toEqual([])
+  })
+
+  it('ctrl+a preserves selected rows outside the active filter', async () => {
+    const { input, output } = fakeTty()
+    const done = checklistPrompt({ title: 'Pick', items, input, output,
+      initialValues: ['RA003|21PHY101T'] })
+    await tick()
+    input.write('ra001')
+    await tick()
+    input.write('\u0001')
+    await tick()
+    input.write('\r')
+    expect(await done).toEqual(['RA003|21PHY101T', 'RA001|21CSE101T', 'RA001|21MAB310T'])
+  })
+
   it('ticks with space after navigating and returns the ticked values on Enter', async () => {
     const { input, output } = fakeTty()
     const done = checklistPrompt({ title: 'Pick', items, input, output })

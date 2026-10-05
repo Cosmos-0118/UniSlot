@@ -216,7 +216,12 @@ async function writeExports(
   }
   const summary = {
     status: result.solver_status,
+    objective_policy: result.schedulingSnapshot?.objective_policy,
     proven_optimal: result.proven_optimal,
+    red_bound: result.red_bound,
+    red_gap: result.red_gap,
+    clash_bound: result.clash_bound,
+    clash_gap: result.clash_gap,
     proven_levels: result.proven_levels,
     message: result.solver_message,
     clash_weight: result.stats?.scheduling?.total_clash_weight,
@@ -290,7 +295,12 @@ async function writeRectifyExports(
   const summary = {
     mode: 'rectify',
     status: result.solver_status,
+    objective_policy: result.schedulingSnapshot?.objective_policy,
     proven_optimal: result.proven_optimal,
+    red_bound: result.red_bound,
+    red_gap: result.red_gap,
+    clash_bound: result.clash_bound,
+    clash_gap: result.clash_gap,
     proven_levels: result.proven_levels,
     message: result.solver_message,
     placement_method: report?.placement_method,
@@ -1029,7 +1039,12 @@ async function writeLateExports(
   const summary = {
     mode: 'late',
     status: result.solver_status,
+    objective_policy: result.schedulingSnapshot?.objective_policy,
     proven_optimal: result.proven_optimal,
+    red_bound: result.red_bound,
+    red_gap: result.red_gap,
+    clash_bound: result.clash_bound,
+    clash_gap: result.clash_gap,
     proven_levels: result.proven_levels,
     message: result.solver_message,
     batch: report?.batch,
@@ -1800,9 +1815,9 @@ async function runSolve(opts: {
       Number(/(\d+)w$/.exec(result.schedule.solver_used)?.[1]) || requestedWorkers
     spin.stop(
       fullLex
-        ? spinOk('CP-SAT finished — full lex optimal (clash · RED · balance)')
+        ? spinOk('CP-SAT finished — full lex optimal (RED · clash · balance)')
         : proven
-          ? spinOk('CP-SAT finished — clash weight proven optimal')
+          ? spinOk('CP-SAT finished — affected-student count proven optimal')
           : spinWarn('CP-SAT finished — best feasible solution'),
     )
 
@@ -1886,11 +1901,11 @@ async function runSolve(opts: {
       ...files.map((f) => palette.dim('  · ') + f),
       fullLex
         ? palette.ok(
-            'Full lex optimal — clash, RED, and weekday balance are all proven best under this model.',
+            'Full lex optimal — RED, clash, and weekday balance are all proven best under this model.',
           )
         : proven
           ? palette.ok(
-              'Clash weight is proven minimal — it is not possible to reduce clashes further under this model.',
+              'Affected-student count is proven minimal — as many students as possible have a clash-free timetable under this model.',
             )
           : palette.warn('Run again without --time-limit to chase a full optimality proof.'),
     ])
@@ -1955,7 +1970,7 @@ async function main(): Promise<void> {
   const program = new Command()
   program
     .name('unislot')
-    .description('UniSlot terminal scheduler — max-resource CP-SAT, proven clash optimality')
+    .description('UniSlot terminal scheduler — max-resource CP-SAT, minimum affected students')
     .version('0.1.0')
 
   program
@@ -1972,7 +1987,7 @@ async function main(): Promise<void> {
     )
     .option(
       '--portfolio <k>',
-      'Multi-seed clash race before prove (default: 0; k>0 enables, breaks seed reproducibility)',
+      'Multi-seed RED race before prove (default: 0; k>0 enables, breaks seed reproducibility)',
       (v) => Number(v),
     )
     .option('--seed <n>', 'Reuse a prior run seed (skips seed prompt; works with -y)', (v) => {
@@ -1982,18 +1997,18 @@ async function main(): Promise<void> {
     })
     .option(
       '--absolute-gap <n>',
-      'Ship when clash incumbent−bound ≤ n (skips full OPTIMAL certificate)',
+      'Ship when affected-student incumbent−bound ≤ n (skips full OPTIMAL certificate)',
       (v) => Number(v),
     )
     .option(
       '--prove-plateau <seconds>',
-      'Ship when clash incumbent and bound are both flat for N seconds',
+      'Ship when RED incumbent and bound are both flat for N seconds',
       (v) => Number(v),
     )
-    .option('--prove', 'Disable gap/plateau escapes; chase full clash OPTIMAL', false)
+    .option('--prove', 'Disable gap/plateau escapes; chase minimum RED certificate', false)
     .option(
       '--prove-strategy <name>',
-      'Clash-prove CP-SAT portfolio: core (default), stock, or core_linear',
+      'Primary RED-prove CP-SAT portfolio: core (default), stock, or core_linear',
       'core',
     )
     .option(
@@ -2063,7 +2078,7 @@ async function main(): Promise<void> {
       if (n === undefined) throw new Error('--seed must be a non-negative integer')
       return n
     })
-    .option('--absolute-gap <n>', 'Stop when clash gap ≤ n', (v) => Number(v))
+    .option('--absolute-gap <n>', 'Stop when affected-student gap ≤ n', (v) => Number(v))
     .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')
@@ -2131,7 +2146,7 @@ async function main(): Promise<void> {
       if (n === undefined) throw new Error('--seed must be a non-negative integer')
       return n
     })
-    .option('--absolute-gap <n>', 'Stop when clash gap ≤ n', (v) => Number(v))
+    .option('--absolute-gap <n>', 'Stop when affected-student gap ≤ n', (v) => Number(v))
     .option('--prove-plateau <seconds>', 'Plateau escape (seconds)', (v) => Number(v))
     .option('--prove', 'Full optimality proof', false)
     .option('--saturday', 'Allow Saturday for maths')

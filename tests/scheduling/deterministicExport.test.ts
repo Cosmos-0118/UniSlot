@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { workbookCreatedAt } from '../../src/modules/scheduling/io/deterministicExport'
 import { buildSchedule, computeClashReport } from '../../src/modules/scheduling/solver/scheduleOutput'
 import { buildScheduleXlsxBuffer, buildClashXlsxBuffer } from '../../src/modules/scheduling/pipeline/exports'
@@ -44,6 +44,10 @@ function tinySchedule() {
 }
 
 describe('deterministic export metadata', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('uses a fixed created timestamp when seed is provided', () => {
     const a = workbookCreatedAt(42)
     const b = workbookCreatedAt(42)
@@ -63,5 +67,15 @@ describe('deterministic export metadata', () => {
 
     expect(sha256(scheduleA)).toBe(sha256(scheduleB))
     expect(sha256(clashA)).toBe(sha256(clashB))
+  })
+
+  it('keeps seeded workbook bytes identical across a ZIP timestamp boundary', async () => {
+    const { schedule } = tinySchedule()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-05T12:00:00.000Z'))
+    const beforeBoundary = await buildScheduleXlsxBuffer(schedule, { seed: 4242 })
+    vi.setSystemTime(new Date('2026-10-05T12:00:02.000Z'))
+    const afterBoundary = await buildScheduleXlsxBuffer(schedule, { seed: 4242 })
+    expect(sha256(beforeBoundary)).toBe(sha256(afterBoundary))
   })
 })

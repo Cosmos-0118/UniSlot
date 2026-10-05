@@ -44,7 +44,7 @@ import {
   inferAllowSaturdayFromSnapshot,
 } from '../merge/enrollmentDelta'
 import { placeFreeCourseWeekdays, preflightRectify } from '../merge/rectifyPlacement'
-import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
+import { OBJECTIVE_POLICY, sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
 import {
   buildClashXlsxBuffer,
   buildCourseEmailsXlsxBuffer,
@@ -236,6 +236,7 @@ export async function runFixPipeline(
       }
     }
     working.slot_assignments = placed.slot_assignments
+    working.objective_policy = OBJECTIVE_POLICY
     placementMethod = placed.placement_method
     solverStatus = placed.solver_status
     solverMessage = placed.solver_message
@@ -441,6 +442,7 @@ export async function finishSnapshotRun(
   const conflictGraph = buildConflictGraph(working.students, working.courseSections)
   const flatSections = Object.values(working.courseSections).flat()
   const schedulingStats = computeSchedulingStats(flatSections, working.slot_assignments, conflictGraph, {
+    allowSaturdayForMath, saturdayExtraCourseCodes,
     courseSections: working.courseSections,
     students: working.students,
   })

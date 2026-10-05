@@ -1,6 +1,10 @@
 import ExcelJS from 'exceljs'
 import type { EnrollmentRow } from '../types'
-import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
+import {
+  finalizeWorkbookBuffer,
+  workbookCreatedAt,
+  type ExportDeterminismOptions,
+} from './deterministicExport'
 import { safeCellString } from './excelLayout'
 
 export const INPUT_SHEET_NAME = 'Name List'
@@ -78,11 +82,8 @@ export async function nameListToWorkbookBuffer(
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options?.seed)
+  wb.modified = wb.created
   buildInputFormatSheet(wb, rows)
   const buf: unknown = await wb.xlsx.writeBuffer()
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
+  return finalizeWorkbookBuffer(buf, options?.seed)
 }

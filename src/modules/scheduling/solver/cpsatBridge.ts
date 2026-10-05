@@ -27,7 +27,7 @@ export const CPSAT_SOLVE_PY = path.join(CPSAT_DIR, 'solve.py')
 
 /** Default portfolio race size (independent seeds). 0 disables — keeps seeded runs reproducible. */
 export const DEFAULT_PORTFOLIO_SIZE = 0
-/** Wall-clock budget for each portfolio race member (clash-only). */
+/** Wall-clock budget for each portfolio race member (RED-only). */
 export const DEFAULT_PORTFOLIO_RACE_SECONDS = 45
 
 /** Workers per race member so `k * workers ≤ totalWorkers` (1 worker/member allowed). */
@@ -66,18 +66,18 @@ export type RunCpsatOptions = {
   minRedStudentsLowerBound?: number
   boundsPrecomputed?: boolean
   cliqueCuts?: string[][]
-  /** Clash-prove CP-SAT portfolio: stock | core (default) | core_linear. */
+  /** Primary RED-prove CP-SAT portfolio: stock | core (default) | core_linear. */
   proveStrategy?: 'core' | 'stock' | 'core_linear'
-  /** Independent clash-only race members (default 0). Pass k>0 to race (non-reproducible). */
+  /** Independent RED-only race members (default 0). Pass k>0 to race (non-reproducible). */
   portfolio?: number
   /** Seconds per portfolio race member (default 45). */
   portfolioRaceSeconds?: number
   seed?: number
-  /** Stop clash prove when incumbent−bound ≤ this (CP-SAT absolute_gap_limit). */
+  /** Stop primary RED prove when incumbent−bound ≤ this (CP-SAT absolute_gap_limit). */
   absoluteGap?: number
-  /** Stop clash prove when incumbent and bound are both flat for N seconds. */
+  /** Stop primary RED prove when incumbent and bound are both flat for N seconds. */
   provePlateauSeconds?: number
-  /** Disable plateau/gap escapes; chase full clash OPTIMAL. */
+  /** Disable plateau/gap escapes; chase a full RED certificate. */
   fullProve?: boolean
   /** When false, Saturday is excluded for maths courses. Default true. */
   allowSaturdayForMath?: boolean
@@ -87,6 +87,8 @@ export type RunCpsatOptions = {
   fixedDays?: Record<string, number>
   /** Clash-only solve (skip RED/balance prove phases). */
   clashOnly?: boolean
+  /** Minimize primary RED only (portfolio race); omit pair/balance phases. */
+  primaryOnly?: boolean
   signal?: AbortSignal
   onProgress?: (event: CpsatProgressEvent) => void
   /** Override python executable (default: solver/cpsat/.venv, else system Python). */
@@ -109,6 +111,8 @@ export type CpsatSchedulerResult = {
   python_version?: string
   clash_bound?: number | null
   clash_gap?: number | null
+  red_bound?: number | null
+  red_gap?: number | null
   timings?: Record<string, number>
   model_stats?: { variables: number; constraints: number }
 }
@@ -322,25 +326,53 @@ export async function killAllCpsatChildren(): Promise<void> {
 }
 
 type SpawnSolveOpts = RunCpsatOptions & {
+  /** Internal absolute monotonic deadline, including setup and process startup. */
+  deadlineMs?: number
   seed?: number
   clashOnly?: boolean
   /** Attach portfolio lane metadata to every progress event. */
   portfolioMeta?: import('./cpsatInstance').CpsatPortfolioMeta
 }
 
-function betterSolution(a: CpsatSolution, b: CpsatSolution): CpsatSolution {
-  const ac = a.clash_weight
-  const bc = b.clash_weight
-  if (ac == null && bc == null) return a
-  if (ac == null) return b
-  if (bc == null) return a
-  if (ac !== bc) return ac < bc ? a : b
-  const ar = a.red_students ?? Number.POSITIVE_INFINITY
-  const br = b.red_students ?? Number.POSITIVE_INFINITY
-  if (ar !== br) return ar < br ? a : b
+function rankSolution(a: CpsatSolution, b: CpsatSolution): CpsatSolution {
+  const clashOnly = a.objective_policy === 'clash-only' && b.objective_policy === 'clash-only'
+  const primary = clashOnly ? ['clash_weight', 'red_students'] as const
+    : ['red_students', 'clash_weight'] as const
+  for (const key of [...primary, 'weekday_balance_l1_scaled', 'parallel_excess'] as const) {
+    const av = a[key] ?? Number.POSITIVE_INFINITY
+    const bv = b[key] ?? Number.POSITIVE_INFINITY
+    if (av !== bv) return av < bv ? a : b
+  }
   if (a.proven_optimal && !b.proven_optimal) return a
   if (b.proven_optimal && !a.proven_optimal) return b
   return a
+}
+
+export function betterSolution(a: CpsatSolution, b: CpsatSolution): CpsatSolution {
+  const best = rankSolution(a, b)
+  if (best.objective_policy === 'clash-only') return best
+  const other = best === a ? b : a
+  // Certificates concern an objective value, so keep a proven primary minimum
+  // when another solve finds better tie-breakers at that same minimum.
+  if (best.red_students == null || best.red_students !== other.red_students ||
+    !other.proven_optimal) return best
+  const levels = new Set(best.proven_levels ?? [])
+  levels.add('red_students')
+  if (best.clash_weight === other.clash_weight && other.proven_levels?.includes('clash_weight')) {
+    levels.add('clash_weight')
+    if (best.weekday_balance_l1_scaled != null &&
+      best.weekday_balance_l1_scaled === other.weekday_balance_l1_scaled &&
+      best.parallel_excess === other.parallel_excess &&
+      other.proven_levels.includes('balance_and_parallel')) levels.add('balance_and_parallel')
+  }
+  const provenLevels = ['red_students', 'clash_weight', 'balance_and_parallel'].filter((level) => levels.has(level))
+  if (best.proven_optimal && provenLevels.length === best.proven_levels?.length) return best
+  const fullLex = provenLevels.length === 3
+  return { ...best, proven_optimal: true, red_bound: best.red_students, red_gap: 0,
+    ...(levels.has('clash_weight') ? { clash_bound: best.clash_weight, clash_gap: 0 } : {}),
+    status: fullLex ? 'OPTIMAL' : 'FEASIBLE', proven_levels: provenLevels,
+    message: fullLex ? 'Full RED-first lexicographic objective proven optimal.'
+      : 'Minimum affected-student count proven; remaining tie-breakers may be unproven.' }
 }
 
 function isAbortError(err: unknown): boolean {
@@ -350,19 +382,46 @@ function isAbortError(err: unknown): boolean {
   )
 }
 
+function deadlineFromSeconds(started: number, seconds: number | undefined): number | undefined {
+  if (seconds == null) return undefined
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error('CP-SAT time limit must be a finite non-negative number')
+  }
+  return started + seconds * 1000
+}
+
 /**
  * Spawn the Python CP-SAT solver on a prepared instance.
  * Progress NDJSON is read from stderr.
  */
-export function spawnCpsatSolve(
+export async function spawnCpsatSolve(
   instance: CpsatInstance,
   options?: SpawnSolveOpts,
 ): Promise<CpsatSolution> {
+  const started = performance.now()
+  const configuredDeadline = deadlineFromSeconds(started, options?.timeLimitSeconds)
+  const deadline = options?.deadlineMs ?? configuredDeadline
+  if (deadline != null && !Number.isFinite(deadline)) throw new Error('CP-SAT deadline must be finite')
   return new Promise((resolve, reject) => {
     void (async () => {
       let workDir: string | undefined
       let child: ChildProcess | undefined
       let aborted = Boolean(options?.signal?.aborted)
+      let timedOut = false
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+      const remainingMs = () => deadline == null ? undefined : Math.max(0, deadline - performance.now())
+      const checkDeadline = () => {
+        if (remainingMs() === 0) throw new Error('CP-SAT time budget expired before a solver incumbent was available')
+      }
+      const watchDeadline = () => {
+        const left = remainingMs()
+        if (left == null) return
+        deadlineTimer = setTimeout(() => {
+          if (remainingMs() !== 0) { watchDeadline(); return }
+          timedOut = true
+          if (child) killChildTreeSync(child)
+        }, Math.min(2_147_483_647, Math.max(1, left)))
+      }
 
       const onAbort = () => {
         aborted = true
@@ -370,16 +429,20 @@ export function spawnCpsatSolve(
       }
 
       try {
+        checkDeadline()
+        watchDeadline()
         if (options?.signal?.aborted) {
           throw new PipelineCancelledError()
         }
         options?.signal?.addEventListener('abort', onAbort, { once: true })
 
         const { python } = await ensureCpsatReady(options?.pythonPath)
+        checkDeadline()
         workDir = await mkdtemp(path.join(tmpdir(), 'unislot-cpsat-'))
         const instancePath = path.join(workDir, 'instance.json')
         const outputPath = path.join(workDir, 'solution.json')
         await writeFile(instancePath, JSON.stringify(instance), 'utf8')
+        checkDeadline()
 
         if (options?.signal?.aborted) {
           throw new PipelineCancelledError()
@@ -392,8 +455,9 @@ export function spawnCpsatSolve(
           '--output',
           outputPath,
         ]
-        if (options?.timeLimitSeconds != null && options.timeLimitSeconds > 0) {
-          args.push('--time-limit', String(options.timeLimitSeconds))
+        const searchSeconds = remainingMs()
+        if (searchSeconds != null) {
+          args.push('--time-limit', String(searchSeconds / 1000))
         }
         if (options?.workers != null && options.workers > 0) {
           args.push('--workers', String(options.workers))
@@ -404,6 +468,7 @@ export function spawnCpsatSolve(
         if (options?.clashOnly) {
           args.push('--clash-only')
         }
+        if (options?.primaryOnly) args.push('--primary-only')
         if (options?.absoluteGap != null && options.absoluteGap >= 0) {
           args.push('--absolute-gap', String(options.absoluteGap))
         }
@@ -476,6 +541,7 @@ export function spawnCpsatSolve(
           child!.on('error', rej)
           child!.on('close', (code) => res(code ?? 1))
         })
+        clearTimeout(deadlineTimer)
 
         options?.signal?.removeEventListener('abort', onAbort)
         untrackCpsatChild(child)
@@ -487,8 +553,25 @@ export function spawnCpsatSolve(
 
         let solution: CpsatSolution
         try {
-          const raw = await readFile(outputPath, 'utf8')
-          solution = JSON.parse(raw) as CpsatSolution
+          let final: CpsatSolution | undefined
+          let checkpoint: CpsatSolution | undefined
+          try { final = JSON.parse(await readFile(outputPath, 'utf8')) as CpsatSolution } catch { /* optional on timeout */ }
+          try { checkpoint = JSON.parse(await readFile(outputPath + '.incumbent.json', 'utf8')) as CpsatSolution } catch { /* optional */ }
+          const complete = (candidate: CpsatSolution | undefined) => candidate &&
+            instance.courses.every((course) => {
+              const day = candidate.slot_by_course?.[course.code]
+              return day != null && Number.isInteger(day) && day >= 0 && day < instance.num_weekdays &&
+                (course.is_math || day !== instance.saturday_index) &&
+                (instance.fixed_days?.[course.code] == null || day === instance.fixed_days[course.code])
+            }) && instance.faculty_groups.every((group) =>
+              new Set(group.course_codes.map((code) => candidate.slot_by_course[code])).size === group.course_codes.length)
+          if (!complete(final)) final = undefined
+          if (!complete(checkpoint)) checkpoint = undefined
+          if (!final && !checkpoint) throw new Error('No complete feasible incumbent')
+          solution = final && checkpoint
+            ? betterSolution(final, checkpoint) : (final ?? checkpoint)!
+          if (timedOut) solution = { ...solution,
+            message: 'Time budget expired; returning the best complete solver incumbent.' }
         } catch {
           let detail = ''
           try {
@@ -530,6 +613,7 @@ export function spawnCpsatSolve(
           reject(err)
         }
       } finally {
+        clearTimeout(deadlineTimer)
         options?.signal?.removeEventListener('abort', onAbort)
         if (child) untrackCpsatChild(child)
         if (workDir) {
@@ -578,8 +662,10 @@ async function runPortfolioRace(
         ...options,
         workers: memberWorkers,
         timeLimitSeconds: raceSeconds,
+        deadlineMs: Math.min(options.deadlineMs ?? Infinity, performance.now() + raceSeconds * 1000),
         seed,
-        clashOnly: true,
+        clashOnly: false,
+        primaryOnly: true,
         // Race is primal-first — no prove escapes / full-prove flags.
         absoluteGap: undefined,
         provePlateauSeconds: undefined,
@@ -631,7 +717,8 @@ export async function runCpsatScheduler(
   students: Record<string, Student>,
   options?: RunCpsatOptions,
 ): Promise<CpsatSchedulerResult> {
-  const t0 = Date.now()
+  const t0 = performance.now()
+  const deadline = deadlineFromSeconds(t0, options?.timeLimitSeconds)
   const totalWorkers =
     options?.workers && options.workers > 0 ? options.workers : cpus().length
 
@@ -639,7 +726,7 @@ export async function runCpsatScheduler(
 
   let hint = options?.hint
   const portfolioK =
-    options?.portfolio === undefined
+    options?.clashOnly ? 0 : options?.portfolio === undefined
       ? DEFAULT_PORTFOLIO_SIZE
       : Math.max(0, Math.floor(options.portfolio))
   const raceSeconds =
@@ -665,15 +752,18 @@ export async function runCpsatScheduler(
     },
   )
 
+  let raceBest: CpsatSolution | null = null
   if (portfolioK > 0) {
     // Distribute all available CPUs across race members instead of
     // hardcoding 2 per seed — utilise the user's full hardware.
     const memberWorkers = portfolioMemberWorkers(totalWorkers, portfolioK)
-    const raceBest = await runPortfolioRace(
+    raceBest = await runPortfolioRace(
       instance,
-      options ?? {},
+      { ...options, deadlineMs: deadline },
       portfolioK,
-      raceSeconds,
+      options?.timeLimitSeconds && options.timeLimitSeconds > 0
+        ? Math.min(raceSeconds, options.timeLimitSeconds / 2)
+        : raceSeconds,
       memberWorkers,
     )
     if (options?.signal?.aborted) throw new PipelineCancelledError()
@@ -687,19 +777,27 @@ export async function runCpsatScheduler(
 
   // Remaining time for full lex prove (if an overall limit was set).
   let proveLimit = options?.timeLimitSeconds
-  if (proveLimit != null && proveLimit > 0 && portfolioK > 0) {
-    const spent = (Date.now() - t0) / 1000
-    proveLimit = Math.max(5, proveLimit - spent)
-  }
+  if (deadline != null) proveLimit = Math.max(0, (deadline - performance.now()) / 1000)
 
-  const solution = await spawnCpsatSolve(instance, {
-    ...options,
-    hint,
-    workers: totalWorkers,
-    timeLimitSeconds: proveLimit,
-    seed: options?.seed,
-    clashOnly: options?.clashOnly ?? false,
-  })
+  let solution: CpsatSolution
+  if (raceBest && proveLimit === 0) {
+    solution = raceBest
+  } else {
+    if (proveLimit === 0) {
+      throw new Error('CP-SAT time budget expired without a portfolio incumbent')
+    }
+    try {
+      const final = await spawnCpsatSolve(instance, {
+        ...options, hint, workers: totalWorkers, timeLimitSeconds: proveLimit,
+        deadlineMs: deadline,
+        seed: options?.seed, clashOnly: options?.clashOnly ?? false,
+      })
+      solution = raceBest ? betterSolution(final, raceBest) : final
+    } catch (err) {
+      if (!raceBest || isAbortError(err) || options?.signal?.aborted) throw err
+      solution = raceBest
+    }
+  }
 
   if (options?.signal?.aborted) throw new PipelineCancelledError()
 
@@ -712,7 +810,7 @@ export async function runCpsatScheduler(
     slot_assignments,
     slot_by_course: solution.slot_by_course,
     solver_used: `cpsat-ortools-${solution.num_workers}w`,
-    solver_time_seconds: (Date.now() - t0) / 1000,
+    solver_time_seconds: (performance.now() - t0) / 1000,
     total_clash_weight: solution.clash_weight ?? 0,
     red_students: solution.red_students ?? 0,
     proven_optimal: Boolean(solution.proven_optimal),
@@ -724,6 +822,8 @@ export async function runCpsatScheduler(
     python_version: solution.python_version,
     clash_bound: solution.clash_bound,
     clash_gap: solution.clash_gap,
+    red_bound: solution.red_bound,
+    red_gap: solution.red_gap,
     timings: solution.timings,
     model_stats: solution.model_stats,
   }

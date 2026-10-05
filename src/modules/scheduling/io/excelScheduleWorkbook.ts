@@ -13,7 +13,11 @@ import {
   type DataRowCellSpec,
 } from './excelLayout'
 import { EXCEL_BRAND } from './excelBranding'
-import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
+import {
+  finalizeWorkbookBuffer,
+  workbookCreatedAt,
+  type ExportDeterminismOptions,
+} from './deterministicExport'
 import { DAY_FILL, XL } from './excelStyleConstants'
 import {
   formatLateAddsChain,
@@ -26,14 +30,6 @@ import {
   buildLateEnrollmentsSheet,
   buildRunLogSheet,
 } from './excelLogSheets'
-
-function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
-}
 
 function facultyDisplay(faculty: string | null | undefined): string {
   return faculty == null || faculty === '' ? '—' : faculty
@@ -230,6 +226,7 @@ export async function scheduleToWorkbookBuffer(
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options.seed)
+  wb.modified = wb.created
   const brand = resolveBranding(options.branding)
 
   const sorted = sortEntries(schedule.entries)
@@ -265,7 +262,7 @@ export async function scheduleToWorkbookBuffer(
   }
 
   const buf = await wb.xlsx.writeBuffer()
-  return writeBufferToArrayBuffer(buf)
+  return finalizeWorkbookBuffer(buf, options.seed)
 }
 
 function buildScheduleMainSheet(

@@ -11,6 +11,7 @@ import {
 import { sectionSlotsFromCourseSlots } from '../../src/modules/scheduling/solver/cpsatInstance'
 import { auditScheduleHardConstraints, parallelHardCap } from '../../src/modules/scheduling/solver/hardConstraints'
 import { runRectifyPipeline } from '../../src/modules/scheduling/pipeline/rectifyRun'
+import { preflightRectify } from '../../src/modules/scheduling/merge/rectifyPlacement'
 
 function row(reg: string, course: string): EnrollmentRow {
   return {
@@ -73,6 +74,65 @@ function buildSnapshotFromEnrollment(
 }
 
 describe('rectify pinned slots without CP-SAT', () => {
+  it('keeps a real faculty identity on a split and blocks a same-day single-section course', () => {
+    const courses: Record<string, Course> = {
+      A: { code: 'A', title: 'A', enrollment_count: 65, faculty: 'Dr Rao', section_count: 0 },
+      B: { code: 'B', title: 'B', enrollment_count: 1, faculty: 'Dr Rao', section_count: 0 },
+    }
+    const sections = computeSectionSplits(courses)
+    applyDistinctFacultyPerSection(courses, sections)
+    const facultyConstraints = extractFacultyConstraints(sections)
+
+    expect(sections.A!.map((section) => section.faculty)).toEqual([
+      'Dr Rao', 'Planning:A_S2',
+    ])
+    expect(facultyConstraints['Dr Rao']).toContain('A_S1')
+    expect(facultyConstraints['Dr Rao']).toContain('B')
+
+    const preflight = preflightRectify({
+      fixedDays: { A: 0, B: 0 },
+      freeCourses: [],
+      courseSections: sections,
+      facultyConstraints,
+      allowSaturdayForMath: false,
+    })
+    expect(preflight.ok).toBe(false)
+    expect(preflight.blockers.join(' ')).toContain('Faculty "Dr Rao" is pinned to Monday for both A and B.')
+
+    const audit = auditScheduleHardConstraints(
+      sections,
+      sectionSlotsFromCourseSlots(sections, { A: 0, B: 0 }),
+      parallelHardCap(3),
+      facultyConstraints,
+      { allowSaturdayForMath: false },
+    )
+    expect(audit.structuralFeasible).toBe(false)
+    expect(audit.structuralViolations.join(' ')).toContain('Faculty overlap')
+  })
+
+  it('does not replace explicitly assigned staff on split sections', () => {
+    const courses: Record<string, Course> = {
+      A: { code: 'A', title: 'A', enrollment_count: 65, faculty: 'Dr Rao', section_count: 2 },
+    }
+    const sections = computeSectionSplits(courses)
+    sections.A![0]!.faculty = 'Dr Rao'
+    sections.A![1]!.faculty = 'Dr Sen'
+    applyDistinctFacultyPerSection(courses, sections)
+    expect(sections.A!.map((section) => section.faculty)).toEqual(['Dr Rao', 'Dr Sen'])
+
+    sections.A![1]!.faculty = 'Dr Rao'
+    applyDistinctFacultyPerSection(courses, sections)
+    expect(sections.A!.map((section) => section.faculty)).toEqual(['Dr Rao', 'Dr Rao'])
+    const audit = auditScheduleHardConstraints(
+      sections,
+      sectionSlotsFromCourseSlots(sections, { A: 0 }),
+      parallelHardCap(2),
+      extractFacultyConstraints(sections),
+      { allowSaturdayForMath: false },
+    )
+    expect(audit.structuralFeasible).toBe(false)
+  })
+
   it('re-sections changed student while keeping course weekdays', () => {
     const baseline = [row('S1', 'A'), row('S1', 'B'), row('S2', 'C')]
     const rectified = [row('S1', 'C'), row('S2', 'C')]
@@ -126,7 +186,7 @@ describe('rectify pinned slots without CP-SAT', () => {
 })
 
 describe('runRectifyPipeline', () => {
-  it('completes when the previous run already had student clashes', async () => {
+  it.each([undefined, 'red-first-v1'] as const)('keeps prior clashes and policy %s without new course placement', async (policy) => {
     // S3 is double-booked on Monday in the baseline; rectify must not treat that as fatal.
     const baseline = [
       row('S1', 'A'),
@@ -136,6 +196,7 @@ describe('runRectifyPipeline', () => {
     ]
     const rectified = [...baseline, row('S1', 'B')]
     const snapshot = buildSnapshotFromEnrollment(baseline, { A: 0, B: 0 })
+    if (policy) snapshot.objective_policy = policy
 
     const result = await runRectifyPipeline(new ArrayBuffer(0), () => undefined, {
       rectifiedRows: rectified,
@@ -146,6 +207,7 @@ describe('runRectifyPipeline', () => {
 
     expect(result.infeasible).toBeFalsy()
     expect(result.schedule).not.toBeNull()
+    expect(result.schedulingSnapshot?.objective_policy).toBe(policy)
 
     const report = result.rectificationReport!
     expect(report.placement_method).toBe('pinned-only')

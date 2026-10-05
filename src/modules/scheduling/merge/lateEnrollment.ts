@@ -339,12 +339,9 @@ function leastLoadedIndex(sections: Section[], allowOverCapacity: boolean): numb
   return best
 }
 
-function facultyForNewSection(existing: Section[], newId: string, newNum: number): string {
-  const base = existing[0]?.faculty
-  if (base && !base.startsWith('Planning:')) {
-    const root = base.replace(/\s·\sSec\s\d+$/, '')
-    return `${root} · Sec ${newNum}`
-  }
+function facultyForNewSection(newId: string): string {
+  // Existing real staff identities belong to the sections already assigned to
+  // them. A newly created section has no confirmed instructor yet.
   return `Planning:${newId}`
 }
 
@@ -652,7 +649,7 @@ export function mergeLateStudentsIntoSections(args: {
       course_code: code,
       course_title: sections[0]!.course_title,
       section_number: newNum,
-      faculty: facultyForNewSection(sections, newId, newNum),
+      faculty: facultyForNewSection(newId),
       capacity: SPLIT_SECTION_CAP,
       enrolled_students: [],
       programs: [],

@@ -53,7 +53,7 @@ import {
   type ClashProvenanceMap,
 } from '../merge/clashProvenance'
 import { computeSchedulingStats, type SchedulingStats } from '../solver/metrics'
-import { sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
+import { buildCpsatInstance, OBJECTIVE_POLICY, sectionSlotsFromCourseSlots } from '../solver/cpsatInstance'
 import { SINGLE_SECTION_MAX, SPLIT_SECTION_CAP } from '../solver/capacity'
 import type {
   ClashReport,
@@ -163,6 +163,10 @@ export type LatePipelineResult = {
   saturdayExtraCourseCodes?: string[]
   proven_optimal?: boolean
   proven_levels?: string[]
+  red_bound?: number | null
+  red_gap?: number | null
+  clash_bound?: number | null
+  clash_gap?: number | null
   solver_status?: string
   solver_message?: string
   infeasible?: boolean
@@ -250,10 +254,26 @@ export async function runLatePipeline(
   let solverTimeSeconds = 0
   let provenOptimal = false
   let provenLevels: string[] = []
+  let redBound: number | null | undefined
+  let redGap: number | null | undefined
+  let clashBound: number | null | undefined
+  let clashGap: number | null | undefined
   let solverStatus = 'PINNED'
   let solverMessage: string | undefined
   let ortoolsVersion: string | undefined
   let pythonVersion: string | undefined
+  let solvedModelFingerprint: string | undefined
+  const modelFingerprint = (sections: Record<string, Section[]>, students: Record<string, Student>) => {
+    const instance = buildCpsatInstance(sections, buildConflictGraph(students, sections),
+      extractFacultyConstraints(sections), students, { allowSaturdayForMath, saturdayExtraCourseCodes })
+    for (const course of instance.courses) course.section_ids.sort()
+    for (const student of instance.students) student.courses.sort()
+    instance.students.sort((a, b) => a.id.localeCompare(b.id))
+    instance.faculty_groups.sort((a, b) => a.faculty.localeCompare(b.faculty))
+    instance.conflict_edges.sort((a, b) => a.course_a.localeCompare(b.course_a) ||
+      a.course_b.localeCompare(b.course_b))
+    return JSON.stringify(instance)
+  }
 
   const unknownSet = new Set(unknown_course_codes)
   const unknownAdds = additions.filter((a) => unknownSet.has(a.course_code))
@@ -331,12 +351,17 @@ export async function runLatePipeline(
 
     let slotByCourseAll: Record<string, number>
     if (solved) {
+      solvedModelFingerprint = modelFingerprint(workingSections, solveStudents)
       slotByCourseAll = solved.slot_by_course
       placementMethod = 'cpsat'
       solverUsed = solved.solver_used
       solverTimeSeconds = solved.solver_time_seconds
       provenOptimal = solved.proven_optimal
       provenLevels = solved.proven_levels
+      redBound = solved.red_bound
+      redGap = solved.red_gap
+      clashBound = solved.clash_bound
+      clashGap = solved.clash_gap
       solverStatus = solved.status
       solverMessage = solved.message
       ortoolsVersion = solved.ortools_version
@@ -507,6 +532,17 @@ export async function runLatePipeline(
   workingStudents = merged.students
   workingSlots = merged.slot_assignments
 
+  // Parking, capacity decisions and additions to known courses happen after
+  // search. A certificate applies only to the model that was actually solved.
+  if (solvedModelFingerprint !== undefined &&
+    solvedModelFingerprint !== modelFingerprint(workingSections, workingStudents)) {
+    provenOptimal = false
+    provenLevels = []
+    redBound = redGap = clashBound = clashGap = undefined
+    solverStatus = 'FEASIBLE'
+    solverMessage = 'Final registrations or sections differ from the provisional solve; optimality is not certified.'
+  }
+
   // A new course whose every registration was parked never made it onto the timetable.
   const placedNewCourses = unknown_course_codes.filter((c) => c in workingSections)
   const placedNewCourseSlots = Object.fromEntries(
@@ -613,6 +649,7 @@ export async function runLatePipeline(
   const conflictGraph = buildConflictGraph(workingStudents, workingSections)
   const flatSections = Object.values(workingSections).flat()
   const schedulingStats = computeSchedulingStats(flatSections, workingSlots, conflictGraph, {
+    allowSaturdayForMath, saturdayExtraCourseCodes,
     courseSections: workingSections,
     students: workingStudents,
   })
@@ -745,6 +782,8 @@ export async function runLatePipeline(
 
   const schedulingSnapshot: SchedulingSnapshot = {
     schema_version: SNAPSHOT_SCHEMA_VERSION,
+    ...(placementMethod !== 'pinned-only' ? { objective_policy: OBJECTIVE_POLICY }
+      : snapshot.objective_policy ? { objective_policy: snapshot.objective_policy } : {}),
     ...(snapshot.source ? { source: { ...snapshot.source } } : {}),
     slot_model: WEEKDAY_SLOT_MODEL,
     slot_assignments: { ...workingSlots },
@@ -846,6 +885,10 @@ export async function runLatePipeline(
     saturdayExtraCourseCodes,
     proven_optimal: provenOptimal,
     proven_levels: provenLevels,
+    red_bound: redBound,
+    red_gap: redGap,
+    clash_bound: clashBound,
+    clash_gap: clashGap,
     solver_status: solverStatus,
     solver_message: solverMessage,
     ortools_version: ortoolsVersion,
@@ -859,7 +902,7 @@ export async function runLatePipeline(
  * co-enrollment; `runLatePipeline` clears them again before the merge, which is
  * what actually honours park decisions.
  */
-function buildSectionsForNewCourses(adds: LateAddition[]): Record<string, Section[]> {
+export function buildSectionsForNewCourses(adds: LateAddition[]): Record<string, Section[]> {
   const byCourse = new Map<string, LateAddition[]>()
   for (const a of adds) {
     if (!byCourse.has(a.course_code)) byCourse.set(a.course_code, [])
@@ -881,11 +924,7 @@ function buildSectionsForNewCourses(adds: LateAddition[]): Record<string, Sectio
         course_code: code,
         course_title: title,
         section_number: i + 1,
-        faculty: faculty
-          ? numSections > 1
-            ? `${faculty} · Sec ${i + 1}`
-            : faculty
-          : `Planning:${sectionId}`,
+        faculty: i === 0 && faculty ? faculty : `Planning:${sectionId}`,
         capacity,
         enrolled_students: [],
         programs: [],

@@ -48,7 +48,7 @@ export type ScheduleAudit = {
 
 /**
  * Post-solve audit for Constraints.md hard rules (bundle weekday, faculty, capacity, range, Saturday maths).
- * Student same-day overlaps are reported here for diagnostics; clash weight remains the soft primary objective,
+ * Student same-day overlaps are reported here for diagnostics; affected students and clash weight remain soft objectives,
  * so callers deciding whether a schedule is shippable should gate on {@link ScheduleAudit.structuralFeasible}.
  *
  * `waivedSectionIds` — sections allowed to exceed capacity (late-enrollment "fit" strategy).

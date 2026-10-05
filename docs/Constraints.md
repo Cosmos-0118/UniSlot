@@ -14,7 +14,8 @@ The scheduler must assign all courses (or course sections) into valid weekly tim
 - Time availability
 - Parallel course limits
 
-The main objective is to minimize timetable clashes for students.
+The main objective is to give as many students as possible a completely
+clash-free timetable.
 
 ---
 
@@ -22,7 +23,14 @@ The main objective is to minimize timetable clashes for students.
 
 ## Primary Objective
 
-Minimize the number of students having timetable conflicts.
+Maximize the number of students with no timetable conflicts. For a fixed
+enrollment dataset, this is equivalent to minimizing the number of **RED
+students**: unique students with at least one same-day course overlap.
+
+Count each affected student **once**, regardless of how many of their courses
+overlap or how many weekdays contain a clash. For example, one student with
+three simultaneous courses counts as one RED student, although those courses
+create three conflicting pairs.
 
 A timetable conflict occurs when:
 
@@ -32,22 +40,70 @@ A timetable conflict occurs when:
 Ideal outcome:
 
 ```text
-0 student clashes
+0 RED students — every student has a clash-free timetable
 ```
 
 Zero is not always attainable (conflict cliques larger than the number of
 weekdays, Saturday-domain pigeonhole). Residual clashes are minimized, not
-treated as infeasibility.
+treated as infeasibility. Among structurally feasible timetables, protecting
+more students takes precedence over reducing the total number of conflicting
+course pairs.
 
 ---
 
 ## Secondary Objectives
 
-1. Balance course distribution across weekdays
-2. Reduce unnecessary course splitting
-3. Maintain stable parallel course counts
-4. Avoid faculty overlaps
-5. Use slots efficiently
+Use this lexicographic order: a lower-priority improvement must never worsen
+a higher-priority objective.
+
+1. **Minimize RED students** (primary): maximize clash-free students.
+2. **Minimize clash weight**: among timetables with the same minimum RED count,
+   minimize conflicting course pairs, weighted by shared students.
+3. **Balance weekday section loads**: among timetables tied on RED and clash
+   weight, spread simultaneous sections across the available weekdays.
+4. **Reduce parallel excess**: among remaining ties, prefer fewer sections above
+   the comfort target of 11 per weekday.
+
+Faculty, capacity, split-section synchronization, and permitted weekdays remain
+hard constraints. They cannot be traded for a better objective score. Avoid
+unnecessary section splitting while meeting the capacity rules.
+
+### Implementation status and optimality
+
+This RED-first policy was confirmed on 5 October 2026 and is implemented by the
+current solver: **RED students → clash weight → balance → parallel excess**.
+New snapshots and summaries carry `objective_policy: "red-first-v1"`. Older
+folders without that field retain their historical objective and certificate
+meanings. Frozen edits with no new course placement preserve the prior marker,
+including its absence.
+
+`proven_optimal: true` certifies that no structurally feasible timetable has
+fewer RED students. `proven_levels` lists completed proofs in priority order:
+`red_students`, `clash_weight`, `balance_and_parallel`. A full lexicographic
+claim requires all three levels. In a bounded run, tie-breakers operate at the
+best RED count found; their conditional proofs do not prove that RED count
+is globally minimal. `red_bound` and `red_gap` describe the primary
+proof; `clash_bound` and `clash_gap` describe the pair-cost proof conditional on
+fixing the chosen RED count. Bounded runs may return an audited feasible timetable
+without claiming those proofs. The `--clash-only` diagnostic optimizes pair cost
+without proving RED and therefore keeps `proven_optimal` false; `--primary-only`
+selects RED-first ranking for portfolio runs. Gap limits apply to the active
+primary RED phase.
+
+### Roster, faculty, and metric integrity
+
+Student course enrollments define the solver's canonical conflict graph. The
+bridge checks that every modeled enrollment appears in exactly one section and
+that section-derived course edges match the canonical roster; malformed
+memberships and unknown solver references are rejected. Section allocation
+balances capacity loads and uses program cohesion only to break equal-load
+ties, so changing membership cannot change the course-level conflict objective.
+
+Known instructors remain the same resource across split sections and courses.
+Unassigned extra sections use unique `Planning:<section id>` placeholders;
+these indicate staffing requirements but do not establish real staff
+availability. Weekday balance uses the active five- or six-day calendar, and
+metrics reject missing or invalid section assignments.
 
 ---
 
@@ -172,10 +228,11 @@ Maximum: 5 courses
 A student should attend at most one enrolled course on any weekday.
 
 Every course on a weekday shares the same 5–7 PM session, so two enrolled courses
-on the same weekday are a timetable clash. This is the **highest-priority
-optimization target**, not a hard forbid: some enrollments are structurally
+on the same weekday are a timetable clash. **Minimizing the number of students
+with any such clash is the highest-priority optimization target**, not a hard
+forbid: some enrollments are structurally
 unable to reach zero clashes (conflict cliques larger than the number of
-weekdays, Saturday-domain pigeonhole). The engine must **minimize** clashes,
+weekdays, Saturday-domain pigeonhole). The engine must **minimize RED students**,
 never reject a structurally feasible timetable because a clash remains.
 
 ### Example (clash to minimize)
@@ -214,7 +271,8 @@ Result:
 ```
 
 Ideal outcome is 0 RED students. When that is mathematically impossible, the
-solver still ships the timetable that minimizes clash weight, then RED count.
+solver behavior is to minimize RED count first, then clash weight among
+timetables tied on that count, as described in §2.
 
 ---
 
@@ -445,29 +503,35 @@ Highest priority.
 Goal:
 
 ```text
-Minimize total timetable clashes
+Minimize unique students with at least one clash
+Equivalently: maximize students with a completely clash-free timetable
 ```
 
 ---
 
-## Priority 2 — Satisfy Faculty Constraints
+## Priority 2 — Minimize Clash Weight
 
-No faculty overlap allowed.
-
----
-
-## Priority 3 — Satisfy Capacity Constraints
-
-Avoid oversized sections.
+Among timetables tied on the minimum RED count, minimize the number of
+conflicting course pairs, weighted by their shared students. Never affect an
+additional student merely to reduce this pair count.
 
 ---
 
-## Priority 4 — Balance Weekday Distribution
+## Priority 3 — Balance Weekday Distribution
 
-Maintain balanced:
+Among timetables tied on RED count and clash weight, balance section loads over
+the available weekdays.
 
-- Day usage
-- Parallel course count per weekday (comfort target ≈ 11, may exceed when needed)
+---
+
+## Priority 4 — Reduce Parallel Excess
+
+Among timetables also tied on weekday balance, minimize sections above the
+comfort target of 11 simultaneous sections per weekday. This is a preference,
+not a hard capacity limit.
+
+Faculty overlap and section-capacity violations are forbidden hard constraints
+at every optimization level (see §13).
 
 ---
 
@@ -530,12 +594,16 @@ Soft constraints are optimization targets.
 
 ## Soft Constraint List
 
-- **Priority 1 — Minimize student clashes / RED students** (Rules 5–6). Highest
-  priority. Zero is ideal but not always attainable; never treat residual clashes
-  as infeasibility.
-- Reduce unnecessary splitting
-- Maintain balanced parallel load
-- Spread courses evenly across the week
+- **Priority 1 — Minimize unique RED students** (Rules 5–6). Zero is ideal but
+  not always attainable; never treat residual clashes as infeasibility.
+- **Priority 2 — Minimize clash weight** without increasing RED count.
+- **Priority 3 — Balance weekday section loads** without increasing RED count
+  or clash weight.
+- **Priority 4 — Reduce parallel excess** without worsening the earlier goals.
+
+These priorities are lexicographic, rather than interchangeable weighted
+penalties. Fewer affected students must win even when that timetable has more
+conflicting course pairs.
 
 ---
 

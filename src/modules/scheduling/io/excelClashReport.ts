@@ -1,7 +1,11 @@
 import ExcelJS from 'exceljs'
 import type { ClashReport, StudentClashReport } from '../types'
 import { writeExportBrandHeader } from './excelBranding'
-import { workbookCreatedAt, type ExportDeterminismOptions } from './deterministicExport'
+import {
+  finalizeWorkbookBuffer,
+  workbookCreatedAt,
+  type ExportDeterminismOptions,
+} from './deterministicExport'
 import { applyDataRow, ColumnWidthTracker, fitRowHeight } from './excelLayout'
 import { DAY_FILL, XL } from './excelStyleConstants'
 import type { LateMarking } from './excelLateMarking'
@@ -16,14 +20,6 @@ export type ClashWorkbookOptions = ExportDeterminismOptions & {
   lateMarking?: LateMarking | null
   runLog?: RunLogEntry[]
   clashProvenance?: ClashProvenanceMap
-}
-
-function writeBufferToArrayBuffer(buf: unknown): ArrayBuffer {
-  if (buf instanceof ArrayBuffer) return buf
-  if (buf instanceof Uint8Array) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
-  throw new Error('Unexpected workbook buffer type')
 }
 
 function clashers(report: ClashReport): StudentClashReport[] {
@@ -67,6 +63,7 @@ export async function clashReportToRichWorkbookBuffer(
   const wb = new ExcelJS.Workbook()
   wb.creator = 'UniSlot'
   wb.created = workbookCreatedAt(options?.seed)
+  wb.modified = wb.created
   const red = clashers(report)
   const late = options?.lateMarking ?? null
   const provenance = options?.clashProvenance ?? {}
@@ -570,5 +567,5 @@ export async function clashReportToRichWorkbookBuffer(
   if (showProvenance) buildClashLogSheet(wb, provenance)
 
   const buf = await wb.xlsx.writeBuffer()
-  return writeBufferToArrayBuffer(buf)
+  return finalizeWorkbookBuffer(buf, options?.seed)
 }

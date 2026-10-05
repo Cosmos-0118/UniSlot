@@ -6,9 +6,10 @@ connected-component additivity, weighted-clique pigeonhole, and heavy-edge core.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from typing import Any
+
+from validate import validate_instance
 
 
 def _pair_key(a: str, b: str) -> tuple[str, str]:
@@ -159,61 +160,13 @@ def _collect_cut_cliques(
     return out[:16]
 
 
-def gershgorin_lambda_max_laplacian(
-    weights: dict[tuple[str, str], int],
-) -> tuple[float, float, int]:
-    """Return (λ_max upper bound, total_weight W, n) for the weighted Laplacian.
-
-    Gershgorin: every eigenvalue of L = D-A lies in a disk of radius d_i about d_i,
-    so λ_max(L) ≤ 2 Δ_max. This is a proven overestimate (safe for dual cuts).
-    """
-    deg: dict[str, float] = defaultdict(float)
-    total = 0.0
-    nodes: set[str] = set()
-    for (a, b), w in weights.items():
-        if w <= 0 or a == b:
-            continue
-        deg[a] += w
-        deg[b] += w
-        total += w
-        nodes.add(a)
-        nodes.add(b)
-    n = len(nodes)
-    if n == 0:
-        return 0.0, 0.0, 0
-    delta = max(deg.values()) if deg else 0.0
-    return 2.0 * delta, total, n
-
-
-def spectral_clash_lower_bound(
-    weights: dict[tuple[str, str], int],
-    colors: int,
-) -> int:
-    """Valid clash LB from a conservative Max-k-Cut upper bound.
-
-    Max-k-Cut ≤ min(W, (k-1)/(2k) * n * λ_max(L)) using Gershgorin λ_max ≤ 2Δ.
-    clash ≥ W − that UB. Heuristic (primal) Max-k-Cut is never used here.
-    """
-    k = max(1, colors)
-    lam_ub, total_w, n = gershgorin_lambda_max_laplacian(weights)
-    if n == 0 or total_w <= 0:
-        return 0
-    # (k-1)/(2k) * n * λ_max  with λ_max ≤ 2Δ  →  (k-1)/k * n * Δ
-    cut_ub = ((k - 1) / (2 * k)) * n * lam_ub
-    cut_ub = min(total_w, cut_ub)
-    clash_lb = total_w - cut_ub
-    if clash_lb <= 0:
-        return 0
-    # Floor: never overstate the dual.
-    return int(math.floor(clash_lb))
-
-
 def compute_clash_lower_bound(
     instance: dict[str, Any],
     *,
     core_weight_tau: int | None = None,
 ) -> dict[str, Any]:
-    """Return strengthened clash LB and notes for injection into the CP-SAT model."""
+    """Return validated clique/component clash LB for injection into CP-SAT."""
+    validate_instance(instance)
     edges = list(instance.get("conflict_edges") or [])
     num_weekdays = int(instance.get("num_weekdays") or 6)
     existing = int(instance.get("min_clash_weight_lower_bound") or 0)
@@ -232,7 +185,6 @@ def compute_clash_lower_bound(
             "component_count": 0,
             "core_edge_count": 0,
             "clique_cuts": provided_cuts,
-            "spectral_clash_lower_bound": 0,
             "notes": notes,
         }
 
@@ -289,25 +241,18 @@ def compute_clash_lower_bound(
                 "(equal weighted neighborhoods; fold only with a full constraint signature)."
             )
 
-    spectral_lb = spectral_clash_lower_bound(weights, num_weekdays)
-    if spectral_lb > existing:
-        notes.append(
-            f"Gershgorin Max-{num_weekdays}-Cut dual raised clash cut to {spectral_lb}."
-        )
-
     clique_cuts = provided_cuts
     if not clique_cuts:
         for comp in comps:
             clique_cuts.extend(_collect_cut_cliques(adj, comp, num_weekdays))
 
-    final_lb = max(existing, comp_lb, core_lb, spectral_lb)
+    final_lb = max(existing, comp_lb, core_lb)
     return {
         "min_clash_weight_lower_bound": final_lb,
         "component_count": len(comps),
         "core_edge_count": len(core_edges),
         "core_weight_tau": core_weight_tau,
         "twin_fold_candidates": twin_folds,
-        "spectral_clash_lower_bound": spectral_lb,
         "clique_cuts": clique_cuts,
         "notes": notes,
     }
