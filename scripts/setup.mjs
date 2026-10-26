@@ -484,6 +484,7 @@ async function main() {
   await npmRun(cpsatArgs, 'Setting up Google OR-Tools', npmEnv)
   if (!args.skipChecks) {
     await npmRun(['run', 'unislot', '--', 'doctor'], 'Verifying CP-SAT readiness', npmEnv)
+    await npmRun(['run', 'typecheck'], 'Checking TypeScript', npmEnv)
     await npmRun(['test'], 'Running tests', npmEnv)
     await npmRun(['run', 'lint'], 'Running lint', npmEnv)
   }

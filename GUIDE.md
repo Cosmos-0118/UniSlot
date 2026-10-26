@@ -15,7 +15,7 @@ see [Constraints §2](docs/Constraints.md#2-core-objectives).
 
 ## 1. Install
 
-You need **Node.js 20+** and **Python 3.11–3.13**.
+You need **Node.js 22.13+ (22.x), 24.x, or 26+** and **Python 3.11–3.13**.
 
 ```powershell
 cd UniSlot

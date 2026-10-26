@@ -2,7 +2,11 @@
   "name": "unislot",
   "private": true,
   "version": "0.1.0",
+  "license": "GPL-3.0-only",
   "type": "module",
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
+  },
   "bin": {
     "unislot": "./cli/bin/unislot.mjs"
   },
@@ -12,40 +16,41 @@
     "setup:cpsat": "tsx --tsconfig tsconfig.json scripts/setup-cpsat.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/core": "^1.4.3",
-    "@clack/prompts": "^1.7.0",
-    "chalk": "^5.6.2",
-    "commander": "^14.0.2",
+    "@clack/core": "^1.5.1",
+    "@clack/prompts": "^1.8.1",
+    "chalk": "^6.0.1",
+    "commander": "^15.0.0",
     "exceljs": "^4.4.0"
   },
   "overrides": {
     "exceljs": {
       "archiver": "^7.0.1",
-      "fast-csv": "^5.0.7",
-      "unzipper": "^0.12.3",
-      "uuid": "^11.0.0"
+      "fast-csv": "^5.0.8",
+      "unzipper": "^0.12.5",
+      "uuid": "^11.1.1"
     },
     "archiver-utils": {
-      "glob": "^13.0.0"
+      "glob": "^13.0.6"
     },
     "brace-expansion@2": "2.1.7",
     "brace-expansion@5": "5.0.12"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^24.12.3",
-    "eslint": "^10.3.0",
-    "globals": "^17.6.0",
-    "tsx": "^4.21.0",
-    "typescript": "~6.0.2",
-    "typescript-eslint": "^8.59.2",
-    "vitest": "4.1.11"
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "5.0.5"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "fsevents@2.3.3": true
   }
 }

@@ -16,10 +16,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["cli/**/*.ts", "src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]

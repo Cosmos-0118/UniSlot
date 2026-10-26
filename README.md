@@ -6,7 +6,7 @@ Terminal evening-course scheduler for universities. Upload an enrollment Excel w
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22.13+ on the 22.x line, 24.x, or 26+ (Node 24 LTS recommended)
 - Python 3.11–3.13 (setup prefers 3.12; pin with `UNISLOT_PYTHON_VERSION=3.12`)
   - Windows: `python` / `py` on PATH is enough; or set `UNISLOT_PYTHON` to `python.exe` (CMD `set`, PowerShell `$env:`)
 
@@ -18,7 +18,7 @@ npm run setup          # sync GitHub, install Node + OR-Tools, verify the repo
 
 `npm run setup` fetches `origin`, synchronizes the selected branch exactly to
 GitHub, installs the committed lockfile with `npm ci`, creates or repairs the
-Google OR-Tools CP-SAT environment, and runs the doctor, tests, and lint. It
+Google OR-Tools CP-SAT environment, and runs the doctor, type check, tests, and lint. It
 asks before discarding tracked or non-ignored untracked changes; use
 `npm run setup -- --yes` for a deliberate non-interactive reset. Ignored files
 such as `solver/cpsat/.venv` and local output folders are preserved by the Git
@@ -33,6 +33,11 @@ reviewed esbuild and fsevents versions; review their install scripts and refresh
 those approvals when upgrading them.
 
 For only the Python solver environment, use `npm run setup:cpsat`.
+This also upgrades its transitive packages within the solver's dependency constraints.
+
+TypeScript stays on the latest 6.0 patch while `typescript-eslint` requires
+TypeScript below 6.1. The ExcelJS overrides retain Archiver 7 and UUID 11 for
+its CommonJS consumers; the installed dependency tree passes `npm audit`.
 
 ## First solve
 
@@ -111,7 +116,8 @@ GUIDE.md                  Step-by-step usage
 | `npm run setup` | Sync GitHub + install and verify the complete toolchain |
 | `npm run setup:cpsat` | Create/repair Python venv + install OR-Tools |
 | `npm test` | Run Vitest |
-| `npm run lint` | ESLint |
+| `npm run typecheck` | Check TypeScript without emitting files |
+| `npm run lint` | ESLint with zero warnings allowed |
 
 ## Outputs
 
@@ -127,4 +133,8 @@ Default directory `./unislot-out/` (or `-o`):
 
 ## License
 
-Private project.
+Copyright (c) 2026 Dhanush S.
+
+Licensed under the [GNU General Public License v3.0 only](LICENSE)
+(`GPL-3.0-only`). Distributed copies and derivative works must comply with
+the GPL's source code and license requirements. There is no warranty.
