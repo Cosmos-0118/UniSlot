@@ -8,8 +8,6 @@ namespace UniSlot.Desktop.Views;
 
 public partial class SolveView : UserControl
 {
-    private bool? _wide;
-
     public SolveView()
     {
         InitializeComponent();
@@ -18,25 +16,9 @@ public partial class SolveView : UserControl
         SizeChanged += (_, e) => Adapt(e.NewSize.Width);
     }
 
-    /// <summary>Two columns (inputs left, options right) when there is room, one column otherwise; the quality choices stack when very narrow.</summary>
+    /// <summary>The page always stays a single stacked column (file, options, action), even on large screens; the quality choices stack when very narrow.</summary>
     private void Adapt(double width)
     {
-        bool wide = width >= 1080;
-        if (_wide != wide)
-        {
-            _wide = wide;
-            PageGrid.ColumnDefinitions = new ColumnDefinitions(wide ? "*,28,400" : "*");
-            // the star row absorbs the height of the tall options card so the action buttons stay directly under the file card
-            PageGrid.RowDefinitions = new RowDefinitions(wide ? "Auto,Auto,*,Auto" : "Auto,Auto,Auto,Auto");
-            Grid.SetColumnSpan(HeaderPanel, wide ? 3 : 1);
-            Grid.SetRow(TopPanel, 1);
-            Grid.SetColumn(TopPanel, 0);
-            Grid.SetRow(OptionsCard, wide ? 1 : 2);
-            Grid.SetColumn(OptionsCard, wide ? 2 : 0);
-            Grid.SetRowSpan(OptionsCard, wide ? 2 : 1);
-            Grid.SetRow(BottomPanel, wide ? 2 : 3);
-            Grid.SetColumn(BottomPanel, 0);
-        }
         _narrow = width < 640;
         ApplyQualityColumns();
     }
