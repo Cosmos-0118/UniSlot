@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UniSlot.Desktop.ViewModels"
+             xmlns:loc="using:UniSlot.Desktop.Services"
+             x:Class="UniSlot.Desktop.Views.ClashesView">
+  <DockPanel Margin="{DynamicResource PagePadding}" MaxWidth="{DynamicResource ContentMaxWidth}">
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,20">
+      <TextBlock Classes="h1" Text="{loc:T clashes.title}" />
+      <TextBlock Classes="muted" Text="{Binding CountText}" />
+    </StackPanel>
+
+    <Border DockPanel.Dock="Top" Classes="card" IsVisible="{Binding !HasClashes}">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Path Classes="icon" Data="{StaticResource IconCheck}" Stroke="{DynamicResource Success}" />
+        <TextBlock VerticalAlignment="Center" Text="{loc:T clashes.none}" />
+      </StackPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="14,0,14,10" IsVisible="{Binding HasClashes}">
+      <Grid ColumnDefinitions="150,180,*,*,110">
+        <TextBlock Classes="colhead" Text="{loc:T col.register}" />
+        <TextBlock Grid.Column="1" Classes="colhead" Text="{loc:T col.student}" />
+        <TextBlock Grid.Column="2" Classes="colhead" Text="{loc:T col.program}" />
+        <TextBlock Grid.Column="3" Classes="colhead" Text="{loc:T col.clash}" />
+        <TextBlock Grid.Column="4" Classes="colhead" Text="{loc:T col.day}" />
+      </Grid>
+    </Border>
+
+    <ListBox Classes="table" ItemsSource="{Binding Rows}" IsVisible="{Binding HasClashes}">
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="vm:ClashRow">
+          <Grid ColumnDefinitions="150,180,*,*,110" Margin="14,10">
+            <TextBlock Classes="mono" Text="{Binding Register}" />
+            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="2" Classes="muted" Text="{Binding Program}" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="3" Classes="mono" Text="{Binding Courses}" TextWrapping="Wrap" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="4" Classes="muted" TextWrapping="Wrap" Text="{Binding Days}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</UserControl>

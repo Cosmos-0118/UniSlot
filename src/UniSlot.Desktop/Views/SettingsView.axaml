@@ -1,0 +1,78 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:svc="using:UniSlot.Desktop.Services"
+             xmlns:loc="using:UniSlot.Desktop.Services"
+             x:Class="UniSlot.Desktop.Views.SettingsView">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="{DynamicResource NarrowMaxWidth}" Margin="{DynamicResource PagePadding}" Spacing="24">
+      <TextBlock Classes="h1" Text="{loc:T settings.title}" />
+
+      <Border Classes="card">
+        <StackPanel Spacing="22">
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Text="{loc:T settings.language}" />
+            <ComboBox ItemsSource="{Binding Languages}" SelectedIndex="{Binding LanguageIndex, Mode=TwoWay}" HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="svc:LanguageInfo"><TextBlock Text="{Binding NativeName}" /></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <Border Classes="divider" />
+
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Text="{loc:T settings.theme}" />
+            <ListBox Classes="seg" ItemsSource="{Binding ThemeNames}" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}">
+              <ListBox.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+              </ListBox.ItemsPanel>
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" Margin="10,0" /></DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="h2" Text="{loc:T settings.scale}" />
+          <ListBox Classes="seg" ItemsSource="{Binding ScaleNames}" SelectedIndex="{Binding ScaleIndex, Mode=TwoWay}">
+            <ListBox.ItemsPanel>
+              <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" Margin="6,0" /></DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock Classes="muted tiny" TextWrapping="Wrap" Text="{loc:T scale.hint}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="22">
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Text="{loc:T settings.institution}" />
+            <TextBox Text="{Binding Institution, Mode=TwoWay}" PlaceholderText="{loc:T settings.institution.placeholder}" />
+            <TextBlock Classes="muted tiny" Text="{loc:T settings.institution.hint}" />
+          </StackPanel>
+
+          <Border Classes="divider" />
+
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Text="{loc:T settings.output}" />
+            <TextBox Text="{Binding OutputRoot, Mode=TwoWay}" />
+          </StackPanel>
+
+          <Border Classes="divider" />
+
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Text="{loc:T settings.seed}" />
+            <TextBox Text="{Binding SeedText, Mode=TwoWay}" MaxWidth="200" HorizontalAlignment="Left" />
+            <TextBlock Classes="muted tiny" TextWrapping="Wrap" Text="{loc:T settings.seed.hint}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

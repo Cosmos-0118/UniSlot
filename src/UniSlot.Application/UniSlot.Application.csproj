@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>UniSlot.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UniSlot.Domain\UniSlot.Domain.csproj" />
+    <ProjectReference Include="..\UniSlot.Solver\UniSlot.Solver.csproj" />
+  </ItemGroup>
+</Project>

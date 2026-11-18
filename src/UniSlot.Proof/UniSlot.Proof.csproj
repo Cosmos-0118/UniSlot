@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Optional exact stage (OR-Tools CP-SAT). Isolated so the native runtime is only pulled in where wanted. -->
+  <PropertyGroup>
+    <RootNamespace>UniSlot.Proof</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.OrTools" />
+    <ProjectReference Include="..\UniSlot.Solver\UniSlot.Solver.csproj" />
+  </ItemGroup>
+</Project>

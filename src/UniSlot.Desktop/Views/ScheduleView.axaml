@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UniSlot.Desktop.ViewModels"
+             xmlns:loc="using:UniSlot.Desktop.Services"
+             x:Class="UniSlot.Desktop.Views.ScheduleView">
+  <DockPanel Margin="{DynamicResource PagePadding}" MaxWidth="{DynamicResource ContentMaxWidth}">
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,20">
+      <TextBlock Classes="h1" Text="{loc:T schedule.title}" />
+      <TextBlock Classes="muted" Text="{Binding CountText}" />
+    </StackPanel>
+
+    <StackPanel DockPanel.Dock="Top" Spacing="12" Margin="0,0,0,16">
+      <ListBox Classes="seg" ItemsSource="{Binding DayFilters}" SelectedIndex="{Binding DayFilter, Mode=TwoWay}">
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" /></DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <TextBox Text="{Binding Search, Mode=TwoWay}" PlaceholderText="{loc:T schedule.search}" MaxWidth="360" HorizontalAlignment="Left" />
+    </StackPanel>
+
+    <!-- Column headers: Programs and Faculty only appear when the page is wide enough (see ResponsiveLayout) -->
+    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="14,0,14,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="56" />
+          <ColumnDefinition Width="128" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="70" />
+          <ColumnDefinition Width="90" />
+          <ColumnDefinition Width="{DynamicResource ColPrograms}" />
+          <ColumnDefinition Width="{DynamicResource ColFaculty}" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Classes="colhead" Text="{loc:T col.lane}" />
+        <TextBlock Grid.Column="1" Classes="colhead" Text="{loc:T col.course}" />
+        <TextBlock Grid.Column="2" Classes="colhead" Text="{loc:T col.title}" />
+        <TextBlock Grid.Column="3" Classes="colhead" Text="{loc:T col.section}" />
+        <TextBlock Grid.Column="4" Classes="colhead" Text="{loc:T col.students}" />
+        <TextBlock Grid.Column="5" Classes="colhead col-programs" Text="{loc:T col.programs}" />
+        <TextBlock Grid.Column="6" Classes="colhead col-faculty" Text="{loc:T col.faculty}" />
+      </Grid>
+    </Border>
+
+    <ListBox Classes="table" ItemsSource="{Binding Rows}">
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="vm:ScheduleRow">
+          <Grid Margin="14,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="56" />
+              <ColumnDefinition Width="128" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="70" />
+              <ColumnDefinition Width="90" />
+              <ColumnDefinition Width="{DynamicResource ColPrograms}" />
+              <ColumnDefinition Width="{DynamicResource ColFaculty}" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Classes="muted" Text="{Binding Lane}" />
+            <TextBlock Grid.Column="1" Classes="mono" Text="{Binding CourseCode}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="{Binding Title}" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="3" Classes="muted" Text="{Binding Section}" />
+            <TextBlock Grid.Column="4" Text="{Binding Students}" />
+            <TextBlock Grid.Column="5" Classes="muted col-programs" Text="{Binding Programs}" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="6" Classes="muted col-faculty" Text="{Binding Faculty}" TextTrimming="CharacterEllipsis" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,345 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.ThemeDictionaries>
+
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="Bg" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="Surface" Color="#FAFAFA" />
+          <SolidColorBrush x:Key="SurfaceHover" Color="#F4F4F5" />
+          <SolidColorBrush x:Key="Line" Color="#EAEAEA" />
+          <SolidColorBrush x:Key="LineStrong" Color="#CFCFCF" />
+          <SolidColorBrush x:Key="Ink" Color="#0A0A0A" />
+          <SolidColorBrush x:Key="Muted" Color="#666666" />
+          <SolidColorBrush x:Key="Faint" Color="#8F8F8F" />
+          <SolidColorBrush x:Key="Accent" Color="#0070F3" />
+          <SolidColorBrush x:Key="PrimaryBg" Color="#0A0A0A" />
+          <SolidColorBrush x:Key="PrimaryHover" Color="#383838" />
+          <SolidColorBrush x:Key="PrimaryFg" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="Danger" Color="#D92D20" />
+          <SolidColorBrush x:Key="DangerBg" Color="#FEF3F2" />
+          <SolidColorBrush x:Key="Success" Color="#067647" />
+          <SolidColorBrush x:Key="SuccessBg" Color="#ECFDF3" />
+          <SolidColorBrush x:Key="Warning" Color="#B54708" />
+          <SolidColorBrush x:Key="WarningBg" Color="#FFFAEB" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="Bg" Color="#000000" />
+          <SolidColorBrush x:Key="Surface" Color="#0A0A0A" />
+          <SolidColorBrush x:Key="SurfaceHover" Color="#141414" />
+          <SolidColorBrush x:Key="Line" Color="#262626" />
+          <SolidColorBrush x:Key="LineStrong" Color="#454545" />
+          <SolidColorBrush x:Key="Ink" Color="#EDEDED" />
+          <SolidColorBrush x:Key="Muted" Color="#A1A1A1" />
+          <SolidColorBrush x:Key="Faint" Color="#7B7B7B" />
+          <SolidColorBrush x:Key="Accent" Color="#3291FF" />
+          <SolidColorBrush x:Key="PrimaryBg" Color="#EDEDED" />
+          <SolidColorBrush x:Key="PrimaryHover" Color="#C8C8C8" />
+          <SolidColorBrush x:Key="PrimaryFg" Color="#0A0A0A" />
+          <SolidColorBrush x:Key="Danger" Color="#FF6B6B" />
+          <SolidColorBrush x:Key="DangerBg" Color="#2A1112" />
+          <SolidColorBrush x:Key="Success" Color="#3DD68C" />
+          <SolidColorBrush x:Key="SuccessBg" Color="#0B2218" />
+          <SolidColorBrush x:Key="Warning" Color="#F7B955" />
+          <SolidColorBrush x:Key="WarningBg" Color="#2A1F08" />
+        </ResourceDictionary>
+
+      </ResourceDictionary.ThemeDictionaries>
+
+      <!-- Line icons, 24x24 grid -->
+      <StreamGeometry x:Key="IconUpload">M12,3 L12,15 M7,8 L12,3 L17,8 M4,17 L4,20 L20,20 L20,17</StreamGeometry>
+      <StreamGeometry x:Key="IconChart">M5,20 L5,11 M12,20 L12,4 M19,20 L19,14</StreamGeometry>
+      <StreamGeometry x:Key="IconCalendar">M4,6 L20,6 L20,20 L4,20 Z M4,10 L20,10 M8,3 L8,7 M16,3 L16,7</StreamGeometry>
+      <StreamGeometry x:Key="IconAlert">M12,4 L21,20 L3,20 Z M12,10 L12,15 M12,17.5 L12,18</StreamGeometry>
+      <StreamGeometry x:Key="IconSliders">M4,7 L14,7 M18,7 L20,7 M4,17 L6,17 M10,17 L20,17 M14,5 L14,9 M6,15 L6,19</StreamGeometry>
+      <StreamGeometry x:Key="IconCheck">M5,12 L10,17 L19,7</StreamGeometry>
+      <StreamGeometry x:Key="IconFile">M6,3 L14,3 L19,8 L19,21 L6,21 Z M14,3 L14,8 L19,8</StreamGeometry>
+      <StreamGeometry x:Key="IconFolder">M3,6 L9,6 L11,8 L21,8 L21,19 L3,19 Z</StreamGeometry>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <!-- ===== Base ===== -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+    <Setter Property="FontFamily" Value="Inter, Segoe UI Variable, Segoe UI, SF Pro Text, system-ui, sans-serif" />
+    <Setter Property="FontSize" Value="14" />
+  </Style>
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+
+  <!-- ===== Typography ===== -->
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontSize" Value="28" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="-0.6" />
+  </Style>
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.brand">
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="LetterSpacing" Value="-0.5" />
+  </Style>
+  <Style Selector="TextBlock.muted">
+    <Setter Property="Foreground" Value="{DynamicResource Muted}" />
+  </Style>
+  <Style Selector="TextBlock.faint">
+    <Setter Property="Foreground" Value="{DynamicResource Faint}" />
+  </Style>
+  <Style Selector="TextBlock.tiny">
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, SF Mono, Menlo, monospace" />
+    <Setter Property="FontSize" Value="12.5" />
+  </Style>
+  <Style Selector="TextBlock.metric">
+    <Setter Property="FontSize" Value="34" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="-1" />
+  </Style>
+  <Style Selector="TextBlock.colhead">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Foreground" Value="{DynamicResource Muted}" />
+  </Style>
+
+  <!-- ===== Surfaces ===== -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="20" />
+  </Style>
+  <Style Selector="Border.sidebar">
+    <Setter Property="Background" Value="{DynamicResource Surface}" />
+  </Style>
+  <Style Selector="Border.divider">
+    <Setter Property="Background" Value="{DynamicResource Line}" />
+    <Setter Property="Height" Value="1" />
+  </Style>
+  <Style Selector="Border.notice-danger">
+    <Setter Property="Background" Value="{DynamicResource DangerBg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Danger}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+  <Style Selector="Border.notice-warning">
+    <Setter Property="Background" Value="{DynamicResource WarningBg}" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+  <Style Selector="Border.pill">
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="10,3" />
+  </Style>
+
+  <!-- ===== Buttons ===== -->
+  <Style Selector="Button">
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="16,9" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{DynamicResource PrimaryBg}" />
+    <Setter Property="Foreground" Value="{DynamicResource PrimaryFg}" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource PrimaryHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource PrimaryFg}" />
+  </Style>
+  <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource PrimaryHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource PrimaryFg}" />
+  </Style>
+  <Style Selector="Button.primary:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource PrimaryBg}" />
+    <Setter Property="Foreground" Value="{DynamicResource PrimaryFg}" />
+    <Setter Property="Opacity" Value="0.35" />
+  </Style>
+  <Style Selector="Button.secondary">
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style Selector="Button.secondary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrong}" />
+  </Style>
+  <Style Selector="Button.link">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Accent}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="6,4" />
+  </Style>
+  <Style Selector="Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Accent}" />
+    <Setter Property="TextBlock.TextDecorations" Value="Underline" />
+  </Style>
+
+  <!-- ===== Inputs ===== -->
+  <Style Selector="TextBox">
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="12,9" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Ink}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="ComboBox">
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="12,9" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="Background" Value="{DynamicResource Bg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrong}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="ToggleSwitch">
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="ProgressBar">
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+    <Setter Property="Background" Value="{DynamicResource Line}" />
+    <Setter Property="MinHeight" Value="6" />
+    <Setter Property="Height" Value="6" />
+    <Setter Property="CornerRadius" Value="3" />
+  </Style>
+  <Style Selector="ProgressBar /template/ Border#PART_Indicator">
+    <Setter Property="CornerRadius" Value="3" />
+  </Style>
+  <Style Selector="ProgressBar.bar">
+    <Setter Property="Height" Value="8" />
+    <Setter Property="MinHeight" Value="8" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+
+  <!-- ===== Icons ===== -->
+  <Style Selector="Path.icon">
+    <Setter Property="Width" Value="18" />
+    <Setter Property="Height" Value="18" />
+    <Setter Property="Stretch" Value="Uniform" />
+    <Setter Property="StrokeThickness" Value="1.75" />
+    <Setter Property="StrokeLineCap" Value="Round" />
+    <Setter Property="StrokeJoin" Value="Round" />
+    <Setter Property="Fill" Value="Transparent" />
+  </Style>
+
+  <!-- ===== Navigation (sidebar list) ===== -->
+  <Style Selector="ListBox.nav">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="ListBox.nav ListBoxItem">
+    <Setter Property="Padding" Value="12,9" />
+    <Setter Property="Margin" Value="0,1" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Foreground" Value="{DynamicResource Muted}" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style Selector="ListBox.nav ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="ListBox.nav ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+
+  <!-- ===== Segmented choice (ListBox) ===== -->
+  <Style Selector="ListBox.seg">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="ListBox.seg ListBoxItem">
+    <Setter Property="Padding" Value="14,11" />
+    <Setter Property="Margin" Value="0,0,8,0" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+  </Style>
+  <Style Selector="ListBox.seg ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="8" />
+  </Style>
+  <Style Selector="ListBox.seg ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrong}" />
+  </Style>
+  <Style Selector="ListBox.seg ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Surface}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Ink}" />
+    <Setter Property="BorderThickness" Value="1.5" />
+  </Style>
+
+  <!-- ===== Table rows ===== -->
+  <Style Selector="ListBox.table">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="ListBox.table ListBoxItem">
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+  </Style>
+  <Style Selector="ListBox.table ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Surface}" />
+  </Style>
+  <Style Selector="ListBox.table ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+  </Style>
+  <!-- ===== Responsive rules (classes are set on the window by ResponsiveLayout) ===== -->
+  <Style Selector="Image.brandicon">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.compact Image.brandicon">
+    <Setter Property="IsVisible" Value="True" />
+  </Style>
+  <Style Selector="Window.compact TextBlock.brand">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.compact TextBlock.tagline">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.compact TextBlock.version">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.compact TextBlock.navtext">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.hide-programs TextBlock.col-programs">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Window.hide-faculty TextBlock.col-faculty">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+</Styles>

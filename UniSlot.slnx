@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UniSlot.Domain/UniSlot.Domain.csproj" />
+    <Project Path="src/UniSlot.Solver/UniSlot.Solver.csproj" />
+    <Project Path="src/UniSlot.Application/UniSlot.Application.csproj" />
+    <Project Path="src/UniSlot.Infrastructure/UniSlot.Infrastructure.csproj" />
+    <Project Path="src/UniSlot.Proof/UniSlot.Proof.csproj" />
+    <Project Path="src/UniSlot.Cli/UniSlot.Cli.csproj" />
+    <Project Path="src/UniSlot.Desktop/UniSlot.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UniSlot.Tests/UniSlot.Tests.csproj" />
+  </Folder>
+</Solution>

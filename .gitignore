@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+artifacts/
+publish/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test and tooling output
+TestResults/
+*.trx
+coverage/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local run output and private data (never commit enrollment workbooks)
+unislot-out*/
+*.local.xlsx
+tests/private/
+
+# Claude Code local state
+.claude/

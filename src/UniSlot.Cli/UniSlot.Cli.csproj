@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>unislot</AssemblyName>
+    <RootNamespace>UniSlot.Cli</RootNamespace>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <Version>2.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UniSlot.Application\UniSlot.Application.csproj" />
+    <ProjectReference Include="..\UniSlot.Infrastructure\UniSlot.Infrastructure.csproj" />
+    <ProjectReference Include="..\UniSlot.Proof\UniSlot.Proof.csproj" />
+  </ItemGroup>
+</Project>

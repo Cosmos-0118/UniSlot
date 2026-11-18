@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>UniSlot.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" />
+    <ProjectReference Include="..\UniSlot.Application\UniSlot.Application.csproj" />
+  </ItemGroup>
+</Project>

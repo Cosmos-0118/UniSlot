@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>UniSlot</AssemblyName>
+    <RootNamespace>UniSlot.Desktop</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/unislot.ico</ApplicationIcon>
+    <Version>2.0.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UniSlot.Application\UniSlot.Application.csproj" />
+    <ProjectReference Include="..\UniSlot.Infrastructure\UniSlot.Infrastructure.csproj" />
+    <ProjectReference Include="..\UniSlot.Proof\UniSlot.Proof.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+    <EmbeddedResource Include="Resources\Strings\*.json" />
+    <InternalsVisibleTo Include="UniSlot.Tests" />
+  </ItemGroup>
+
+  <!-- Native debug symbols from NuGet packages (Skia, HarfBuzz) are ~100 MB and useless to end users. -->
+  <Target Name="PruneNativeSymbols" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.Extension)' == '.pdb' And '%(ResolvedFileToPublish.NuGetPackageId)' != ''" />
+    </ItemGroup>
+  </Target>
+</Project>

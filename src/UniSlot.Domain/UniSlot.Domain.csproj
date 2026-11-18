@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>UniSlot.Domain</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\program-abbreviations.json" LogicalName="UniSlot.Domain.program-abbreviations.json" />
+    <InternalsVisibleTo Include="UniSlot.Tests" />
+  </ItemGroup>
+</Project>

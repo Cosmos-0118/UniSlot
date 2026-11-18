@@ -1,0 +1,113 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UniSlot.Desktop.ViewModels"
+             xmlns:loc="using:UniSlot.Desktop.Services"
+             x:Class="UniSlot.Desktop.Views.SolveView">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <Grid x:Name="PageGrid" Margin="{DynamicResource PagePadding}" MaxWidth="{DynamicResource ContentMaxWidth}" RowSpacing="24"
+          RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*">
+
+      <StackPanel x:Name="HeaderPanel" Spacing="8">
+        <TextBlock Classes="h1" Text="{loc:T solve.title}" />
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{loc:T solve.subtitle}" />
+      </StackPanel>
+
+      <StackPanel x:Name="TopPanel" Grid.Row="1" Spacing="24">
+        <!-- Drop zone -->
+        <Grid x:Name="DropZone" MinHeight="176" IsVisible="{Binding !HasFile}">
+          <Rectangle x:Name="DropOutline" Stroke="{DynamicResource LineStrong}" StrokeThickness="1.5" StrokeDashArray="5,4" RadiusX="12" RadiusY="12" />
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" Margin="16">
+            <Path Classes="icon" Width="30" Height="30" Data="{StaticResource IconUpload}" Stroke="{DynamicResource Muted}" HorizontalAlignment="Center" />
+            <TextBlock Classes="h2" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Text="{loc:T solve.drop}" />
+            <TextBlock Classes="muted tiny" HorizontalAlignment="Center" Text="{loc:T solve.dropHint}" />
+            <Button Classes="secondary" HorizontalAlignment="Center" Margin="0,6,0,0" Command="{Binding BrowseCommand}" Content="{loc:T solve.browse}" />
+          </StackPanel>
+        </Grid>
+
+        <!-- Selected file -->
+        <Border Classes="card" IsVisible="{Binding HasFile}" Padding="16,14">
+          <Grid ColumnDefinitions="Auto,*,Auto">
+            <Path Classes="icon" Width="22" Height="22" Data="{StaticResource IconFile}" Stroke="{DynamicResource Ink}" Margin="0,0,14,0" />
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <TextBlock Classes="h2" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Classes="faint tiny" Text="{Binding FilePath}" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <Button Grid.Column="2" Classes="link" IsEnabled="{Binding IsIdle}" Command="{Binding BrowseCommand}" Content="{loc:T solve.change}" />
+          </Grid>
+        </Border>
+      </StackPanel>
+
+      <!-- Options -->
+      <Border x:Name="OptionsCard" Grid.Row="2" Classes="card">
+        <StackPanel Spacing="20">
+          <StackPanel Spacing="10">
+            <TextBlock Classes="h2" Text="{loc:T solve.quality}" />
+            <ListBox x:Name="QualityList" Classes="seg" ItemsSource="{Binding Qualities}" SelectedIndex="{Binding QualityIndex, Mode=TwoWay}" IsEnabled="{Binding IsIdle}">
+              <ListBox.ItemsPanel>
+                <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+              </ListBox.ItemsPanel>
+              <ListBox.ItemTemplate>
+                <DataTemplate DataType="vm:QualityOption">
+                  <StackPanel Spacing="2">
+                    <TextBlock Classes="h2" Text="{Binding Title}" TextWrapping="Wrap" />
+                    <TextBlock Classes="muted tiny" Text="{Binding Hint}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+
+          <Border Classes="divider" />
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+              <TextBlock Classes="h2" TextWrapping="Wrap" Text="{loc:T solve.saturday}" />
+              <TextBlock Classes="muted tiny" TextWrapping="Wrap" Text="{loc:T solve.saturday.hint}" />
+            </StackPanel>
+            <ToggleSwitch Grid.Column="1" OnContent="" OffContent="" IsChecked="{Binding AllowSaturday, Mode=TwoWay}" IsEnabled="{Binding IsIdle}" />
+          </Grid>
+
+          <Border Classes="divider" />
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+              <TextBlock Classes="h2" TextWrapping="Wrap" Text="{loc:T solve.prove}" />
+              <TextBlock Classes="muted tiny" TextWrapping="Wrap" Text="{loc:T solve.prove.hint}" />
+            </StackPanel>
+            <ToggleSwitch Grid.Column="1" OnContent="" OffContent="" IsChecked="{Binding Prove, Mode=TwoWay}" IsEnabled="{Binding IsIdle}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <StackPanel x:Name="BottomPanel" Grid.Row="3" Spacing="24">
+        <!-- Actions -->
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Classes="primary" Padding="22,11" IsVisible="{Binding IsIdle}" Command="{Binding StartCommand}" Content="{loc:T solve.start}" />
+          <Button Classes="secondary" Padding="22,11" IsVisible="{Binding IsRunning}" Command="{Binding CancelCommand}" Content="{loc:T solve.cancel}" />
+        </StackPanel>
+
+        <!-- Progress -->
+        <Border Classes="card" IsVisible="{Binding IsRunning}">
+          <StackPanel Spacing="12">
+            <TextBlock Classes="h2" Text="{Binding StageText}" />
+            <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" />
+            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding LiveText}" />
+          </StackPanel>
+        </Border>
+
+        <!-- Error -->
+        <Border Classes="notice-danger" IsVisible="{Binding HasError}">
+          <StackPanel Spacing="8">
+            <TextBlock Classes="h2" Foreground="{DynamicResource Danger}" Text="{Binding ErrorTitle}" />
+            <ItemsControl ItemsSource="{Binding ErrorLines}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String"><TextBlock Classes="tiny" TextWrapping="Wrap" Text="{Binding}" /></DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+    </Grid>
+  </ScrollViewer>
+</UserControl>
