@@ -1,3 +1,5 @@
+using UniSlot.Application.Importing;
+using UniSlot.Application.Workflow;
 using UniSlot.Solver;
 
 namespace UniSlot.Tests;
@@ -229,5 +231,23 @@ public class ScoreTests
         Assert.True(new Score(1, 5, 3, 999) < new Score(1, 5, 4, 0));
         Assert.True(new Score(1, 5, 3, 1) < new Score(1, 5, 3, 2));
         Assert.Equal(0, new Score(1, 2, 3, 4).CompareTo(new Score(1, 2, 3, 4)));
+    }
+}
+
+public class ProverTests
+{
+    [Fact]
+    public void Proof_without_a_time_limit_runs_to_completion_on_a_small_problem()
+    {
+        var input = new SolveInput(new SourceInfo("a.xlsx", 1, "00"), TestData.Grid(60, 12, 3, seed: 5));
+        var settings = new SolveSettings
+        {
+            Search = new SearchOptions { Chains = 2, MovesPerChain = 200_000 },
+            Prove = true,
+            ProofTimeLimit = null,
+        };
+        var outcome = new SolveWorkflow(new AnnealingEngine(), UniSlot.Proof.CpSatProver.Create()).Run(input, settings, null, CancellationToken.None);
+        Assert.NotNull(outcome.Proof);
+        Assert.Equal(ProofStatus.Optimal, outcome.Proof!.Status);
     }
 }

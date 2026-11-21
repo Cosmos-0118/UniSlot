@@ -80,7 +80,7 @@ internal static class SnapshotJson
         root["workers"] = search.Chains;
         root["portfolio"] = 0;
         root["section_lanes"] = lanes;
-        root["run_log"] = new JsonArray(RunLogEntry(o, at));
+        root["run_log"] = RunLog(o, at);
         root["clash_provenance"] = new JsonObject();
         root["unislot"] = new JsonObject
         {
@@ -108,30 +108,99 @@ internal static class SnapshotJson
         ["programs"] = new JsonArray([.. s.Programs.Select(x => (JsonNode?)JsonValue.Create(x))]),
     };
 
-    private static JsonNode RunLogEntry(SolveOutcome o, DateTimeOffset at) => new JsonObject
+    internal static JsonNode? WaiverNode(WaiverItem w) => new JsonObject { ["section_id"] = w.SectionId, ["enrollment"] = w.Enrollment, ["capacity"] = w.Capacity };
+
+    internal static JsonNode? ParkedNode(ParkedItem p) => new JsonObject { ["register_number"] = p.Register, ["course_code"] = p.Course, ["reason"] = p.Reason };
+
+    private static JsonArray RunLog(SolveOutcome o, DateTimeOffset at)
     {
-        ["seq"] = 1,
-        ["at"] = at.ToString("O", CultureInfo.InvariantCulture),
-        ["mode"] = "solve",
-        ["inputs"] = new JsonObject(),
-        ["seed"] = (long)o.Search.Options.Seed,
-        ["solver_status"] = o.RedProvenOptimal ? "OPTIMAL" : "FEASIBLE",
-        ["students_before"] = 0,
-        ["students_after"] = o.Roster.Students.Count,
-        ["students_added"] = o.Roster.Students.Count,
-        ["registrations_added"] = o.Roster.Rows.Count,
-        ["courses_added"] = o.Roster.Courses.Count,
-        ["sections_created"] = new JsonArray(),
-        ["students_moved_between_sections"] = 0,
-        ["capacity_waivers"] = new JsonArray(),
-        ["parked"] = new JsonArray(),
-        ["red_before"] = 0,
-        ["red_after"] = o.RedStudents,
-        ["clashes_introduced"] = o.Clash.Students.Sum(s => s.Pairs.Count),
-        ["clashes_resolved"] = 0,
-        ["decisions"] = new JsonArray(),
-        ["notes"] = new JsonArray(),
+        var log = new JsonArray();
+        if (o.Settings.Edit is { } edit)
+            foreach (string prior in edit.PriorRunLog)
+                if (JsonNode.Parse(prior) is { } node) log.Add(node);
+        log.Add(RunLogEntry(o, at, log.Count + 1));
+        return log;
+    }
+
+    private static JsonObject RunLogEntry(SolveOutcome o, DateTimeOffset at, int seq)
+    {
+        var edit = o.Settings.Edit;
+        var delta = edit?.PreviousClash is { } before ? ClashDiff.Compare(before, o.Clash) : null;
+        int studentsBefore = edit?.StudentsBefore ?? 0;
+        return new JsonObject
+        {
+            ["seq"] = seq,
+            ["at"] = at.ToString("O", CultureInfo.InvariantCulture),
+            ["mode"] = edit?.Mode ?? "solve",
+            ["inputs"] = new JsonObject([.. (edit?.Inputs ?? new Dictionary<string, string>()).Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))]),
+            ["seed"] = (long)o.Search.Options.Seed,
+            ["solver_status"] = o.RedProvenOptimal ? "OPTIMAL" : "FEASIBLE",
+            ["students_before"] = studentsBefore,
+            ["students_after"] = o.Roster.Students.Count,
+            ["students_added"] = Math.Max(0, o.Roster.Students.Count - studentsBefore),
+            ["registrations_added"] = edit?.RegistrationsAdded ?? o.Roster.Rows.Count,
+            ["registrations_removed"] = edit?.RegistrationsRemoved ?? 0,
+            ["courses_added"] = edit?.CoursesAdded ?? o.Roster.Courses.Count,
+            ["sections_created"] = new JsonArray([.. (edit?.SectionsCreated ?? []).Select(x => (JsonNode?)JsonValue.Create(x))]),
+            ["students_moved_between_sections"] = 0,
+            ["capacity_waivers"] = new JsonArray([.. (edit?.Waivers ?? []).Select(WaiverNode)]),
+            ["parked"] = new JsonArray([.. (edit?.Parked ?? []).Select(ParkedNode)]),
+            ["red_before"] = edit?.PreviousClash?.StudentsWithClashes ?? 0,
+            ["red_after"] = o.RedStudents,
+            ["clashes_introduced"] = delta?.Introduced.Count ?? o.Clash.Students.Sum(s => s.Pairs.Count),
+            ["clashes_resolved"] = delta?.Resolved.Count ?? 0,
+            ["decisions"] = new JsonArray(),
+            ["notes"] = new JsonArray([.. (edit?.Notes ?? []).Select(x => (JsonNode?)JsonValue.Create(x))]),
+        };
+    }
+}
+
+/// <summary>The human-readable record of one edit run: <c>late-enrollment-report.json</c>, <c>fix-report.json</c>, <c>rectify-report.json</c>, <c>revert-report.json</c>.</summary>
+internal static class EditReportJson
+{
+    public static string FileName(string mode) => mode switch
+    {
+        "late" => "late-enrollment-report.json",
+        "rectify" => "rectify-report.json",
+        "revert" => "revert-report.json",
+        _ => "fix-report.json",
     };
+
+    public static JsonObject Build(SolveOutcome o)
+    {
+        var edit = o.Settings.Edit!;
+        var delta = edit.PreviousClash is { } before ? ClashDiff.Compare(before, o.Clash) : null;
+        static JsonArray Entries(IEnumerable<ClashEntry>? e) => new([.. (e ?? []).Select(x => (JsonNode?)new JsonObject
+        {
+            ["register_number"] = x.Register,
+            ["student_name"] = x.Name,
+            ["day"] = x.Day.ToString(),
+            ["courses"] = new JsonArray([.. x.Courses.Select(c => (JsonNode?)JsonValue.Create(c))]),
+        })]);
+        return new JsonObject
+        {
+            ["mode"] = edit.Mode,
+            ["inputs"] = new JsonObject([.. edit.Inputs.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))]),
+            ["red_before"] = edit.PreviousClash?.StudentsWithClashes,
+            ["red_after"] = o.RedStudents,
+            ["clash_weight"] = o.ClashWeight,
+            ["hard_constraints_ok"] = o.Audit.IsStructurallyFeasible,
+            ["registrations_added"] = edit.RegistrationsAdded,
+            ["registrations_removed"] = edit.RegistrationsRemoved,
+            ["courses_added"] = edit.CoursesAdded,
+            ["sections_created"] = new JsonArray([.. edit.SectionsCreated.Select(x => (JsonNode?)JsonValue.Create(x))]),
+            ["capacity_waivers"] = new JsonArray([.. edit.Waivers.Select(SnapshotJson.WaiverNode)]),
+            ["parked"] = new JsonArray([.. edit.Parked.Select(SnapshotJson.ParkedNode)]),
+            ["notes"] = new JsonArray([.. edit.Notes.Select(x => (JsonNode?)JsonValue.Create(x))]),
+            ["changes"] = new JsonArray([.. edit.Changes.Select(c => (JsonNode?)new JsonObject
+            {
+                ["register_number"] = c.Register, ["student_name"] = c.Name, ["course_code"] = c.Course, ["kind"] = c.Kind, ["detail"] = c.Detail,
+            })]),
+            ["new_clashes"] = Entries(delta?.Introduced),
+            ["carried_over_clashes"] = Entries(delta?.CarriedOver),
+            ["resolved_clashes"] = Entries(delta?.Resolved),
+        };
+    }
 }
 
 internal static class SummaryJson
@@ -144,6 +213,7 @@ internal static class SummaryJson
         var summary = new JsonObject
         {
             ["status"] = status,
+            ["mode"] = o.Settings.Edit?.Mode ?? "solve",
             ["objective_policy"] = SnapshotJson.ObjectivePolicy,
             ["proven_optimal"] = o.RedProvenOptimal,
             ["red_students"] = o.RedStudents,

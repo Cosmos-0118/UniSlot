@@ -20,7 +20,13 @@ public static class XlsxEnrollmentSource
     public static IReadOnlyList<IReadOnlyList<string?>> ReadGrid(byte[] workbookBytes)
     {
         using var stream = new MemoryStream(workbookBytes, writable: false);
-        using var workbook = new XLWorkbook(stream);
+        XLWorkbook workbook;
+        try { workbook = new XLWorkbook(stream); }
+        catch (Exception ex) when (ex is System.IO.FileFormatException or FormatException or ArgumentException or NotSupportedException)
+        {
+            throw new InvalidDataException("The file is not a valid Excel workbook (.xlsx).", ex);
+        }
+        using var _ = workbook;
         var sheet = workbook.Worksheets.FirstOrDefault() ?? throw new InvalidDataException("The workbook has no worksheets.");
 
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 0;

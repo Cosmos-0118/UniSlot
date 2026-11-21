@@ -16,7 +16,14 @@ public sealed record SolveSettings
     public SearchOptions Search { get; init; } = new();
     /// <summary>Run the exact stage after the search (requires a prover to be supplied).</summary>
     public bool Prove { get; init; }
-    public TimeSpan ProofTimeLimit { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>Budget for the exact stage; null lets it run until the result is proven.</summary>
+    public TimeSpan? ProofTimeLimit { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>Use these sections instead of planning them from the roster (edits keep published sections exactly).</summary>
+    public IReadOnlyList<Section>? FixedSections { get; init; }
+    /// <summary>Course weekdays that must not move; courses not listed are free.</summary>
+    public IReadOnlyDictionary<string, int>? PinnedDays { get; init; }
+    /// <summary>Set by the edit workflows (late enrollment, rectify, fix, drop, revert).</summary>
+    public EditInfo? Edit { get; init; }
 }
 
 public enum SolveStage { Reading, Planning, Bounds, Searching, Proving, Auditing, Done }
@@ -82,8 +89,8 @@ public sealed class SolveWorkflow(ISearchEngine engine, IOptimalityProver? prove
         ct.ThrowIfCancellationRequested();
 
         Report(SolveStage.Planning, 0.05);
-        var sections = SectionPlanner.Plan(roster);
-        var model = ProblemBuilder.Build(roster, sections, settings.Policy);
+        var sections = settings.FixedSections ?? SectionPlanner.Plan(roster);
+        var model = ProblemBuilder.Build(roster, sections, settings.Policy, settings.PinnedDays);
         timings["plan"] = Lap();
 
         Report(SolveStage.Bounds, 0.08);

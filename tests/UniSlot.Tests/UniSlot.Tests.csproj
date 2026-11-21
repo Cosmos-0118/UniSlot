@@ -9,12 +9,13 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Spectre.Console.Testing" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\UniSlot.Application\UniSlot.Application.csproj" />
     <ProjectReference Include="..\..\src\UniSlot.Infrastructure\UniSlot.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\UniSlot.Proof\UniSlot.Proof.csproj" />
-    <ProjectReference Include="..\..\src\UniSlot.Desktop\UniSlot.Desktop.csproj" />
+    <ProjectReference Include="..\..\src\UniSlot.Cli\UniSlot.Cli.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

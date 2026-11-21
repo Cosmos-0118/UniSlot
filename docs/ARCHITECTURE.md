@@ -6,12 +6,16 @@
 |---|---|---|
 | `UniSlot.Solver` | The integer problem model, scoring, deterministic math, the annealing engine, lower bounds, the prover contract. No allocations in hot loops. | nothing |
 | `UniSlot.Domain` | Pure rules: schedule policy, roster, sections, timetable, hard-rule audit, clash analysis, metrics. | nothing |
-| `UniSlot.Application` | Use cases: parse the workbook grid, build the roster, plan sections, build the solver problem, orchestrate a solve. | Domain, Solver |
-| `UniSlot.Infrastructure` | Excel reading and writing (ClosedXML), `snapshot.json` / `summary.json`. | Application |
+| `UniSlot.Application` | Use cases: parse the workbook grid, build the roster, plan sections, build the solver problem, orchestrate a solve; the editing module (`Workspace`, `Edits`, `EditWorkflow`) for late enrollment, rectify, fix/drop course, revert and filter; the enrollment issue finder. | Domain, Solver |
+| `UniSlot.Infrastructure` | Excel reading and writing (ClosedXML), `snapshot.json` / `summary.json`, reading a saved output folder back (`SnapshotStore`). | Application |
 | `UniSlot.Proof` | Optional exact stage on OR-Tools CP-SAT. | Solver |
-| `UniSlot.Cli`, `UniSlot.Desktop` | Front ends. | everything above |
+| `UniSlot.Cli` | The terminal front end (Spectre.Console): interactive app and scripted `solve`. | everything above |
 
 `Solver` and `Domain` never reference each other. The solver sees integers only; the domain sees names only; `Application` translates between them (`ProblemBuilder`).
+
+## Editing a published timetable
+
+An edit never re-plans what is published. `SnapshotStore` reads an output folder into a `Workspace` (enrollment rows, the exact sections with their students, and each course's weekday). An edit (`Edits.Late`, `Rectify`, `FixCourse`, `DropCourse`, `Revert`, `Filter`) changes that state and returns an `EditPlan`. `EditWorkflow` then runs the normal `SolveWorkflow` with `FixedSections` (the edited sections, used as they are) and `PinnedDays` (every course that already has a weekday). Only brand-new courses are searched, so continuing classes cannot move, and the independent audit and the RED cross-check run exactly as for a fresh solve. Over-capacity placement is a deliberate waiver: the section's capacity is raised and the waiver is logged. The output folder gets the usual five files plus `enrollment.xlsx`, `<mode>-report.json` and `run-log.json`, and the snapshot's `run_log` keeps every earlier entry.
 
 ## The search
 

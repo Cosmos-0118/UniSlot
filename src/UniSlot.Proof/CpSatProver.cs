@@ -27,7 +27,7 @@ public sealed class CpSatProver : IOptimalityProver
     {
         var clock = Stopwatch.StartNew();
         var bounds = LowerBounds.Compute(problem);
-        double total = options.TimeLimit.TotalSeconds;
+        double? total = options.TimeLimit?.TotalSeconds;
 
         byte[] best = incumbent;
         Score bestScore = incumbentScore;
@@ -40,7 +40,7 @@ public sealed class CpSatProver : IOptimalityProver
         // ---- Phase 1: RED students ---------------------------------------------------------------------------------
         if (!redProven)
         {
-            double budget = total * RedShare;
+            double? budget = total * RedShare;
             var r = Solve(problem, bounds, best, mode: Objective.Red, redCap: bestScore.Red, clashCap: null,
                 budget, options, progress, clock, total, ct);
             if (r.Assignment is { } a1) Adopt(problem, a1, ref best, ref bestScore);
@@ -55,8 +55,8 @@ public sealed class CpSatProver : IOptimalityProver
         }
 
         // ---- Phase 2: clash weight with RED held -------------------------------------------------------------------
-        double remaining = total - clock.Elapsed.TotalSeconds;
-        if (remaining > 0.5 && !ct.IsCancellationRequested)
+        double? remaining = total - clock.Elapsed.TotalSeconds;
+        if ((remaining is null || remaining > 0.5) && !ct.IsCancellationRequested)
         {
             var r = Solve(problem, bounds, best, mode: Objective.Clash, redCap: bestScore.Red, clashCap: bestScore.Clash,
                 remaining, options, progress, clock, total, ct);
@@ -87,7 +87,7 @@ public sealed class CpSatProver : IOptimalityProver
     private sealed record PhaseResult(byte[]? Assignment, bool Optimal, int LowerBound);
 
     private static PhaseResult Solve(SchedulingProblem pr, LowerBoundReport bounds, byte[] hint, Objective mode, int redCap, int? clashCap,
-        double seconds, ProofOptions options, IProgress<ProofProgress>? progress, Stopwatch clock, double totalSeconds, CancellationToken ct)
+        double? seconds, ProofOptions options, IProgress<ProofProgress>? progress, Stopwatch clock, double? totalSeconds, CancellationToken ct)
     {
         int n = pr.CourseCount, wd = pr.WeekdayCount;
         var model = new CpModel();
@@ -157,7 +157,8 @@ public sealed class CpSatProver : IOptimalityProver
         if (mode == Objective.Red) model.Minimize(redTotal); else model.Minimize(clash);
 
         string parameters = string.Create(CultureInfo.InvariantCulture,
-            $"max_time_in_seconds:{Math.Max(0.5, seconds):0.###} num_workers:{Math.Max(1, options.Workers)} random_seed:{options.Seed} log_search_progress:false");
+            $"num_workers:{Math.Max(1, options.Workers)} random_seed:{options.Seed} log_search_progress:false");
+        if (seconds is { } limit) parameters += string.Create(CultureInfo.InvariantCulture, $" max_time_in_seconds:{Math.Max(0.5, limit):0.###}");
         if (mode == Objective.Red) parameters += " optimize_with_core:true";
         var solver = new CpSolver { StringParameters = parameters };
         using var reg = ct.Register(() => solver.StopSearch());
@@ -174,12 +175,13 @@ public sealed class CpSatProver : IOptimalityProver
         return new PhaseResult(null, false, 0);
     }
 
-    private sealed class Callback(IntVar objective, IProgress<ProofProgress>? progress, Stopwatch clock, double total)
+    private sealed class Callback(IntVar objective, IProgress<ProofProgress>? progress, Stopwatch clock, double? total)
         : CpSolverSolutionCallback
     {
         public override void OnSolutionCallback()
         {
-            double f = Math.Clamp(clock.Elapsed.TotalSeconds / Math.Max(1, total), 0, 1);
+            // Without a time limit there is no meaningful fraction; the interface shows an indeterminate bar instead.
+            double f = total is { } t ? Math.Clamp(clock.Elapsed.TotalSeconds / Math.Max(1, t), 0, 1) : 0;
             progress?.Report(new ProofProgress(f, (int)Math.Floor(BestObjectiveBound()), (int)Value(objective), clock.Elapsed));
         }
     }

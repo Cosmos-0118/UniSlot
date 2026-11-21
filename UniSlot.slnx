@@ -6,7 +6,6 @@
     <Project Path="src/UniSlot.Infrastructure/UniSlot.Infrastructure.csproj" />
     <Project Path="src/UniSlot.Proof/UniSlot.Proof.csproj" />
     <Project Path="src/UniSlot.Cli/UniSlot.Cli.csproj" />
-    <Project Path="src/UniSlot.Desktop/UniSlot.Desktop.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UniSlot.Tests/UniSlot.Tests.csproj" />

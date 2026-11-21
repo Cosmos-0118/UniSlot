@@ -7,10 +7,18 @@
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
     <Version>2.0.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\UniSlot.Application\UniSlot.Application.csproj" />
     <ProjectReference Include="..\UniSlot.Infrastructure\UniSlot.Infrastructure.csproj" />
     <ProjectReference Include="..\UniSlot.Proof\UniSlot.Proof.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Strings\*.json" />
+    <InternalsVisibleTo Include="UniSlot.Tests" />
   </ItemGroup>
 </Project>

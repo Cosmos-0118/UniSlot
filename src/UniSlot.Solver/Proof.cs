@@ -12,7 +12,8 @@ public enum ProofStatus
 
 public sealed record ProofOptions
 {
-    public TimeSpan TimeLimit { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>Wall-clock budget for the exact stage. Null runs until the solver has proven the result (or is cancelled).</summary>
+    public TimeSpan? TimeLimit { get; init; } = TimeSpan.FromSeconds(60);
     public int Workers { get; init; } = Environment.ProcessorCount;
     public int Seed { get; init; } = 1;
 }

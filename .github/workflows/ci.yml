@@ -23,6 +23,6 @@ jobs:
         run: dotnet build UniSlot.slnx -c Release --no-restore
       - name: Test
         run: dotnet test UniSlot.slnx -c Release --no-build --logger "trx;LogFileName=test-results.trx"
-      - name: Publish desktop (smoke)
+      - name: Publish CLI (smoke)
         if: matrix.os != 'ubuntu-latest'
-        run: dotnet publish src/UniSlot.Desktop -c Release -r ${{ matrix.os == 'windows-latest' && 'win-x64' || 'osx-arm64' }} --self-contained true -o publish
+        run: dotnet publish src/UniSlot.Cli -c Release -r ${{ matrix.os == 'windows-latest' && 'win-x64' || 'osx-arm64' }} --self-contained true -o publish
